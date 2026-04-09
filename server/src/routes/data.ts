@@ -35,7 +35,12 @@ router.post('/upload', async (req, res) => {
   for (const type of ['r1', 'r2', 'r3', 'r6', 'r7', 'r8']) {
     const arr = source[type];
     if (Array.isArray(arr)) {
-      incoming[type] = arr as object[];
+      let records = arr as Record<string, unknown>[];
+      // r1: skip masked records (r1.7 === 'XXXX') — duplicates with redacted visit IDs
+      if (type === 'r1') {
+        records = records.filter((rec) => rec['r1.7'] !== 'XXXX');
+      }
+      incoming[type] = records as object[];
     }
   }
 

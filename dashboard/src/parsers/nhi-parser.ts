@@ -21,6 +21,10 @@ export function parseVisits(records: Record<string, unknown>[]): Visit[] {
   if (!Array.isArray(records)) return [];
   return records.flatMap((r) => {
     try {
+      // Skip masked records (r1.7 === 'XXXX') — NHI uses this as a placeholder
+      // when the visit sequence number is unavailable; they duplicate real records.
+      if (String(r['r1.7'] ?? '') === 'XXXX') return [];
+
       const date = parseNHIDate(String(r['r1.5'] ?? ''));
       const hospital = String(r['r1.4'] ?? '');
 
