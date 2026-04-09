@@ -8,16 +8,35 @@ function authHeaders(): Record<string, string> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders(),
-      ...(init?.headers ?? {}),
-    },
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data as { error?: string }).error ?? res.statusText);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    throw new Error('無法連線至伺服器，請確認後端是否已啟動（npm run server）');
+  }
+
+  // Parse body safely — empty body or non-JSON responses would otherwise crash
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!res.ok) throw new Error(`伺服器錯誤 (${res.status})`);
+      throw new Error(`回應格式錯誤：${text.slice(0, 100)}`);
+    }
+  }
+
+  if (!res.ok) {
+    throw new Error((data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
+  }
   return data as T;
 }
 
