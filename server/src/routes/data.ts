@@ -25,10 +25,15 @@ router.post('/upload', async (req, res) => {
     return;
   }
 
-  // NHI JSON has top-level keys r1, r2, r3, r6, r7, r8 as arrays
+  // Real NHI export wraps data: { myhealthbank: { bdata: { r1: [], r7: [], ... } } }
+  // Fall back to flat structure if bdata is not present (e.g. re-uploads from server)
+  const inner = (body?.myhealthbank as Record<string, unknown> | undefined)?.bdata as
+    Record<string, unknown> | undefined;
+  const source: Record<string, unknown> = inner ?? body;
+
   const incoming: Partial<Record<string, object[]>> = {};
   for (const type of ['r1', 'r2', 'r3', 'r6', 'r7', 'r8']) {
-    const arr = body[type];
+    const arr = source[type];
     if (Array.isArray(arr)) {
       incoming[type] = arr as object[];
     }

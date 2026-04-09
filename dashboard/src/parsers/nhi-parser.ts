@@ -139,11 +139,22 @@ export function parseCheckupReports(records: Record<string, unknown>[]): Checkup
   });
 }
 
+/** Extract the bdata node from an NHI JSON object (handles the myhealthbank wrapper). */
+function extractBdata(obj: Record<string, unknown>): Record<string, unknown> {
+  // Real NHI export: { myhealthbank: { bdata: { r1: [], r7: [], ... } } }
+  const inner = obj?.myhealthbank as Record<string, unknown> | undefined;
+  if (inner?.bdata) return inner.bdata as Record<string, unknown>;
+  // Fallback: already flat (e.g. from server fetch or test fixtures)
+  return obj;
+}
+
 export function parseNHIJson(raw: string | Record<string, unknown[]>): NHIData {
-  const data: Record<string, Record<string, unknown>[]> =
+  const parsed: Record<string, unknown> =
     typeof raw === 'string'
-      ? (JSON.parse(raw.replace(/^\uFEFF/, '')) as Record<string, Record<string, unknown>[]>)
-      : (raw as Record<string, Record<string, unknown>[]>);
+      ? (JSON.parse(raw.replace(/^\uFEFF/, '')) as Record<string, unknown>)
+      : (raw as Record<string, unknown>);
+
+  const data = extractBdata(parsed) as Record<string, Record<string, unknown>[]>;
 
   return {
     visits: parseVisits(data.r1 ?? []),
