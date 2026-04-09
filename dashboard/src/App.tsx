@@ -33,6 +33,11 @@ function dataReducer(_state: NHIData | null, action: DataAction): NHIData | null
   }
 }
 
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+
+type Tab = '門診' | '檢驗' | '牙科' | '預防保健';
+const TABS: Tab[] = ['門診', '檢驗', '牙科', '預防保健'];
+
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -40,6 +45,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [nhiData, dispatch] = useReducer(dataReducer, null);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('門診');
 
   // On mount: check if there's a valid stored token and auto-load data
   useEffect(() => {
@@ -148,22 +154,45 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
         <SummaryStats data={nhiData} />
 
-        <LabTrendCharts labResults={nhiData.labResults} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <VisitTimeline visits={nhiData.visits} />
-          <BilledItemsChart visits={nhiData.visits} />
+        {/* Tab navigation */}
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+          {TABS.map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
+                activeTab === tab
+                  ? 'bg-white text-teal-700 font-medium shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <VaccinationCard vaccinations={nhiData.vaccinations} />
-          <CheckupReportList reports={nhiData.checkupReports} />
-        </div>
-
-        <DentalVisitList dentalVisits={nhiData.dentalVisits} />
+        {/* Tab content */}
+        {activeTab === '門診' && (
+          <div className="space-y-6">
+            <VisitTimeline visits={nhiData.visits} />
+            <BilledItemsChart visits={nhiData.visits} />
+          </div>
+        )}
+        {activeTab === '檢驗' && (
+          <LabTrendCharts labResults={nhiData.labResults} />
+        )}
+        {activeTab === '牙科' && (
+          <DentalVisitList dentalVisits={nhiData.dentalVisits} />
+        )}
+        {activeTab === '預防保健' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <VaccinationCard vaccinations={nhiData.vaccinations} />
+            <CheckupReportList reports={nhiData.checkupReports} />
+          </div>
+        )}
       </main>
     </div>
   );
