@@ -10,6 +10,13 @@ export function parseNHIDate(s: string): Date {
   return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8));
 }
 
+/** Given a key like "r1.8" or "r2.10", return the key for the next field ("r1.9", "r2.11"). */
+function nextKey(key: string): string {
+  const dot = key.lastIndexOf('.');
+  const suffix = parseInt(key.slice(dot + 1), 10);
+  return key.slice(0, dot + 1) + (suffix + 1);
+}
+
 export function parseVisits(records: Record<string, unknown>[]): Visit[] {
   if (!Array.isArray(records)) return [];
   return records.flatMap((r) => {
@@ -24,9 +31,7 @@ export function parseVisits(records: Record<string, unknown>[]): Visit[] {
         const val = r[key];
         if (typeof val === 'string' && ICD_PATTERN.test(val)) {
           // The diagnosis name is in the next key (e.g., r1.8 code → r1.9 name)
-          const keyNum = parseInt(key.replace(/[^0-9]/g, ''), 10);
-          const nameKey = key.replace(/\d+$/, String(keyNum + 1));
-          const name = String(r[nameKey] ?? '');
+          const name = String(r[nextKey(key)] ?? '');
           diagnoses.push({ code: val, name });
         }
       }
@@ -65,9 +70,7 @@ export function parseHospitalizations(records: Record<string, unknown>[]): Hospi
       for (const key of keys) {
         const val = r[key];
         if (typeof val === 'string' && ICD_PATTERN.test(val)) {
-          const keyNum = parseInt(key.replace(/[^0-9]/g, ''), 10);
-          const nameKey = key.replace(/\d+$/, String(keyNum + 1));
-          const name = String(r[nameKey] ?? '');
+          const name = String(r[nextKey(key)] ?? '');
           diagnoses.push({ code: val, name });
         }
       }
@@ -136,9 +139,7 @@ export function parseDentalVisits(records: Record<string, unknown>[]): DentalVis
       for (const key of keys) {
         const val = r[key];
         if (typeof val === 'string' && ICD_PATTERN.test(val)) {
-          const keyNum = parseInt(key.replace(/[^0-9]/g, ''), 10);
-          const nameKey = key.replace(/\d+$/, String(keyNum + 1));
-          const name = String(r[nameKey] ?? '');
+          const name = String(r[nextKey(key)] ?? '');
           diagnoses.push({ code: val, name });
         }
       }
