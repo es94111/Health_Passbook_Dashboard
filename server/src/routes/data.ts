@@ -45,21 +45,5 @@ router.post('/upload', async (req, res) => {
   });
 });
 
-// DELETE /api/data  — clear all health records for current user
-router.delete('/', async (req, res) => {
-  const userId = req.user!.userId;
-  const { mergeRecords: merge } = await import('../store.js');
-  // Overwrite with empty by merging nothing — just write empty
-  const { getRecords: get } = await import('../store.js');
-  const existing = await get(userId);
-  // Clear all
-  for (const key of Object.keys(existing) as (keyof typeof existing)[]) {
-    existing[key] = {};
-  }
-  const { writeJson } = await import('../store.js').catch(() => ({ writeJson: undefined }));
-  // Use the store's internal mechanism: merge with empty clears nothing,
-  // so we need to expose a clearRecords function
-  res.status(501).json({ error: '請使用管理員功能清除資料' });
-});
 
 export default router;
