@@ -1,4 +1,4 @@
-import type { Visit, Hospitalization, Vaccination, LabResult, CheckupReport, NHIData } from './types';
+import type { Visit, Hospitalization, Vaccination, LabResult, CheckupReport, DentalVisit, NHIData } from './types';
 
 // ICD-10 codes start with an uppercase letter followed by 2-3 digits
 const ICD_PATTERN = /^[A-Z]\d{2,3}/;
@@ -123,6 +123,49 @@ export function parseLabResults(records: Record<string, unknown>[]): LabResult[]
   });
 }
 
+export function parseDentalVisits(records: Record<string, unknown>[]): DentalVisit[] {
+  if (!Array.isArray(records)) return [];
+  return records.flatMap((r) => {
+    try {
+      const date = parseNHIDate(String(r['r3.5'] ?? ''));
+      const hospital = String(r['r3.4'] ?? '');
+
+      // ICD scan — same pattern as r1
+      const diagnoses: { code: string; name: string }[] = [];
+      const keys = Object.keys(r).sort();
+      for (const key of keys) {
+        const val = r[key];
+        if (typeof val === 'string' && ICD_PATTERN.test(val)) {
+          const keyNum = parseInt(key.replace(/[^0-9]/g, ''), 10);
+          const nameKey = key.replace(/\d+$/, String(keyNum + 1));
+          const name = String(r[nameKey] ?? '');
+          diagnoses.push({ code: val, name });
+        }
+      }
+
+      // Nested procedure items from r3_1[]
+      const procedures: { code: string; name: string; qty: number; toothCode: string; toothName: string }[] = [];
+      const nested = r['r3_1'];
+      if (Array.isArray(nested)) {
+        for (const item of nested) {
+          const rec = item as Record<string, unknown>;
+          procedures.push({
+            code: String(rec['r3_1.1'] ?? ''),
+            name: String(rec['r3_1.2'] ?? ''),
+            qty: parseFloat(String(rec['r3_1.3'] ?? '0')) || 0,
+            toothCode: String(rec['r3_1.4'] ?? ''),
+            toothName: String(rec['r3_1.5'] ?? ''),
+          });
+        }
+      }
+
+      return [{ date, hospital, diagnoses, procedures }];
+    } catch {
+      return [];
+    }
+  });
+}
+
 export function parseCheckupReports(records: Record<string, unknown>[]): CheckupReport[] {
   if (!Array.isArray(records)) return [];
   return records.flatMap((r) => {
@@ -162,5 +205,6 @@ export function parseNHIJson(raw: string | Record<string, unknown[]>): NHIData {
     vaccinations: parseVaccinations(data.r6 ?? []),
     labResults: parseLabResults(data.r7 ?? []),
     checkupReports: parseCheckupReports(data.r8 ?? []),
+    dentalVisits: parseDentalVisits(data.r3 ?? []),
   };
 }

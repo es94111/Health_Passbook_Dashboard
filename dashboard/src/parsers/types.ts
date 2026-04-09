@@ -35,10 +35,18 @@ export interface CheckupReport {
   report: string;
 }
 
+export interface DentalVisit {
+  date: Date;
+  hospital: string;
+  diagnoses: { code: string; name: string }[];
+  procedures: { code: string; name: string; qty: number; toothCode: string; toothName: string }[];
+}
+
 export interface NHIData {
   visits: Visit[];
   hospitalizations: Hospitalization[];
   vaccinations: Vaccination[];
   labResults: LabResult[];
   checkupReports: CheckupReport[];
+  dentalVisits: DentalVisit[];
 }

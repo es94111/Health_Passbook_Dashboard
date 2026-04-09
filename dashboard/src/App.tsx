@@ -11,6 +11,7 @@ import LabTrendCharts from './components/LabTrendCharts';
 import BilledItemsChart from './components/BilledItemsChart';
 import VaccinationCard from './components/VaccinationCard';
 import CheckupReportList from './components/CheckupReportList';
+import DentalVisitList from './components/DentalVisitList';
 
 // ── Auth state ────────────────────────────────────────────────────────────────
 
@@ -161,6 +162,8 @@ export default function App() {
           <VaccinationCard vaccinations={nhiData.vaccinations} />
           <CheckupReportList reports={nhiData.checkupReports} />
         </div>
+
+        <DentalVisitList dentalVisits={nhiData.dentalVisits} />
       </main>
     </div>
   );
