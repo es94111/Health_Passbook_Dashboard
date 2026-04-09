@@ -12,6 +12,7 @@ import BilledItemsChart from './components/BilledItemsChart';
 import VaccinationCard from './components/VaccinationCard';
 import CheckupReportList from './components/CheckupReportList';
 import DentalVisitList from './components/DentalVisitList';
+import HospitalizationList from './components/HospitalizationList';
 
 // ── Auth state ────────────────────────────────────────────────────────────────
 
@@ -35,8 +36,8 @@ function dataReducer(_state: NHIData | null, action: DataAction): NHIData | null
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
-type Tab = '門診' | '檢驗' | '牙科' | '預防保健';
-const TABS: Tab[] = ['門診', '檢驗', '牙科', '預防保健'];
+type Tab = '門診' | '住院' | '檢驗' | '牙科' | '預防保健';
+const TABS: Tab[] = ['門診', '住院', '檢驗', '牙科', '預防保健'];
 
 // ── App ───────────────────────────────────────────────────────────────────────
 
@@ -183,6 +184,9 @@ export default function App() {
         )}
         {activeTab === '檢驗' && (
           <LabTrendCharts labResults={nhiData.labResults} />
+        )}
+        {activeTab === '住院' && (
+          <HospitalizationList hospitalizations={nhiData.hospitalizations} />
         )}
         {activeTab === '牙科' && (
           <DentalVisitList dentalVisits={nhiData.dentalVisits} />
