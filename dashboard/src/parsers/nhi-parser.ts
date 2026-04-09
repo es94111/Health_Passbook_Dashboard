@@ -139,10 +139,11 @@ export function parseCheckupReports(records: Record<string, unknown>[]): Checkup
   });
 }
 
-export function parseNHIJson(raw: string): NHIData {
-  // Strip BOM if present
-  const clean = raw.replace(/^\uFEFF/, '');
-  const data = JSON.parse(clean);
+export function parseNHIJson(raw: string | Record<string, unknown[]>): NHIData {
+  const data: Record<string, Record<string, unknown>[]> =
+    typeof raw === 'string'
+      ? (JSON.parse(raw.replace(/^\uFEFF/, '')) as Record<string, Record<string, unknown>[]>)
+      : (raw as Record<string, Record<string, unknown>[]>);
 
   return {
     visits: parseVisits(data.r1 ?? []),

@@ -1,0 +1,14 @@
+{
+  "name": "health-dashboard",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names \"server,frontend\" --prefix-colors \"cyan,teal\" \"npm run dev --prefix server\" \"npm run dev --prefix dashboard\"",
+    "server": "npm run dev --prefix server",
+    "frontend": "npm run dev --prefix dashboard",
+    "build": "npm run build --prefix dashboard",
+    "install:all": "npm install --prefix server && npm install --prefix dashboard"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
