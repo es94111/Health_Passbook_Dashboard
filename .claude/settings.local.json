@@ -40,7 +40,8 @@
       "Bash(powershell -Command \"Set-Location 'C:\\\\Users\\\\hongyu\\\\.claude\\\\skills\\\\gstack'; Invoke-Expression '\\\\\"C:\\\\Users\\\\hongyu\\\\.bun\\\\bin\\\\bun.exe\\\\\" x playwright install chromium'\")",
       "Bash(echo \"Exit: $?\")",
       "Bash(npx playwright:*)",
-      "Bash(echo \"Failed: $?\")"
+      "Bash(echo \"Failed: $?\")",
+      "Bash(./setup --team)"
     ]
   }
 }
