@@ -41,7 +41,9 @@
       "Bash(echo \"Exit: $?\")",
       "Bash(npx playwright:*)",
       "Bash(echo \"Failed: $?\")",
-      "Bash(./setup --team)"
+      "Bash(./setup --team)",
+      "Skill(ship)",
+      "Skill(ship:*)"
     ]
   }
 }
