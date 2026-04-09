@@ -74,7 +74,7 @@ export default function BilledItemsChart({ visits }: Props) {
           />
           <Bar
             dataKey="count"
-            fill="#8b5cf6"
+            fill="#0f766e"
             radius={[0, 3, 3, 0]}
           />
         </BarChart>

@@ -109,7 +109,7 @@ export default function LabTrendCharts({ labResults }: Props) {
                 <Line
                   type="monotone"
                   dataKey="value"
-                  stroke="#3b82f6"
+                  stroke="#0d9488"
                   dot={(props) => {
                     const { cx, cy, payload } = props;
                     return (
@@ -118,7 +118,7 @@ export default function LabTrendCharts({ labResults }: Props) {
                         cx={cx}
                         cy={cy}
                         r={3}
-                        fill={payload.outOfRange ? '#ef4444' : '#3b82f6'}
+                        fill={payload.outOfRange ? '#ef4444' : '#0d9488'}
                         stroke="none"
                       />
                     );

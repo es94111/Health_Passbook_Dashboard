@@ -30,8 +30,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-gray-900">健康存摺儀表板</h1>
+      <header className="bg-white border-b border-teal-100 px-4 py-3 flex items-center justify-between">
+        <h1 className="text-lg font-bold text-teal-700">健康存摺儀表板</h1>
         <button
           onClick={() => dispatch({ type: 'CLEAR' })}
           className="text-sm text-gray-500 hover:text-gray-700 underline"
@@ -43,12 +43,12 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
         <SummaryStats data={nhiData} />
 
+        <LabTrendCharts labResults={nhiData.labResults} />
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <VisitTimeline visits={nhiData.visits} />
           <BilledItemsChart visits={nhiData.visits} />
         </div>
-
-        <LabTrendCharts labResults={nhiData.labResults} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <VaccinationCard vaccinations={nhiData.vaccinations} />

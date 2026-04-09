@@ -36,7 +36,7 @@ export default function SummaryStats({ data }: Props) {
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4">
       {stats.map(({ label, value }) => (
         <div key={label} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-center">
-          <div className="text-2xl font-bold text-blue-600">{value}</div>
+          <div className="text-2xl font-bold text-teal-600">{value}</div>
           <div className="text-sm text-gray-500 mt-1">{label}</div>
         </div>
       ))}

@@ -38,20 +38,24 @@ export default function VisitTimeline({ visits }: Props) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
       <h2 className="text-lg font-semibold text-gray-800 mb-4">門診時間軸</h2>
-      <ResponsiveContainer width="100%" height={220}>
-        <BarChart data={monthData} onClick={(e) => { const p = (e as unknown as { activePayload?: { payload: { month: string } }[] } | null); p?.activePayload && handleBarClick(p.activePayload[0].payload); }}>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} />
-          <XAxis dataKey="month" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-          <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-          <Tooltip />
-          <Bar
-            dataKey="count"
-            fill="#3b82f6"
-            radius={[3, 3, 0, 0]}
-            cursor="pointer"
-          />
-        </BarChart>
-      </ResponsiveContainer>
+      <div className="overflow-x-auto -mx-2 px-2">
+        <div style={{ minWidth: 480 }}>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={monthData} onClick={(e) => { const p = (e as unknown as { activePayload?: { payload: { month: string } }[] } | null); p?.activePayload && handleBarClick(p.activePayload[0].payload); }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+              <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Bar
+                dataKey="count"
+                fill="#0d9488"
+                radius={[3, 3, 0, 0]}
+                cursor="pointer"
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
 
       {selectedMonth && selectedVisits.length > 0 && (
         <div className="mt-4 border-t pt-3">
