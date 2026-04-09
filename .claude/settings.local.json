@@ -44,7 +44,10 @@
       "Bash(./setup --team)",
       "Skill(ship)",
       "Skill(ship:*)",
-      "Bash(timeout 5 npx tsx src/index.ts)"
+      "Bash(timeout 5 npx tsx src/index.ts)",
+      "Bash(npx tsx:*)",
+      "Bash(timeout 4 npx tsx src/index.ts)",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }

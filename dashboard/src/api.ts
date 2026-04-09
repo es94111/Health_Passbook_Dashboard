@@ -35,6 +35,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error('無法連線至伺服器，請先啟動後端（npm run server）');
+    }
     throw new Error((data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
   }
   return data as T;
