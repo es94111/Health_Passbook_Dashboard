@@ -41,7 +41,7 @@ export default function VisitTimeline({ visits }: Props) {
       <div className="overflow-x-auto -mx-2 px-2">
         <div style={{ minWidth: 480 }}>
           <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={monthData} onClick={(e) => { const p = (e as unknown as { activePayload?: { payload: { month: string } }[] } | null); p?.activePayload && handleBarClick(p.activePayload[0].payload); }}>
+            <BarChart data={monthData}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="month" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
               <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
@@ -51,6 +51,7 @@ export default function VisitTimeline({ visits }: Props) {
                 fill="#0d9488"
                 radius={[3, 3, 0, 0]}
                 cursor="pointer"
+                onClick={(data) => handleBarClick(data as unknown as { month: string })}
               />
             </BarChart>
           </ResponsiveContainer>
