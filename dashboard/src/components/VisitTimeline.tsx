@@ -59,17 +59,59 @@ export default function VisitTimeline({ visits }: Props) {
 
       {selectedMonth && selectedVisits.length > 0 && (
         <div className="mt-4 border-t pt-3">
-          <h3 className="text-sm font-medium text-gray-700 mb-2">{selectedMonth} 的就診紀錄</h3>
-          <ul className="space-y-2">
-            {selectedVisits.map((v, i) => (
-              <li key={i} className="text-sm">
-                <span className="font-medium text-gray-800">{v.hospital}</span>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-gray-700">
+              {selectedMonth} 就診紀錄（{selectedVisits.length} 筆）
+            </h3>
+            <button
+              onClick={() => setSelectedMonth(null)}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              關閉 ✕
+            </button>
+          </div>
+          <ul className="space-y-3">
+            {[...selectedVisits]
+              .sort((a, b) => a.date.getTime() - b.date.getTime())
+              .map((v, i) => (
+              <li key={i} className="bg-gray-50 rounded-lg p-3 text-sm">
+                {/* Header: date + hospital */}
+                <div className="flex items-baseline gap-2 mb-1.5">
+                  <span className="text-xs text-gray-400 tabular-nums">
+                    {v.date.toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })}
+                  </span>
+                  <span className="font-medium text-gray-800">{v.hospital}</span>
+                </div>
+
+                {/* Diagnoses */}
                 {v.diagnoses.length > 0 && (
-                  <ul className="mt-0.5 ml-4 text-gray-500 space-y-0.5">
-                    {v.diagnoses.map((d, j) => (
-                      <li key={j}>{d.code} {d.name}</li>
-                    ))}
-                  </ul>
+                  <div className="mb-1.5">
+                    <div className="text-xs text-gray-400 mb-0.5">診斷</div>
+                    <ul className="space-y-0.5">
+                      {v.diagnoses.map((d, j) => (
+                        <li key={j} className="flex gap-2 text-xs text-gray-600">
+                          <span className="text-gray-400 shrink-0">{d.code}</span>
+                          <span>{d.name}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Procedures */}
+                {v.procedures.length > 0 && (
+                  <div>
+                    <div className="text-xs text-gray-400 mb-0.5">處置</div>
+                    <ul className="space-y-0.5">
+                      {v.procedures.map((p, j) => (
+                        <li key={j} className="flex gap-2 text-xs text-gray-600">
+                          <span className="text-gray-400 shrink-0">{p.code}</span>
+                          <span>{p.name}</span>
+                          {p.qty > 1 && <span className="text-gray-400">×{p.qty}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </li>
             ))}
