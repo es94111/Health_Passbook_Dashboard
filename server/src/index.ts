@@ -1,33 +1,39 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+import { loadMasterKey } from './crypto.js';
 import authRouter from './routes/auth.js';
 import dataRouter from './routes/data.js';
 import adminRouter from './routes/admin.js';
 
-const app = express();
-const PORT = process.env.PORT ?? 3001;
+// Load or auto-generate encryption key, then start the HTTP server
+(async () => {
+  await loadMasterKey();
 
-app.use(cors({ origin: true, credentials: true })); // allow any origin (local tool)
-app.use(express.json({ limit: '50mb' })); // NHI JSON files can be large
+  const app = express();
+  const PORT = process.env.PORT ?? 3001;
 
-app.use('/api/auth', authRouter);
-app.use('/api/data', dataRouter);
-app.use('/api/admin', adminRouter);
+  app.use(cors({ origin: true, credentials: true })); // allow any origin (local tool)
+  app.use(express.json({ limit: '50mb' })); // NHI JSON files can be large
 
-// Health check
-app.get('/api/ping', (_req, res) => res.json({ ok: true }));
+  app.use('/api/auth', authRouter);
+  app.use('/api/data', dataRouter);
+  app.use('/api/admin', adminRouter);
 
-// Global error handler — ensures every error returns JSON, never empty body
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(err);
-  // Handle Express body-parser errors (e.g. JSON too large, malformed JSON)
-  const status = (err as { status?: number; statusCode?: number }).status
-    ?? (err as { statusCode?: number }).statusCode
-    ?? 500;
-  res.status(status).json({ error: err.message ?? '伺服器錯誤' });
-});
+  // Health check
+  app.get('/api/ping', (_req, res) => res.json({ ok: true }));
 
-app.listen(PORT, () => {
-  console.log(`健康存摺伺服器啟動：http://localhost:${PORT}`);
-});
+  // Global error handler — ensures every error returns JSON, never empty body
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+    console.error(err);
+    // Handle Express body-parser errors (e.g. JSON too large, malformed JSON)
+    const status = (err as { status?: number; statusCode?: number }).status
+      ?? (err as { statusCode?: number }).statusCode
+      ?? 500;
+    res.status(status).json({ error: err.message ?? '伺服器錯誤' });
+  });
+
+  app.listen(PORT, () => {
+    console.log(`健康存摺伺服器啟動：http://localhost:${PORT}`);
+  });
+})();

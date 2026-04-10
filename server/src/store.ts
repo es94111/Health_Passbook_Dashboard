@@ -1,5 +1,12 @@
+import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
+import {
+  deriveUsersKey,
+  deriveRecordsKey,
+  readMaybeEncrypted,
+  writeEncrypted,
+} from './crypto.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
@@ -10,6 +17,7 @@ export interface User {
   passwordHash: string;
   isAdmin: boolean;
   createdAt: string;
+  encryptionSalt: string; // 32-byte hex — derived to produce per-user records key
 }
 
 // ── NHI record types (mirrored from frontend) ─────────────────────────────────
@@ -34,47 +42,68 @@ async function ensureDataDir(): Promise<void> {
   await fs.mkdir(DATA_DIR, { recursive: true });
 }
 
-async function readJson<T>(file: string, fallback: T): Promise<T> {
-  try {
-    const raw = await fs.readFile(file, 'utf-8');
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-async function writeJson(file: string, data: unknown): Promise<void> {
-  await ensureDataDir();
-  await fs.writeFile(file, JSON.stringify(data, null, 2), 'utf-8');
-}
-
 // ── User store ────────────────────────────────────────────────────────────────
 
+async function readUsers(): Promise<User[]> {
+  const key = deriveUsersKey();
+  const { data, wasMigrated } = await readMaybeEncrypted<User[]>(USERS_FILE, key, []);
+  if (wasMigrated && data.length > 0) {
+    // Backfill encryptionSalt for users created before encryption was added
+    let changed = false;
+    for (const u of data) {
+      if (!u.encryptionSalt) {
+        u.encryptionSalt = crypto.randomBytes(32).toString('hex');
+        changed = true;
+        console.log(`[store] 為使用者 ${u.username} 補建 encryptionSalt`);
+      }
+    }
+    // Re-encrypt the users file (migration)
+    await ensureDataDir();
+    await writeEncrypted(USERS_FILE, key, data);
+    if (changed) {
+      console.log('[store] users.json 已從明文遷移至加密格式（含 encryptionSalt）');
+    } else {
+      console.log('[store] users.json 已從明文遷移至加密格式');
+    }
+  }
+  return data;
+}
+
+async function writeUsers(users: User[]): Promise<void> {
+  await ensureDataDir();
+  const key = deriveUsersKey();
+  await writeEncrypted(USERS_FILE, key, users);
+}
+
 export async function getUsers(): Promise<User[]> {
-  return readJson<User[]>(USERS_FILE, []);
+  return readUsers();
 }
 
 export async function getUserById(id: string): Promise<User | undefined> {
-  const users = await getUsers();
+  const users = await readUsers();
   return users.find((u) => u.id === id);
 }
 
 export async function getUserByUsername(username: string): Promise<User | undefined> {
-  const users = await getUsers();
+  const users = await readUsers();
   return users.find((u) => u.username === username);
 }
 
-export async function createUser(user: User): Promise<void> {
-  const users = await getUsers();
-  users.push(user);
-  await writeJson(USERS_FILE, users);
+export async function createUser(user: Omit<User, 'encryptionSalt'>): Promise<void> {
+  const users = await readUsers();
+  const fullUser: User = {
+    ...user,
+    encryptionSalt: crypto.randomBytes(32).toString('hex'),
+  };
+  users.push(fullUser);
+  await writeUsers(users);
 }
 
 export async function deleteUser(id: string): Promise<boolean> {
-  const users = await getUsers();
+  const users = await readUsers();
   const filtered = users.filter((u) => u.id !== id);
   if (filtered.length === users.length) return false;
-  await writeJson(USERS_FILE, filtered);
+  await writeUsers(filtered);
   // Also remove their health records
   const recordFile = recordsFile(id);
   await fs.unlink(recordFile).catch(() => undefined);
@@ -82,7 +111,7 @@ export async function deleteUser(id: string): Promise<boolean> {
 }
 
 export async function userCount(): Promise<number> {
-  const users = await getUsers();
+  const users = await readUsers();
   return users.length;
 }
 
@@ -92,8 +121,28 @@ function recordsFile(userId: string): string {
   return path.join(DATA_DIR, `records-${userId}.json`);
 }
 
+/**
+ * Resolve the encryption key for a given user.
+ * Handles the migration case where encryptionSalt may be absent on old users
+ * (in practice readUsers() already backfills it, but be defensive).
+ */
+async function recordsKey(userId: string): Promise<{ key: ReturnType<typeof deriveRecordsKey>; user: User }> {
+  const user = await getUserById(userId);
+  if (!user) throw new Error(`使用者 ${userId} 不存在`);
+  return { key: deriveRecordsKey(user.encryptionSalt), user };
+}
+
 export async function getRecords(userId: string): Promise<StoredRecords> {
-  return readJson<StoredRecords>(recordsFile(userId), emptyRecords());
+  const { key } = await recordsKey(userId);
+  const file = recordsFile(userId);
+  const { data, wasMigrated } = await readMaybeEncrypted<StoredRecords>(file, key, emptyRecords());
+  if (wasMigrated) {
+    // Re-write as encrypted (lazy migration — happens once per file)
+    await ensureDataDir();
+    await writeEncrypted(file, key, data);
+    console.log(`[store] records-${userId}.json 已從明文遷移至加密格式`);
+  }
+  return data;
 }
 
 /**
@@ -105,6 +154,7 @@ export async function mergeRecords(
   userId: string,
   incoming: Partial<Record<string, object[]>>,
 ): Promise<Record<string, { added: number; skipped: number }>> {
+  const { key } = await recordsKey(userId);
   const existing = await getRecords(userId);
   const stats: Record<string, { added: number; skipped: number }> = {};
 
@@ -116,11 +166,11 @@ export async function mergeRecords(
     let skipped = 0;
 
     for (const rec of records) {
-      const key = dedupKey(type, rec as Record<string, unknown>);
-      if (key in existing[type]) {
+      const k = dedupKey(type, rec as Record<string, unknown>);
+      if (k in existing[type]) {
         skipped++;
       } else {
-        existing[type][key] = rec;
+        existing[type][k] = rec;
         added++;
       }
     }
@@ -128,7 +178,7 @@ export async function mergeRecords(
     stats[type] = { added, skipped };
   }
 
-  await writeJson(recordsFile(userId), existing);
+  await writeEncrypted(recordsFile(userId), key, existing);
   return stats;
 }
 
