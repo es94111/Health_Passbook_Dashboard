@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { createUser, getUserByUsername, userCount } from '../store.js';
+import { OAuth2Client } from 'google-auth-library';
+import { createUser, getUserByUsername, getUserByGoogleId, userCount } from '../store.js';
 import { signToken, requireAuth } from '../auth.js';
+
+const googleClient = new OAuth2Client();
 
 const router = Router();
 
@@ -70,6 +73,70 @@ router.post('/login', async (req, res) => {
 
   const token = signToken({ userId: user.id, username: user.username, isAdmin: user.isAdmin });
   res.json({ token, username: user.username, isAdmin: user.isAdmin });
+});
+
+// POST /api/auth/google  — verify Google ID token, auto-create account if needed
+router.post('/google', async (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    res.status(501).json({ error: '伺服器未設定 GOOGLE_CLIENT_ID，無法使用 Google 登入' });
+    return;
+  }
+
+  const { credential } = req.body as { credential?: string };
+  if (!credential) {
+    res.status(400).json({ error: '缺少 Google credential' });
+    return;
+  }
+
+  let googleId: string;
+  let email: string;
+  let name: string;
+
+  try {
+    const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: clientId });
+    const payload = ticket.getPayload();
+    if (!payload?.sub || !payload.email) {
+      throw new Error('無效的 Google token payload');
+    }
+    googleId = payload.sub;
+    email = payload.email;
+    name = payload.name ?? payload.email.split('@')[0];
+  } catch {
+    res.status(401).json({ error: 'Google 憑證驗證失敗，請重試' });
+    return;
+  }
+
+  // Find existing user by googleId
+  let user = await getUserByGoogleId(googleId);
+
+  if (!user) {
+    // Auto-register: derive a safe username from email local-part
+    const base = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 28);
+    let username = base;
+    let suffix = 1;
+    while (await getUserByUsername(username)) {
+      username = `${base}_${suffix++}`;
+    }
+
+    const count = await userCount();
+    const newUser = {
+      id: crypto.randomUUID(),
+      username,
+      passwordHash: '', // Google-only account — password login disabled
+      isAdmin: count === 0,
+      createdAt: new Date().toISOString(),
+      googleId,
+      googleEmail: email,
+    };
+
+    await createUser(newUser);
+    user = await getUserByGoogleId(googleId) ?? { ...newUser, encryptionSalt: '' };
+    console.log(`[auth] Google SSO 自動建立帳號：${username} (${email})`);
+  }
+
+  const token = signToken({ userId: user.id, username: user.username, isAdmin: user.isAdmin });
+  res.json({ token, username: user.username, isAdmin: user.isAdmin, googleName: name });
 });
 
 // GET /api/auth/me

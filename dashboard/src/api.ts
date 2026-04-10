@@ -65,6 +65,13 @@ export function login(username: string, password: string): Promise<AuthResponse>
   });
 }
 
+export function loginWithGoogle(credential: string): Promise<AuthResponse> {
+  return request('/auth/google', {
+    method: 'POST',
+    body: JSON.stringify({ credential }),
+  });
+}
+
 export function me(): Promise<{ userId: string; username: string; isAdmin: boolean }> {
   return request('/auth/me');
 }

@@ -3,7 +3,13 @@
     "allow": [
       "Read(//c/Users/hongyu/SynologyDrive/xe7/xb6/xb2/xe9/xa0/x81/xe5/x81/xa5/xe5/xba/xb7/xe7/xae/xa1/xe7/x90/x86/**)",
       "Read(//c/Users/hongyu/SynologyDrive/**)",
-      "Bash(./server/node_modules/.bin/tsc --noEmit --project server/tsconfig.json)"
+      "Bash(./server/node_modules/.bin/tsc --noEmit --project server/tsconfig.json)",
+      "Bash(echo \"SERVER:$?\")",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(echo \"DASHBOARD:$?\")",
+      "Bash(server/node_modules/.bin/tsc --noEmit --project server/tsconfig.json)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(\"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/node_modules/.bin/tsc\" --noEmit --project \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/tsconfig.json\")"
     ]
   }
 }

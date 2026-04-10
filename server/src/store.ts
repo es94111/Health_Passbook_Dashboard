@@ -14,10 +14,12 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 export interface User {
   id: string;
   username: string;
-  passwordHash: string;
+  passwordHash: string;   // empty string for Google-only users
   isAdmin: boolean;
   createdAt: string;
   encryptionSalt: string; // 32-byte hex — derived to produce per-user records key
+  googleId?: string;      // Google sub claim (stable unique identifier)
+  googleEmail?: string;   // Google email, for display / lookup
 }
 
 // ── NHI record types (mirrored from frontend) ─────────────────────────────────
@@ -87,6 +89,11 @@ export async function getUserById(id: string): Promise<User | undefined> {
 export async function getUserByUsername(username: string): Promise<User | undefined> {
   const users = await readUsers();
   return users.find((u) => u.username === username);
+}
+
+export async function getUserByGoogleId(googleId: string): Promise<User | undefined> {
+  const users = await readUsers();
+  return users.find((u) => u.googleId === googleId);
 }
 
 export async function createUser(user: Omit<User, 'encryptionSalt'>): Promise<void> {

@@ -1,9 +1,11 @@
-import { useState } from 'react';
-import { login, register } from '../api';
+import { useState, useEffect, useRef } from 'react';
+import { login, register, loginWithGoogle } from '../api';
 
 interface Props {
   onAuth: (token: string, username: string, isAdmin: boolean) => void;
 }
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 export default function LoginScreen({ onAuth }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -11,6 +13,55 @@ export default function LoginScreen({ onAuth }: Props) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  // Initialise Google Identity Services once the GSI script is ready
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+
+    function initGoogle() {
+      if (!window.google?.accounts?.id || !googleBtnRef.current) return;
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID!,
+        callback: handleGoogleCredential,
+        cancel_on_tap_outside: true,
+      });
+      window.google.accounts.id.renderButton(googleBtnRef.current, {
+        theme: 'outline',
+        size: 'large',
+        text: 'continue_with',
+        width: googleBtnRef.current.offsetWidth || 320,
+        locale: 'zh-TW',
+      });
+    }
+
+    // GSI script may load after component mount
+    if (window.google?.accounts?.id) {
+      initGoogle();
+    } else {
+      const interval = setInterval(() => {
+        if (window.google?.accounts?.id) {
+          clearInterval(interval);
+          initGoogle();
+        }
+      }, 200);
+      return () => clearInterval(interval);
+    }
+  }, []);
+
+  async function handleGoogleCredential(response: { credential: string }) {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await loginWithGoogle(response.credential);
+      localStorage.setItem('nhi_token', res.token);
+      onAuth(res.token, res.username, res.isAdmin);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google 登入失敗');
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -50,6 +101,19 @@ export default function LoginScreen({ onAuth }: Props) {
 
         {/* Card */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+
+          {/* Google SSO button */}
+          {GOOGLE_CLIENT_ID && (
+            <>
+              <div ref={googleBtnRef} className="w-full" />
+              <div className="flex items-center gap-3 my-5">
+                <div className="flex-1 h-px bg-gray-200" />
+                <span className="text-xs text-gray-400">或使用帳號密碼</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+            </>
+          )}
+
           {/* Mode toggle */}
           <div className="flex rounded-lg overflow-hidden border border-gray-200 mb-6">
             <button
