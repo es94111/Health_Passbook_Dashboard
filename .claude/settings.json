@@ -9,7 +9,9 @@
       "Bash(echo \"DASHBOARD:$?\")",
       "Bash(server/node_modules/.bin/tsc --noEmit --project server/tsconfig.json)",
       "Bash(node_modules/.bin/tsc --noEmit)",
-      "Bash(\"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/node_modules/.bin/tsc\" --noEmit --project \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/tsconfig.json\")"
+      "Bash(\"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/node_modules/.bin/tsc\" --noEmit --project \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/tsconfig.json\")",
+      "Skill(review)",
+      "Skill(review:*)"
     ]
   }
 }
