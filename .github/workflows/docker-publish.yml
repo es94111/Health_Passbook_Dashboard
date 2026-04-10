@@ -61,5 +61,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # VITE_GOOGLE_CLIENT_ID is baked into the JS bundle at build time by Vite.
+          # Set this secret in GitHub → Settings → Secrets and variables → Actions.
+          build-args: |
+            VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
