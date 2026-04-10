@@ -5,3 +5,27 @@
 body {
   font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
 }
+
+@layer components {
+  .card {
+    @apply bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5;
+  }
+  .section-title {
+    @apply text-base font-semibold text-gray-800 dark:text-gray-100;
+  }
+  .label {
+    @apply block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1;
+  }
+  .input {
+    @apply border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-400;
+  }
+  .btn-primary {
+    @apply bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors;
+  }
+  .btn-danger {
+    @apply bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+}

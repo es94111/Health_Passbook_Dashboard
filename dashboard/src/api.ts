@@ -18,7 +18,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         ...(init?.headers ?? {}),
       },
     });
-  } catch (err) {
+  } catch {
     throw new Error('無法連線至伺服器，請確認後端是否已啟動（npm run server）');
   }
 
@@ -43,7 +43,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-// ── Config ───────────────────────────────────────────────────────────────────
+// ── Config ────────────────────────────────────────────────────────────────────
 
 export interface ServerConfig {
   googleClientId: string | null;
@@ -59,6 +59,19 @@ export interface AuthResponse {
   token: string;
   username: string;
   isAdmin: boolean;
+}
+
+export interface UserProfile {
+  userId: string;
+  username: string;
+  displayName: string | null;
+  isAdmin: boolean;
+  themeMode: 'light' | 'dark' | 'system';
+  googleEmail: string | null;
+  avatarUrl: string | null;
+  hasPassword: boolean;
+  hasGoogle: boolean;
+  createdAt: string;
 }
 
 export function register(username: string, password: string): Promise<AuthResponse> {
@@ -82,7 +95,7 @@ export function loginWithGoogle(credential: string): Promise<AuthResponse> {
   });
 }
 
-export function me(): Promise<{ userId: string; username: string; isAdmin: boolean }> {
+export function me(): Promise<UserProfile> {
   return request('/auth/me');
 }
 
@@ -104,17 +117,100 @@ export function uploadNHIJson(json: object): Promise<UploadResult> {
   });
 }
 
+// ── Account settings ──────────────────────────────────────────────────────────
+
+export function updateTheme(themeMode: 'light' | 'dark' | 'system'): Promise<{ themeMode: string }> {
+  return request('/account/theme', {
+    method: 'PUT',
+    body: JSON.stringify({ themeMode }),
+  });
+}
+
+export function updateDisplayName(displayName: string): Promise<{ displayName: string }> {
+  return request('/account/display-name', {
+    method: 'PUT',
+    body: JSON.stringify({ displayName }),
+  });
+}
+
+export interface LoginLog {
+  id: string;
+  userId: string | null;
+  username: string;
+  isAdmin: boolean;
+  method: 'password' | 'google';
+  success: boolean;
+  failReason?: string;
+  ip: string;
+  country?: string;
+  timestamp: string;
+}
+
+export function fetchLoginLogs(): Promise<LoginLog[]> {
+  return request('/account/login-logs');
+}
+
+export function deleteLoginLogs(ids: string[]): Promise<{ deleted: number }> {
+  return request('/account/login-logs', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export function linkGoogle(credential: string): Promise<{ googleEmail: string; avatarUrl: string | null }> {
+  return request('/account/link-google', {
+    method: 'POST',
+    body: JSON.stringify({ credential }),
+  });
+}
+
+export function unlinkGoogle(): Promise<{ message: string }> {
+  return request('/account/unlink-google', { method: 'POST' });
+}
+
+export function deleteAccount(password?: string): Promise<{ message: string }> {
+  return request('/account/delete', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}
+
+export function setPassword(newPassword: string): Promise<{ message: string }> {
+  return request('/account/set-password', {
+    method: 'POST',
+    body: JSON.stringify({ newPassword }),
+  });
+}
+
+export function changePassword(currentPassword: string, newPassword: string): Promise<{ message: string }> {
+  return request('/account/password', {
+    method: 'PUT',
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 export interface UserInfo {
   id: string;
   username: string;
+  displayName: string | null;
   isAdmin: boolean;
   createdAt: string;
+  googleEmail: string | null;
+  hasGoogle: boolean;
+  hasPassword: boolean;
 }
 
 export function listUsers(): Promise<UserInfo[]> {
   return request('/admin/users');
+}
+
+export function createUser(username: string, password: string, isAdmin: boolean): Promise<UserInfo> {
+  return request('/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({ username, password, isAdmin }),
+  });
 }
 
 export function deleteUser(id: string): Promise<{ message: string }> {
@@ -123,4 +219,32 @@ export function deleteUser(id: string): Promise<{ message: string }> {
 
 export function fetchUserData(id: string): Promise<Record<string, object[]>> {
   return request(`/admin/users/${id}/data`);
+}
+
+export interface AppSettings {
+  publicRegistration: boolean;
+  allowedRegistrationEmails: string[];
+  adminIpAllowlist: string[];
+}
+
+export function fetchAdminSettings(): Promise<AppSettings> {
+  return request('/admin/settings');
+}
+
+export function updateAdminSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  return request('/admin/settings', {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  });
+}
+
+export function fetchAdminLoginLogs(): Promise<LoginLog[]> {
+  return request('/admin/login-logs');
+}
+
+export function deleteAdminLoginLogs(ids: string[]): Promise<{ deleted: number }> {
+  return request('/admin/login-logs', {
+    method: 'DELETE',
+    body: JSON.stringify({ ids }),
+  });
 }

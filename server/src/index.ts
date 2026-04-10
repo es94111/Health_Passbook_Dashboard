@@ -5,6 +5,7 @@ import { loadMasterKey } from './crypto.js';
 import authRouter from './routes/auth.js';
 import dataRouter from './routes/data.js';
 import adminRouter from './routes/admin.js';
+import { accountRouter } from './routes/account.js';
 
 // Load or auto-generate encryption key, then start the HTTP server
 (async () => {
@@ -25,6 +26,7 @@ import adminRouter from './routes/admin.js';
   app.use('/api/auth', authRouter);
   app.use('/api/data', dataRouter);
   app.use('/api/admin', adminRouter);
+  app.use('/api/account', accountRouter);
 
   // Health check
   app.get('/api/ping', (_req, res) => res.json({ ok: true }));

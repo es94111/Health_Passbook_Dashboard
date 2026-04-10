@@ -4,12 +4,18 @@ import path from 'path';
 import {
   deriveUsersKey,
   deriveRecordsKey,
+  deriveSettingsKey,
+  deriveLogsKey,
   readMaybeEncrypted,
   writeEncrypted,
 } from './crypto.js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const LOGS_FILE = path.join(DATA_DIR, 'login-logs.json');
+
+// ── User types ────────────────────────────────────────────────────────────────
 
 export interface User {
   id: string;
@@ -20,6 +26,9 @@ export interface User {
   encryptionSalt: string; // 32-byte hex — derived to produce per-user records key
   googleId?: string;      // Google sub claim (stable unique identifier)
   googleEmail?: string;   // Google email, for display / lookup
+  displayName?: string;   // user-facing name (max 50 chars)
+  themeMode?: 'light' | 'dark' | 'system';
+  avatarUrl?: string;     // sourced from Google profile on link/login
 }
 
 // ── NHI record types (mirrored from frontend) ─────────────────────────────────
@@ -37,6 +46,37 @@ export interface StoredRecords {
 function emptyRecords(): StoredRecords {
   return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {} };
 }
+
+// ── Login log types ───────────────────────────────────────────────────────────
+
+export interface LoginLog {
+  id: string;
+  userId: string | null;         // null when username not found
+  username: string;              // as entered by user
+  isAdmin: boolean;
+  method: 'password' | 'google';
+  success: boolean;
+  failReason?: string;           // set on failure
+  ip: string;
+  country?: string;              // filled async via IP lookup
+  timestamp: string;
+}
+
+const MAX_LOGS = 1000;
+
+// ── App settings ──────────────────────────────────────────────────────────────
+
+export interface AppSettings {
+  publicRegistration: boolean;
+  allowedRegistrationEmails: string[];  // each line one email/domain; empty = no restriction
+  adminIpAllowlist: string[];           // merged with ENV_ADMIN_IP_ALLOWLIST at runtime
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  publicRegistration: true,
+  allowedRegistrationEmails: [],
+  adminIpAllowlist: [],
+};
 
 // ── File helpers ──────────────────────────────────────────────────────────────
 
@@ -59,7 +99,6 @@ async function readUsers(): Promise<User[]> {
         console.log(`[store] 為使用者 ${u.username} 補建 encryptionSalt`);
       }
     }
-    // Re-encrypt the users file (migration)
     await ensureDataDir();
     await writeEncrypted(USERS_FILE, key, data);
     if (changed) {
@@ -106,6 +145,15 @@ export async function createUser(user: Omit<User, 'encryptionSalt'>): Promise<vo
   await writeUsers(users);
 }
 
+export async function updateUser(id: string, patch: Partial<Omit<User, 'id' | 'encryptionSalt'>>): Promise<User | null> {
+  const users = await readUsers();
+  const idx = users.findIndex((u) => u.id === id);
+  if (idx === -1) return null;
+  users[idx] = { ...users[idx], ...patch };
+  await writeUsers(users);
+  return users[idx];
+}
+
 export async function deleteUser(id: string): Promise<boolean> {
   const users = await readUsers();
   const filtered = users.filter((u) => u.id !== id);
@@ -122,17 +170,17 @@ export async function userCount(): Promise<number> {
   return users.length;
 }
 
+export async function adminCount(): Promise<number> {
+  const users = await readUsers();
+  return users.filter((u) => u.isAdmin).length;
+}
+
 // ── Health records store ──────────────────────────────────────────────────────
 
 function recordsFile(userId: string): string {
   return path.join(DATA_DIR, `records-${userId}.json`);
 }
 
-/**
- * Resolve the encryption key for a given user.
- * Handles the migration case where encryptionSalt may be absent on old users
- * (in practice readUsers() already backfills it, but be defensive).
- */
 async function recordsKey(userId: string): Promise<{ key: ReturnType<typeof deriveRecordsKey>; user: User }> {
   const user = await getUserById(userId);
   if (!user) throw new Error(`使用者 ${userId} 不存在`);
@@ -144,7 +192,6 @@ export async function getRecords(userId: string): Promise<StoredRecords> {
   const file = recordsFile(userId);
   const { data, wasMigrated } = await readMaybeEncrypted<StoredRecords>(file, key, emptyRecords());
   if (wasMigrated) {
-    // Re-write as encrypted (lazy migration — happens once per file)
     await ensureDataDir();
     await writeEncrypted(file, key, data);
     console.log(`[store] records-${userId}.json 已從明文遷移至加密格式`);
@@ -152,11 +199,6 @@ export async function getRecords(userId: string): Promise<StoredRecords> {
   return data;
 }
 
-/**
- * Merge new NHI JSON into existing stored records.
- * Uses INSERT-OR-IGNORE semantics: existing records are never overwritten.
- * Returns counts of new vs duplicate records per type.
- */
 export async function mergeRecords(
   userId: string,
   incoming: Partial<Record<string, object[]>>,
@@ -189,9 +231,6 @@ export async function mergeRecords(
   return stats;
 }
 
-/**
- * Flatten StoredRecords back into NHI-style arrays for the frontend parser.
- */
 export function flattenRecords(stored: StoredRecords): Record<string, object[]> {
   return {
     r1: Object.values(stored.r1),
@@ -201,6 +240,110 @@ export function flattenRecords(stored: StoredRecords): Record<string, object[]> 
     r7: Object.values(stored.r7),
     r8: Object.values(stored.r8),
   };
+}
+
+// ── Login logs store ──────────────────────────────────────────────────────────
+
+async function readLogs(): Promise<LoginLog[]> {
+  const key = deriveLogsKey();
+  const { data } = await readMaybeEncrypted<LoginLog[]>(LOGS_FILE, key, []);
+  return data;
+}
+
+async function writeLogs(logs: LoginLog[]): Promise<void> {
+  await ensureDataDir();
+  const key = deriveLogsKey();
+  await writeEncrypted(LOGS_FILE, key, logs);
+}
+
+export async function addLoginLog(log: Omit<LoginLog, 'id'>): Promise<LoginLog> {
+  const logs = await readLogs();
+  const entry: LoginLog = { id: crypto.randomUUID(), ...log };
+  logs.push(entry);
+  // Prune to MAX_LOGS (keep most recent)
+  const pruned = logs.length > MAX_LOGS ? logs.slice(logs.length - MAX_LOGS) : logs;
+  await writeLogs(pruned);
+  return entry;
+}
+
+/** Get login logs. userId = undefined → all logs (admin). userId set → user's own successful logins only. */
+export async function getLoginLogs(userId?: string, limit = 100): Promise<LoginLog[]> {
+  const logs = await readLogs();
+  const filtered = userId
+    ? logs.filter((l) => l.userId === userId && l.success)
+    : logs;
+  return filtered.slice(-limit).reverse();
+}
+
+/** Update country field async after IP lookup. */
+export async function updateLogCountry(logId: string, country: string): Promise<void> {
+  const logs = await readLogs();
+  const idx = logs.findIndex((l) => l.id === logId);
+  if (idx !== -1) {
+    logs[idx] = { ...logs[idx], country };
+    await writeLogs(logs);
+  }
+}
+
+/** Delete specific log entries (admin batch delete). */
+export async function deleteLoginLogs(ids: string[]): Promise<number> {
+  const idSet = new Set(ids);
+  const logs = await readLogs();
+  const filtered = logs.filter((l) => !idSet.has(l.id));
+  const deleted = logs.length - filtered.length;
+  await writeLogs(filtered);
+  return deleted;
+}
+
+// ── App settings store ────────────────────────────────────────────────────────
+
+async function readSettings(): Promise<AppSettings> {
+  const key = deriveSettingsKey();
+  const { data } = await readMaybeEncrypted<AppSettings>(SETTINGS_FILE, key, DEFAULT_SETTINGS);
+  // Merge with defaults to handle missing fields on upgrade
+  return { ...DEFAULT_SETTINGS, ...data };
+}
+
+async function writeSettings(settings: AppSettings): Promise<void> {
+  await ensureDataDir();
+  const key = deriveSettingsKey();
+  await writeEncrypted(SETTINGS_FILE, key, settings);
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return readSettings();
+}
+
+export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  const current = await readSettings();
+  const updated = { ...current, ...patch };
+  await writeSettings(updated);
+  return updated;
+}
+
+/**
+ * Check if a given email address is allowed to self-register.
+ *
+ * Rules (in priority order):
+ * 1. No users exist → always allow (first admin account)
+ * 2. allowedRegistrationEmails not empty → only listed emails allowed
+ * 3. allowedRegistrationEmails empty + publicRegistration true → any email allowed
+ * 4. allowedRegistrationEmails empty + publicRegistration false → denied
+ */
+export async function canSelfRegister(email: string | null): Promise<boolean> {
+  const count = await userCount();
+  if (count === 0) return true;
+
+  const settings = await readSettings();
+
+  if (settings.allowedRegistrationEmails.length > 0) {
+    if (!email) return false;
+    return settings.allowedRegistrationEmails
+      .map((e) => e.trim().toLowerCase())
+      .includes(email.toLowerCase());
+  }
+
+  return settings.publicRegistration;
 }
 
 // ── Dedup key functions ───────────────────────────────────────────────────────

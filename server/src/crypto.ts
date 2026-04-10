@@ -94,14 +94,16 @@ export function deriveKey(salt: Buffer, info: string): Buffer {
   );
 }
 
-// Fixed derivation parameters for the users file (no per-user salt needed —
-// the master key itself is the secret; HKDF info string differentiates it from
-// record file keys).
-// Non-zero fixed constant improves HKDF hygiene (RFC 5869 §3.1 recommends non-zero salt).
-// This must never change once data has been encrypted with this salt.
-const USERS_SALT = Buffer.from('4e48492d75736572732d66696c652d73616c742d7631', 'hex');
-const USERS_INFO = 'nhi-users-file-v1';
-const RECORDS_INFO = 'nhi-health-records-v1';
+// Fixed derivation parameters — salts must never change once data has been encrypted.
+// Non-zero fixed constants improve HKDF hygiene (RFC 5869 §3.1 recommends non-zero salt).
+const USERS_SALT    = Buffer.from('4e48492d75736572732d66696c652d73616c742d7631', 'hex');
+const SETTINGS_SALT = Buffer.from('4e48492d73657474696e67732d73616c742d7631000', 'hex');
+const LOGS_SALT     = Buffer.from('4e48492d6c6f67732d66696c652d73616c742d763100', 'hex');
+
+const USERS_INFO    = 'nhi-users-file-v1';
+const RECORDS_INFO  = 'nhi-health-records-v1';
+const SETTINGS_INFO = 'nhi-settings-file-v1';
+const LOGS_INFO     = 'nhi-login-logs-file-v1';
 
 export function deriveUsersKey(): Buffer {
   return deriveKey(USERS_SALT, USERS_INFO);
@@ -109,6 +111,14 @@ export function deriveUsersKey(): Buffer {
 
 export function deriveRecordsKey(saltHex: string): Buffer {
   return deriveKey(Buffer.from(saltHex, 'hex'), RECORDS_INFO);
+}
+
+export function deriveSettingsKey(): Buffer {
+  return deriveKey(SETTINGS_SALT, SETTINGS_INFO);
+}
+
+export function deriveLogsKey(): Buffer {
+  return deriveKey(LOGS_SALT, LOGS_INFO);
 }
 
 // ── AES-256-GCM encrypt / decrypt ─────────────────────────────────────────────

@@ -13,7 +13,9 @@
       "Skill(review)",
       "Skill(review:*)",
       "Bash(find \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/dashboard\" -name \"vite.config*\" -exec cat {} \\\\;)",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "Bash(npm run:*)",
+      "Bash(echo \"EXIT: $?\")"
     ]
   }
 }

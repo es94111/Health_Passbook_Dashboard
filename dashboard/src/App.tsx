@@ -1,10 +1,12 @@
 import { useReducer, useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import type { NHIData } from './parsers/types';
 import { parseNHIJson } from './parsers/nhi-parser';
-import { me, fetchHealthData } from './api';
+import type { UserProfile } from './api';
+import { me, fetchHealthData, fetchConfig } from './api';
+import { ThemeProvider } from './ThemeContext';
 import LoginScreen from './components/LoginScreen';
 import FileLoader from './components/FileLoader';
-import AdminPanel from './components/AdminPanel';
 import SummaryStats from './components/SummaryStats';
 import VisitTimeline from './components/VisitTimeline';
 import LabTrendCharts from './components/LabTrendCharts';
@@ -13,14 +15,8 @@ import VaccinationCard from './components/VaccinationCard';
 import CheckupReportList from './components/CheckupReportList';
 import DentalVisitList from './components/DentalVisitList';
 import HospitalizationList from './components/HospitalizationList';
-
-// ── Auth state ────────────────────────────────────────────────────────────────
-
-interface AuthState {
-  userId: string;
-  username: string;
-  isAdmin: boolean;
-}
+import AccountSettingsPage from './pages/AccountSettingsPage';
+import AdminSettingsPage from './pages/AdminSettingsPage';
 
 // ── Data reducer ──────────────────────────────────────────────────────────────
 
@@ -39,93 +35,33 @@ function dataReducer(_state: NHIData | null, action: DataAction): NHIData | null
 type Tab = '門診' | '住院' | '檢驗' | '牙科' | '預防保健';
 const TABS: Tab[] = ['門診', '住院', '檢驗', '牙科', '預防保健'];
 
-// ── App ───────────────────────────────────────────────────────────────────────
+// ── Dashboard page ────────────────────────────────────────────────────────────
 
-export default function App() {
-  const [auth, setAuth] = useState<AuthState | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [nhiData, dispatch] = useReducer(dataReducer, null);
-  const [showAdmin, setShowAdmin] = useState(false);
+interface DashboardProps {
+  profile: UserProfile;
+  nhiData: NHIData | null;
+  dispatch: React.Dispatch<DataAction>;
+  onLogout: () => void;
+}
+
+function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('門診');
-
-  // On mount: check if there's a valid stored token and auto-load data
-  useEffect(() => {
-    const token = localStorage.getItem('nhi_token');
-    if (!token) { setAuthLoading(false); return; }
-
-    me()
-      .then(async (user) => {
-        setAuth({ userId: user.userId, username: user.username, isAdmin: user.isAdmin });
-        // Auto-load existing health data from server
-        try {
-          const raw = await fetchHealthData();
-          const hasData = Object.values(raw).some((arr) => arr.length > 0);
-          if (hasData) {
-            const parsed = parseNHIJson(raw as Record<string, unknown[]>);
-            dispatch({ type: 'LOAD', data: parsed });
-          }
-        } catch {
-          // No data yet — that's fine, FileLoader will handle upload
-        }
-      })
-      .catch(() => {
-        localStorage.removeItem('nhi_token');
-      })
-      .finally(() => setAuthLoading(false));
-  }, []);
-
-  function handleAuth(token: string, username: string, isAdmin: boolean) {
-    // me() call already made inside LoginScreen — just store state
-    // We need userId from the token payload
-    const payload = JSON.parse(atob(token.split('.')[1])) as { userId: string };
-    setAuth({ userId: payload.userId, username, isAdmin });
-
-    // Auto-load existing health data from server after manual login
-    fetchHealthData()
-      .then((raw) => {
-        const hasData = Object.values(raw).some((arr) => arr.length > 0);
-        if (hasData) {
-          const parsed = parseNHIJson(raw as Record<string, unknown[]>);
-          dispatch({ type: 'LOAD', data: parsed });
-        }
-      })
-      .catch(() => {
-        // No data yet — FileLoader will handle the upload
-      });
-  }
-
-  function handleLogout() {
-    localStorage.removeItem('nhi_token');
-    setAuth(null);
-    dispatch({ type: 'CLEAR' });
-  }
-
-  // ── Loading spinner ──────────────────────────────────────────────────────────
-
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  // ── Not logged in ────────────────────────────────────────────────────────────
-
-  if (!auth) {
-    return <LoginScreen onAuth={handleAuth} />;
-  }
-
-  // ── Logged in, no data yet ───────────────────────────────────────────────────
 
   if (!nhiData) {
     return (
       <>
-        <div className="fixed top-0 inset-x-0 z-10 bg-white border-b border-teal-100 px-4 py-3 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-teal-700">健康存摺儀表板</h1>
-          <div className="flex items-center gap-3 text-sm text-gray-500">
-            <span>{auth.username}{auth.isAdmin && <span className="ml-1 text-xs text-teal-600">管理員</span>}</span>
-            <button onClick={handleLogout} className="underline hover:text-gray-700">登出</button>
+        <div className="fixed top-0 inset-x-0 z-10 bg-white dark:bg-gray-800 border-b border-teal-100 dark:border-gray-700 px-4 py-3 flex items-center justify-between">
+          <h1 className="text-lg font-bold text-teal-700 dark:text-teal-400">健康存摺儀表板</h1>
+          <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+            <button
+              onClick={() => navigate('/settings/account')}
+              className="underline hover:text-gray-700 dark:hover:text-gray-200"
+            >
+              {profile.displayName ?? profile.username}
+              {profile.isAdmin && <span className="ml-1 text-xs text-teal-600">管理員</span>}
+            </button>
+            <button onClick={onLogout} className="underline hover:text-gray-700 dark:hover:text-gray-200">登出</button>
           </div>
         </div>
         <div className="pt-14">
@@ -135,36 +71,33 @@ export default function App() {
     );
   }
 
-  // ── Dashboard ────────────────────────────────────────────────────────────────
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      {showAdmin && (
-        <AdminPanel currentUserId={auth.userId} onClose={() => setShowAdmin(false)} />
-      )}
-
-      <header className="bg-white border-b border-teal-100 px-4 py-3 flex items-center justify-between">
-        <h1 className="text-lg font-bold text-teal-700">健康存摺儀表板</h1>
-        <div className="flex items-center gap-3 text-sm text-gray-500">
-          <span>
-            {auth.username}
-            {auth.isAdmin && <span className="ml-1 text-xs text-teal-600">管理員</span>}
-          </span>
-          {auth.isAdmin && (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <header className="bg-white dark:bg-gray-800 border-b border-teal-100 dark:border-gray-700 px-4 py-3 flex items-center justify-between">
+        <h1 className="text-lg font-bold text-teal-700 dark:text-teal-400">健康存摺儀表板</h1>
+        <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
+          <button
+            onClick={() => navigate('/settings/account')}
+            className="underline hover:text-gray-700 dark:hover:text-gray-200"
+          >
+            {profile.displayName ?? profile.username}
+            {profile.isAdmin && <span className="ml-1 text-xs text-teal-600">管理員</span>}
+          </button>
+          {profile.isAdmin && (
             <button
-              onClick={() => setShowAdmin(true)}
-              className="text-sm text-teal-600 hover:text-teal-800 underline"
+              onClick={() => navigate('/settings/admin')}
+              className="text-sm text-teal-600 hover:text-teal-800 dark:text-teal-400 underline"
             >
-              使用者管理
+              管理員設定
             </button>
           )}
           <button
             onClick={() => dispatch({ type: 'CLEAR' })}
-            className="underline hover:text-gray-700"
+            className="underline hover:text-gray-700 dark:hover:text-gray-200"
           >
             匯入新資料
           </button>
-          <button onClick={handleLogout} className="underline hover:text-gray-700">登出</button>
+          <button onClick={onLogout} className="underline hover:text-gray-700 dark:hover:text-gray-200">登出</button>
         </div>
       </header>
 
@@ -172,15 +105,15 @@ export default function App() {
         <SummaryStats data={nhiData} />
 
         {/* Tab navigation */}
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
+        <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
           {TABS.map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
                 activeTab === tab
-                  ? 'bg-white text-teal-700 font-medium shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'bg-white dark:bg-gray-700 text-teal-700 dark:text-teal-400 font-medium shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
             >
               {tab}
@@ -212,5 +145,131 @@ export default function App() {
         )}
       </main>
     </div>
+  );
+}
+
+// ── App root (with auth + data state) ────────────────────────────────────────
+
+function AppRoot() {
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [nhiData, dispatch] = useReducer(dataReducer, null);
+  const [googleClientId, setGoogleClientId] = useState<string | null>(null);
+
+  // Fetch server config (Google Client ID, etc.)
+  useEffect(() => {
+    fetchConfig().then((cfg) => setGoogleClientId(cfg.googleClientId)).catch(() => {});
+  }, []);
+
+  // On mount: check stored token and auto-load data
+  useEffect(() => {
+    const token = localStorage.getItem('nhi_token');
+    if (!token) { setAuthLoading(false); return; }
+
+    me()
+      .then(async (user) => {
+        setProfile(user);
+        try {
+          const raw = await fetchHealthData();
+          const hasData = Object.values(raw).some((arr) => arr.length > 0);
+          if (hasData) {
+            const parsed = parseNHIJson(raw as Record<string, unknown[]>);
+            dispatch({ type: 'LOAD', data: parsed });
+          }
+        } catch {
+          // No data yet
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem('nhi_token');
+      })
+      .finally(() => setAuthLoading(false));
+  }, []);
+
+  function handleAuth(token: string, _username: string, _isAdmin: boolean) {
+    // Decode token to get userId, then fetch full profile
+    void token; // token already stored by LoginScreen
+    me()
+      .then(async (user) => {
+        setProfile(user);
+        try {
+          const raw = await fetchHealthData();
+          const hasData = Object.values(raw).some((arr) => arr.length > 0);
+          if (hasData) {
+            const parsed = parseNHIJson(raw as Record<string, unknown[]>);
+            dispatch({ type: 'LOAD', data: parsed });
+          }
+        } catch {
+          // No data yet
+        }
+      })
+      .catch(() => {});
+  }
+
+  function handleLogout() {
+    localStorage.removeItem('nhi_token');
+    setProfile(null);
+    dispatch({ type: 'CLEAR' });
+  }
+
+  function handleProfileUpdate(patch: Partial<UserProfile>) {
+    setProfile((prev) => prev ? { ...prev, ...patch } : prev);
+  }
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+        <div className="w-8 h-8 border-2 border-teal-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return <LoginScreen onAuth={handleAuth} />;
+  }
+
+  return (
+    <ThemeProvider initialTheme={profile.themeMode}>
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <DashboardPage
+              profile={profile}
+              nhiData={nhiData}
+              dispatch={dispatch}
+              onLogout={handleLogout}
+            />
+          }
+        />
+        <Route
+          path="/settings/account"
+          element={
+            <AccountSettingsPage
+              profile={profile}
+              googleClientId={googleClientId}
+              onLogout={handleLogout}
+              onProfileUpdate={handleProfileUpdate}
+            />
+          }
+        />
+        {profile.isAdmin && (
+          <Route
+            path="/settings/admin"
+            element={<AdminSettingsPage currentUserId={profile.userId} />}
+          />
+        )}
+        {/* Fallback: any unknown route → home */}
+        <Route path="*" element={<DashboardPage profile={profile} nhiData={nhiData} dispatch={dispatch} onLogout={handleLogout} />} />
+      </Routes>
+    </ThemeProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoot />
+    </BrowserRouter>
   );
 }
