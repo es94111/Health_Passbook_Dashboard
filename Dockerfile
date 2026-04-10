@@ -2,7 +2,10 @@
 FROM node:22-alpine AS dashboard-build
 WORKDIR /app
 COPY dashboard/package*.json dashboard/
-RUN npm ci --prefix dashboard
+# Use npm install (not ci) — lock file generated on Windows/npm-11 omits some
+# Linux-only optional deps (@emnapi/core, @emnapi/runtime) that npm-10 on Alpine
+# would reject. ci is only needed for the lean production runtime stage.
+RUN npm install --prefix dashboard
 COPY dashboard/ dashboard/
 RUN npm run build --prefix dashboard
 
@@ -10,7 +13,7 @@ RUN npm run build --prefix dashboard
 FROM node:22-alpine AS server-build
 WORKDIR /app
 COPY server/package*.json server/
-RUN npm ci --prefix server
+RUN npm install --prefix server
 COPY server/ server/
 RUN npm run build --prefix server
 
