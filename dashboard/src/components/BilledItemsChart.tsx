@@ -17,7 +17,9 @@ function classifyCode(code: string): 'drug' | 'procedure' | 'unknown' {
 }
 
 function toDateStr(d: Date): string {
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  // Use local date (not UTC) to match how browser date inputs interpret values
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 const TOP_N = 20;

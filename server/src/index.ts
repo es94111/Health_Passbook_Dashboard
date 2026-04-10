@@ -36,4 +36,7 @@ import adminRouter from './routes/admin.js';
   app.listen(PORT, () => {
     console.log(`健康存摺伺服器啟動：http://localhost:${PORT}`);
   });
-})();
+})().catch((err: Error) => {
+  console.error('[startup] 致命錯誤，伺服器無法啟動：', err);
+  process.exit(1);
+});

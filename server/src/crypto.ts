@@ -54,11 +54,17 @@ export async function loadMasterKey(): Promise<void> {
   try {
     const raw = await fs.readFile(KEY_FILE, 'utf-8');
     const hex = raw.trim();
-    if (hex.length !== 64) throw new Error('格式錯誤');
+    if (hex.length !== 64) {
+      throw new Error(`[crypto] 金鑰檔案格式錯誤（長度 ${hex.length}，應為 64）：${KEY_FILE}\n請確認金鑰檔案完整，或刪除後重新啟動以產生新金鑰（注意：現有資料將無法解密）。`);
+    }
     _masterKey = Buffer.from(hex, 'hex');
     console.log(`[crypto] 從金鑰檔案載入主金鑰：${KEY_FILE}`);
-  } catch {
-    // Auto-generate a new master key and persist it
+  } catch (err: unknown) {
+    // Only auto-generate if the file doesn't exist yet (ENOENT)
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw err; // Corrupt/unreadable key file — do NOT silently generate a new key
+    }
+    // First run: auto-generate a new master key and persist it
     _masterKey = crypto.randomBytes(32);
     await fs.mkdir(path.dirname(KEY_FILE), { recursive: true });
     await fs.writeFile(KEY_FILE, _masterKey.toString('hex'), { encoding: 'utf-8', mode: 0o600 });

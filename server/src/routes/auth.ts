@@ -65,6 +65,12 @@ router.post('/login', async (req, res) => {
     return;
   }
 
+  // Google-only accounts have no password — reject password login attempts
+  if (!user.passwordHash) {
+    res.status(401).json({ error: '此帳號僅支援 Google 登入' });
+    return;
+  }
+
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
     res.status(401).json({ error: '帳號或密碼錯誤' });
@@ -84,14 +90,13 @@ router.post('/google', async (req, res) => {
   }
 
   const { credential } = req.body as { credential?: string };
-  if (!credential) {
+  if (!credential || typeof credential !== 'string') {
     res.status(400).json({ error: '缺少 Google credential' });
     return;
   }
 
   let googleId: string;
   let email: string;
-  let name: string;
 
   try {
     const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: clientId });
@@ -99,10 +104,13 @@ router.post('/google', async (req, res) => {
     if (!payload?.sub || !payload.email) {
       throw new Error('無效的 Google token payload');
     }
+    if (!payload.email_verified) {
+      throw new Error('Google 帳號的電子郵件尚未驗證');
+    }
     googleId = payload.sub;
     email = payload.email;
-    name = payload.name ?? payload.email.split('@')[0];
-  } catch {
+  } catch (err) {
+    console.error('[auth] Google token 驗證失敗：', err);
     res.status(401).json({ error: 'Google 憑證驗證失敗，請重試' });
     return;
   }
@@ -131,12 +139,19 @@ router.post('/google', async (req, res) => {
     };
 
     await createUser(newUser);
-    user = await getUserByGoogleId(googleId) ?? { ...newUser, encryptionSalt: '' };
+    user = await getUserByGoogleId(googleId);
+    if (!user) {
+      // Should never happen — createUser succeeded, but defensive guard avoids returning
+      // a user object with an empty encryptionSalt that would brick the account
+      console.error('[auth] createUser 成功但無法讀回使用者資料，Google ID：', googleId);
+      res.status(500).json({ error: '建立帳號失敗，請重試' });
+      return;
+    }
     console.log(`[auth] Google SSO 自動建立帳號：${username} (${email})`);
   }
 
   const token = signToken({ userId: user.id, username: user.username, isAdmin: user.isAdmin });
-  res.json({ token, username: user.username, isAdmin: user.isAdmin, googleName: name });
+  res.json({ token, username: user.username, isAdmin: user.isAdmin });
 });
 
 // GET /api/auth/me
