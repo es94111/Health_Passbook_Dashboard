@@ -79,6 +79,19 @@ export default function App() {
     // We need userId from the token payload
     const payload = JSON.parse(atob(token.split('.')[1])) as { userId: string };
     setAuth({ userId: payload.userId, username, isAdmin });
+
+    // Auto-load existing health data from server after manual login
+    fetchHealthData()
+      .then((raw) => {
+        const hasData = Object.values(raw).some((arr) => arr.length > 0);
+        if (hasData) {
+          const parsed = parseNHIJson(raw as Record<string, unknown[]>);
+          dispatch({ type: 'LOAD', data: parsed });
+        }
+      })
+      .catch(() => {
+        // No data yet — FileLoader will handle the upload
+      });
   }
 
   function handleLogout() {

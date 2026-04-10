@@ -43,7 +43,10 @@ export default function BilledItemsChart({ visits }: Props) {
   const [endDate, setEndDate] = useState('');
 
   const filteredVisits = useMemo(() => {
-    const start = startDate ? new Date(startDate) : null;
+    // Use local midnight (T00:00:00) to match parseNHIDate which creates local-time dates.
+    // new Date("YYYY-MM-DD") parses as UTC midnight, which is ahead of local midnight
+    // in UTC+ zones and would incorrectly exclude visits on the start day.
+    const start = startDate ? new Date(startDate + 'T00:00:00') : null;
     const end = endDate ? new Date(endDate + 'T23:59:59') : null;
     return visits.filter((v) => {
       if (start && v.date < start) return false;

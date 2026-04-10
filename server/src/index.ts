@@ -1,5 +1,6 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
+import path from 'path';
 import { loadMasterKey } from './crypto.js';
 import authRouter from './routes/auth.js';
 import dataRouter from './routes/data.js';
@@ -24,6 +25,15 @@ import adminRouter from './routes/admin.js';
 
   // Health check
   app.get('/api/ping', (_req, res) => res.json({ ok: true }));
+
+  // Serve dashboard SPA in production (docker / npm start)
+  // In dev the Vite dev server handles this via proxy — only activate when public/ exists
+  const PUBLIC = path.join(process.cwd(), 'public');
+  app.use(express.static(PUBLIC));
+  app.get('*', (_req, res, next) => {
+    const indexFile = path.join(PUBLIC, 'index.html');
+    res.sendFile(indexFile, (err) => { if (err) next(); });
+  });
 
   // Global error handler — ensures every error returns JSON, never empty body
   // eslint-disable-next-line @typescript-eslint/no-unused-vars

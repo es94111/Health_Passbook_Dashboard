@@ -1,0 +1,9 @@
+**/node_modules
+**/dist
+**/.env
+data/
+.git/
+.github/
+.claude/
+.gstack/
+myhealthbankapp/
