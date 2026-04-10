@@ -4,3 +4,4 @@ node_modules
 # Server data — contains user health data, never commit
 server/data/
 node_modules/
+data/
