@@ -1,12 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'nhi-dashboard-secret-change-in-prod';
-
 if (!process.env.JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET 必須設定！健康資料伺服器在生產環境下不允許使用預設金鑰。\n生成指令：openssl rand -hex 32');
+  }
   console.warn('[auth] ⚠  JWT_SECRET 未設定，使用預設值。請設定此環境變數以確保安全性。');
   console.warn('[auth]    生成指令：openssl rand -hex 32');
 }
+
+const JWT_SECRET = process.env.JWT_SECRET ?? 'nhi-dashboard-secret-change-in-prod';
 
 export interface JwtPayload {
   userId: string;
