@@ -12,7 +12,8 @@
       "Bash(\"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/node_modules/.bin/tsc\" --noEmit --project \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/server/tsconfig.json\")",
       "Skill(review)",
       "Skill(review:*)",
-      "Bash(find \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/dashboard\" -name \"vite.config*\" -exec cat {} \\\\;)"
+      "Bash(find \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/dashboard\" -name \"vite.config*\" -exec cat {} \\\\;)",
+      "Bash(npm --version)"
     ]
   }
 }
