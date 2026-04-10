@@ -43,6 +43,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// ── Config ───────────────────────────────────────────────────────────────────
+
+export interface ServerConfig {
+  googleClientId: string | null;
+}
+
+export function fetchConfig(): Promise<ServerConfig> {
+  return request('/auth/config');
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export interface AuthResponse {

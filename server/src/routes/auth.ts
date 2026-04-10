@@ -9,6 +9,13 @@ const googleClient = new OAuth2Client();
 
 const router = Router();
 
+// GET /api/auth/config  — public endpoint, tells the frontend which features are enabled
+router.get('/config', (_req, res) => {
+  res.json({
+    googleClientId: process.env.GOOGLE_CLIENT_ID ?? null,
+  });
+});
+
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };

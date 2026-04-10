@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { login, register, loginWithGoogle } from '../api';
+import { login, register, loginWithGoogle, fetchConfig } from '../api';
 
 interface Props {
   onAuth: (token: string, username: string, isAdmin: boolean) => void;
 }
-
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined;
 
 export default function LoginScreen({ onAuth }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -13,16 +11,24 @@ export default function LoginScreen({ onAuth }: Props) {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [googleClientId, setGoogleClientId] = useState<string | null>(null);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
-  // Initialise Google Identity Services once the GSI script is ready
+  // Fetch server config to get Google Client ID at runtime
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) return;
+    fetchConfig()
+      .then((cfg) => setGoogleClientId(cfg.googleClientId))
+      .catch(() => { /* Google SSO unavailable — ignore */ });
+  }, []);
+
+  // Initialise Google Identity Services once client ID is known and script is ready
+  useEffect(() => {
+    if (!googleClientId) return;
 
     function initGoogle() {
       if (!window.google?.accounts?.id || !googleBtnRef.current) return;
       window.google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID!,
+        client_id: googleClientId!,
         callback: handleGoogleCredential,
         cancel_on_tap_outside: true,
       });
@@ -47,7 +53,7 @@ export default function LoginScreen({ onAuth }: Props) {
       }, 200);
       return () => clearInterval(interval);
     }
-  }, []);
+  }, [googleClientId]);
 
   async function handleGoogleCredential(response: { credential: string }) {
     setError(null);
@@ -103,7 +109,7 @@ export default function LoginScreen({ onAuth }: Props) {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
 
           {/* Google SSO button */}
-          {GOOGLE_CLIENT_ID && (
+          {googleClientId && (
             <>
               <div ref={googleBtnRef} className="w-full" />
               <div className="flex items-center gap-3 my-5">
