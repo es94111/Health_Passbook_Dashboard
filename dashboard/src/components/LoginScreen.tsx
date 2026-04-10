@@ -14,14 +14,12 @@ export default function LoginScreen({ onAuth }: Props) {
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
-  // Fetch server config to get Google Client ID at runtime
   useEffect(() => {
     fetchConfig()
       .then((cfg) => setGoogleClientId(cfg.googleClientId))
-      .catch(() => { /* Google SSO unavailable — ignore */ });
+      .catch(() => {});
   }, []);
 
-  // Initialise Google Identity Services once client ID is known and script is ready
   useEffect(() => {
     if (!googleClientId) return;
 
@@ -41,7 +39,6 @@ export default function LoginScreen({ onAuth }: Props) {
       });
     }
 
-    // GSI script may load after component mount
     if (window.google?.accounts?.id) {
       initGoogle();
     } else {
@@ -86,11 +83,11 @@ export default function LoginScreen({ onAuth }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 to-white flex items-center justify-center px-4">
+    <div className="min-h-screen bg-gradient-to-br from-teal-50 to-white dark:from-gray-950 dark:to-gray-900 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <svg viewBox="0 0 40 40" className="w-12 h-12 mb-3" fill="none">
+          <svg viewBox="0 0 40 40" className="w-12 h-12 mb-3" fill="none" aria-hidden="true">
             <rect width="40" height="40" rx="10" fill="#0d9488" />
             <polyline
               points="4,20 10,20 14,10 18,30 22,14 26,26 30,20 36,20"
@@ -101,92 +98,114 @@ export default function LoginScreen({ onAuth }: Props) {
               fill="none"
             />
           </svg>
-          <h1 className="text-2xl font-bold text-teal-700">健康存摺儀表板</h1>
-          <p className="text-sm text-gray-500 mt-1">個人健康資料管理系統</p>
+          <h1 className="text-2xl font-bold text-teal-700 dark:text-teal-400">健康存摺儀表板</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">個人健康資料管理系統</p>
         </div>
 
         {/* Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-8">
 
           {/* Google SSO button */}
           {googleClientId && (
             <>
-              <div ref={googleBtnRef} className="w-full" />
-              <div className="flex items-center gap-3 my-5">
-                <div className="flex-1 h-px bg-gray-200" />
-                <span className="text-xs text-gray-400">或使用帳號密碼</span>
-                <div className="flex-1 h-px bg-gray-200" />
+              <div ref={googleBtnRef} className="w-full" aria-label="使用 Google 帳號繼續" />
+              <div className="flex items-center gap-3 my-5" aria-hidden="true">
+                <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
+                <span className="text-xs text-gray-400 dark:text-gray-500">或使用帳號密碼</span>
+                <div className="flex-1 h-px bg-gray-200 dark:bg-gray-700" />
               </div>
             </>
           )}
 
           {/* Mode toggle */}
-          <div className="flex rounded-lg overflow-hidden border border-gray-200 mb-6">
+          <div
+            className="flex rounded-lg overflow-hidden border border-gray-200 dark:border-gray-600 mb-6"
+            role="tablist"
+            aria-label="登入或註冊"
+          >
             <button
               type="button"
+              role="tab"
+              aria-selected={mode === 'login'}
               onClick={() => { setMode('login'); setError(null); }}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              className={`flex-1 py-2 text-sm font-medium transition-colors cursor-pointer ${
                 mode === 'login'
                   ? 'bg-teal-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
               }`}
             >
               登入
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={mode === 'register'}
               onClick={() => { setMode('register'); setError(null); }}
-              className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              className={`flex-1 py-2 text-sm font-medium transition-colors cursor-pointer ${
                 mode === 'register'
                   ? 'bg-teal-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
+                  : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
               }`}
             >
               註冊
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">帳號</label>
+              <label htmlFor="login-username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                帳號
+              </label>
               <input
+                id="login-username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-colors"
                 placeholder="輸入帳號"
-                autoComplete={mode === 'login' ? 'username' : 'new-password'}
+                autoComplete="username"
                 required
+                minLength={3}
+                maxLength={32}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">密碼</label>
+              <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                密碼
+              </label>
               <input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-400"
+                className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-colors"
                 placeholder={mode === 'register' ? '至少 6 個字元' : '輸入密碼'}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 required
+                minLength={mode === 'register' ? 6 : 1}
               />
             </div>
 
             {error && (
-              <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+              <p
+                className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 rounded-lg px-3 py-2 msg-fade"
+                role="alert"
+              >
+                {error}
+              </p>
             )}
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-medium py-2.5 rounded-lg text-sm transition-colors"
+              className="w-full btn-primary py-2.5 text-base"
             >
               {loading ? '處理中…' : mode === 'login' ? '登入' : '建立帳號'}
             </button>
           </form>
 
           {mode === 'register' && (
-            <p className="text-xs text-gray-400 mt-4 text-center">
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-4 text-center">
               第一位註冊的使用者將成為管理員
             </p>
           )}

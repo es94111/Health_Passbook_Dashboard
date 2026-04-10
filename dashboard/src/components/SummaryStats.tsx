@@ -33,13 +33,18 @@ export default function SummaryStats({ data }: Props) {
   ];
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4">
+    <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-1">
       {stats.map(({ label, value }) => (
-        <div key={label} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 text-center">
-          <div className="text-2xl font-bold text-teal-600">{value}</div>
-          <div className="text-sm text-gray-500 mt-1">{label}</div>
+        <div
+          key={label}
+          className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4 text-center shadow-sm hover:shadow-md hover:border-teal-200 dark:hover:border-teal-700 transition-all duration-200"
+        >
+          <dd className="text-2xl font-bold text-teal-600 dark:text-teal-400 tabular-nums">
+            {value}
+          </dd>
+          <dt className="text-sm text-gray-500 dark:text-gray-400 mt-1">{label}</dt>
         </div>
       ))}
-    </div>
+    </dl>
   );
 }

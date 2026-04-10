@@ -113,8 +113,12 @@ function SystemSettingsSection() {
           <button onClick={handleSave} disabled={saving} className="btn-primary">
             {saving ? '儲存中…' : '儲存設定'}
           </button>
-          {success && <span className="text-green-600 text-sm">已儲存</span>}
-          {error && <span className="text-red-500 text-sm">{error}</span>}
+          {success && (
+            <span className="text-green-600 dark:text-green-400 text-sm msg-fade" aria-live="polite">已儲存</span>
+          )}
+          {error && (
+            <span className="text-red-500 text-sm msg-fade" role="alert">{error}</span>
+          )}
         </div>
 
         {settings && (
@@ -167,19 +171,28 @@ function CreateUserSection({ onCreated }: { onCreated: (user: UserInfo) => void 
       <h2 className="section-title">新增使用者</h2>
       <div className="mt-3 space-y-2">
         <input
+          id="new-username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           className="input w-full"
           placeholder="帳號（3-32 字元）"
+          autoComplete="off"
+          aria-label="新使用者帳號"
+          minLength={3}
+          maxLength={32}
         />
         <input
+          id="new-user-password"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="input w-full"
           placeholder="密碼（至少 6 個字元）"
+          autoComplete="new-password"
+          aria-label="新使用者密碼"
+          minLength={6}
         />
-        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
           <input
             type="checkbox"
             checked={isAdmin}
@@ -190,7 +203,7 @@ function CreateUserSection({ onCreated }: { onCreated: (user: UserInfo) => void 
         <button onClick={handleCreate} disabled={creating} className="btn-primary">
           {creating ? '建立中…' : '建立帳號'}
         </button>
-        {error && <p className="text-red-500 text-xs">{error}</p>}
+        {error && <p className="text-red-500 text-xs msg-fade" role="alert">{error}</p>}
       </div>
     </section>
   );
@@ -440,7 +453,8 @@ export default function AdminSettingsPage({ currentUserId }: Props) {
       <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex items-center gap-3">
         <button
           onClick={() => navigate('/')}
-          className="text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-200 text-sm"
+          className="text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-200 text-sm cursor-pointer flex items-center gap-1"
+          aria-label="返回儀表板"
         >
           ← 返回儀表板
         </button>

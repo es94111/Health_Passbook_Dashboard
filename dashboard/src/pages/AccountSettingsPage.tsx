@@ -95,25 +95,32 @@ function DisplayNameSection({ profile, onProfileUpdate }: Pick<Props, 'profile' 
       <h2 className="section-title">帳號資訊</h2>
       <div className="mt-3 space-y-3">
         <div>
-          <label className="label">帳號</label>
+          <span className="label">帳號</span>
           <p className="text-gray-700 dark:text-gray-300 text-sm">{profile.username}</p>
         </div>
         <div>
-          <label className="label">顯示名稱</label>
+          <label htmlFor="display-name" className="label">顯示名稱</label>
           <div className="flex gap-2 mt-1">
             <input
+              id="display-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               maxLength={50}
               className="input flex-1"
               placeholder="輸入顯示名稱"
+              autoComplete="nickname"
+              aria-describedby={error ? 'display-name-error' : undefined}
             />
             <button onClick={handleSave} disabled={saving} className="btn-primary">
               {saving ? '儲存中…' : '儲存'}
             </button>
           </div>
-          {error && <p className="text-red-500 text-xs mt-1">{error}</p>}
-          {success && <p className="text-green-600 text-xs mt-1">已儲存</p>}
+          {error && (
+            <p id="display-name-error" className="text-red-500 text-xs mt-1 msg-fade" role="alert">{error}</p>
+          )}
+          {success && (
+            <p className="text-green-600 dark:text-green-400 text-xs mt-1 msg-fade" aria-live="polite">已儲存</p>
+          )}
         </div>
       </div>
     </section>
@@ -162,25 +169,32 @@ function PasswordSection({ profile }: Pick<Props, 'profile'>) {
       <div className="mt-3 space-y-2">
         {profile.hasPassword && (
           <input
+            id="current-password"
             type="password"
             value={currentPw}
             onChange={(e) => setCurrentPw(e.target.value)}
             className="input w-full"
             placeholder="目前密碼"
+            autoComplete="current-password"
+            aria-label="目前密碼"
           />
         )}
         <input
+          id="new-password"
           type="password"
           value={newPw}
           onChange={(e) => setNewPw(e.target.value)}
           className="input w-full"
           placeholder="新密碼（至少 6 個字元）"
+          autoComplete="new-password"
+          aria-label="新密碼"
+          minLength={6}
         />
         <button onClick={handleSubmit} disabled={saving} className="btn-primary">
           {saving ? '儲存中…' : profile.hasPassword ? '變更密碼' : '設定密碼'}
         </button>
-        {error && <p className="text-red-500 text-xs">{error}</p>}
-        {success && <p className="text-green-600 text-xs">密碼已更新</p>}
+        {error && <p className="text-red-500 text-xs msg-fade" role="alert">{error}</p>}
+        {success && <p className="text-green-600 dark:text-green-400 text-xs msg-fade" aria-live="polite">密碼已更新</p>}
       </div>
     </section>
   );
@@ -442,7 +456,8 @@ export default function AccountSettingsPage({ profile, googleClientId, onLogout,
       <header className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex items-center gap-3">
         <button
           onClick={() => navigate('/')}
-          className="text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-200 text-sm"
+          className="text-teal-600 hover:text-teal-800 dark:text-teal-400 dark:hover:text-teal-200 text-sm cursor-pointer flex items-center gap-1"
+          aria-label="返回儀表板"
         >
           ← 返回儀表板
         </button>

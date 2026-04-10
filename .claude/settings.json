@@ -15,7 +15,15 @@
       "Bash(find \"c:/Users/hongyu/SynologyDrive/網頁/健康管理/dashboard\" -name \"vite.config*\" -exec cat {} \\\\;)",
       "Bash(npm --version)",
       "Bash(npm run:*)",
-      "Bash(echo \"EXIT: $?\")"
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(python3 \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/.claude/skills/ui-ux-pro-max/scripts/search.py\" \"health medical dashboard Taiwan NHI data personal\" --design-system -p \"健康存摺儀表板\" -f markdown)",
+      "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/.claude/skills/ui-ux-pro-max/scripts/search.py\" \"health medical dashboard Taiwan NHI data personal\" --design-system -p \"健康存摺儀表板\" -f markdown)",
+      "Read(//c/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/**)",
+      "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"health medical dashboard personal data\" --design-system -p \"健康存摺儀表板\" -f markdown)",
+      "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"health medical minimal trust clean\" --domain color)",
+      "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"dashboard analytics minimal clean\" --domain style -n 3)",
+      "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"accessibility forms dark mode settings\" --domain ux -n 5)",
+      "Bash(echo \"BUILD_EXIT:$?\")"
     ]
   }
 }

@@ -2,13 +2,45 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+/* ── Design tokens ──────────────────────────────────────────────────────────── */
+:root {
+  --color-primary: #0891b2;       /* teal-600 / medical teal */
+  --color-primary-dark: #0e7490;  /* teal-700 */
+  --color-primary-light: #22d3ee; /* cyan-400 */
+  --color-accent: #059669;        /* emerald-600 / health green */
+  --color-danger: #dc2626;        /* red-600 */
+  --color-surface: #ffffff;
+  --color-bg: #f0fdfa;            /* teal-50 */
+  --color-text: #134e4a;          /* teal-900 */
+  --color-text-muted: #64748b;    /* slate-500 */
+  --color-border: #ccfbf1;        /* teal-100 */
+  --font-sans: 'Fira Sans', 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
 }
 
+/* ── Base ────────────────────────────────────────────────────────────────────── */
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Focus ring: accessible, not intrusive */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Shared components ───────────────────────────────────────────────────────── */
 @layer components {
   .card {
-    @apply bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5;
+    @apply bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5 shadow-sm;
   }
   .section-title {
     @apply text-base font-semibold text-gray-800 dark:text-gray-100;
@@ -17,15 +49,48 @@ body {
     @apply block text-sm font-medium text-gray-600 dark:text-gray-400 mb-1;
   }
   .input {
-    @apply border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-400;
+    @apply border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+           bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100
+           placeholder-gray-400 dark:placeholder-gray-500
+           focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent
+           disabled:opacity-50 disabled:cursor-not-allowed
+           transition-colors duration-150;
   }
   .btn-primary {
-    @apply bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-1.5
+           bg-teal-600 hover:bg-teal-700 active:bg-teal-800
+           text-white text-sm font-medium px-4 py-2 rounded-lg
+           transition-colors duration-150 cursor-pointer
+           disabled:opacity-50 disabled:cursor-not-allowed
+           focus-visible:ring-2 focus-visible:ring-teal-400 focus-visible:ring-offset-2;
   }
   .btn-secondary {
-    @apply border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors;
+    @apply inline-flex items-center justify-center gap-1.5
+           border border-gray-300 dark:border-gray-600
+           text-gray-700 dark:text-gray-300
+           hover:bg-gray-50 dark:hover:bg-gray-700
+           text-sm font-medium px-4 py-2 rounded-lg
+           transition-colors duration-150 cursor-pointer
+           focus-visible:ring-2 focus-visible:ring-gray-400 focus-visible:ring-offset-2;
   }
   .btn-danger {
-    @apply bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-1.5
+           bg-red-500 hover:bg-red-600 active:bg-red-700
+           text-white text-sm font-medium px-4 py-2 rounded-lg
+           transition-colors duration-150 cursor-pointer
+           disabled:opacity-50 disabled:cursor-not-allowed
+           focus-visible:ring-2 focus-visible:ring-red-400 focus-visible:ring-offset-2;
   }
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  /* Fade-in for success/error inline messages */
+  .msg-fade {
+    @apply animate-[fadeIn_0.15s_ease-out];
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

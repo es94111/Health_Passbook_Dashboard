@@ -56,12 +56,12 @@ function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps)
           <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
             <button
               onClick={() => navigate('/settings/account')}
-              className="underline hover:text-gray-700 dark:hover:text-gray-200"
+              className="underline hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
             >
               {profile.displayName ?? profile.username}
               {profile.isAdmin && <span className="ml-1 text-xs text-teal-600">管理員</span>}
             </button>
-            <button onClick={onLogout} className="underline hover:text-gray-700 dark:hover:text-gray-200">登出</button>
+            <button onClick={onLogout} className="underline hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer">登出</button>
           </div>
         </div>
         <div className="pt-14">
@@ -78,7 +78,7 @@ function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps)
         <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
           <button
             onClick={() => navigate('/settings/account')}
-            className="underline hover:text-gray-700 dark:hover:text-gray-200"
+            className="underline hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
           >
             {profile.displayName ?? profile.username}
             {profile.isAdmin && <span className="ml-1 text-xs text-teal-600">管理員</span>}
@@ -93,11 +93,11 @@ function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps)
           )}
           <button
             onClick={() => dispatch({ type: 'CLEAR' })}
-            className="underline hover:text-gray-700 dark:hover:text-gray-200"
+            className="underline hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer"
           >
             匯入新資料
           </button>
-          <button onClick={onLogout} className="underline hover:text-gray-700 dark:hover:text-gray-200">登出</button>
+          <button onClick={onLogout} className="underline hover:text-gray-700 dark:hover:text-gray-200 cursor-pointer">登出</button>
         </div>
       </header>
 
@@ -105,12 +105,18 @@ function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps)
         <SummaryStats data={nhiData} />
 
         {/* Tab navigation */}
-        <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit">
+        <div
+          role="tablist"
+          aria-label="資料分類"
+          className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit"
+        >
           {TABS.map((tab) => (
             <button
               key={tab}
+              role="tab"
+              aria-selected={activeTab === tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
+              className={`px-4 py-1.5 text-sm rounded-md transition-colors duration-150 cursor-pointer ${
                 activeTab === tab
                   ? 'bg-white dark:bg-gray-700 text-teal-700 dark:text-teal-400 font-medium shadow-sm'
                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'

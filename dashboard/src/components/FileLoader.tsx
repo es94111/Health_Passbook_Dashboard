@@ -7,20 +7,21 @@ interface Props {
   onLoad: (data: NHIData) => void;
 }
 
+// Uses currentColor so it inherits Tailwind text-teal-600 from the parent
 function HeartbeatIcon() {
   return (
-    <svg viewBox="0 0 48 48" fill="none" className="w-12 h-12" aria-hidden="true">
+    <svg viewBox="0 0 48 48" fill="none" className="w-12 h-12 text-teal-600 dark:text-teal-400" aria-hidden="true">
       <path
         d="M24 38s-14-8.5-14-18a8 8 0 0 1 14-5.3A8 8 0 0 1 38 20c0 9.5-14 18-14 18z"
-        fill="#0d9488"
+        fill="currentColor"
         fillOpacity="0.15"
-        stroke="#0d9488"
+        stroke="currentColor"
         strokeWidth="2"
         strokeLinejoin="round"
       />
       <path
         d="M6 24h6l4-8 4 16 4-10 3 6h9"
-        stroke="#0d9488"
+        stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -49,11 +50,9 @@ export default function FileLoader({ onLoad }: Props) {
 
       if (typeof json !== 'object' || json === null) throw new Error('JSON 格式不正確');
 
-      // 1. Upload to server — merges with existing stored data
       const result = await uploadNHIJson(json as object);
       setUploadResult(result);
 
-      // 2. Fetch the full merged dataset back from the server
       setStatus('loading');
       const merged = await fetchHealthData();
       const parsed = parseNHIJson(merged as Record<string, unknown[]>);
@@ -80,58 +79,89 @@ export default function FileLoader({ onLoad }: Props) {
   const busy = status === 'uploading' || status === 'loading';
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
       <div className="max-w-md w-full">
+        {/* Header */}
         <div className="text-center mb-8">
           <div className="flex justify-center mb-4">
             <HeartbeatIcon />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-1">健康存摺儀表板</h1>
-          <p className="text-gray-400 text-sm">Taiwan NHI Health Passbook Dashboard</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-50 mb-1">
+            健康存摺儀表板
+          </h1>
+          <p className="text-gray-400 dark:text-gray-500 text-sm">
+            Taiwan NHI Health Passbook Dashboard
+          </p>
         </div>
 
+        {/* Drop zone */}
         <div
-          className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors ${
+          role="region"
+          aria-label="檔案上傳區域"
+          className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors duration-200 ${
             dragging
-              ? 'border-teal-400 bg-teal-50'
-              : 'border-gray-300 hover:border-teal-400 hover:bg-teal-50'
+              ? 'border-teal-400 bg-teal-50 dark:bg-teal-950/30'
+              : 'border-gray-300 dark:border-gray-600 hover:border-teal-400 hover:bg-teal-50 dark:hover:bg-teal-950/20'
           }`}
           onDrop={handleDrop}
           onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
         >
           {busy ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-10 h-10 border-4 border-teal-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-gray-500 text-sm">
+            <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
+              <div
+                className="w-10 h-10 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"
+                aria-hidden="true"
+              />
+              <p className="text-gray-500 dark:text-gray-400 text-sm">
                 {status === 'uploading' ? '上傳並合併資料中…' : '載入儀表板…'}
               </p>
             </div>
           ) : (
             <>
-              <p className="text-gray-700 font-medium mb-1">點擊或拖放您的健康存摺 JSON 檔案</p>
-              <p className="text-gray-400 text-sm mb-4">新資料將自動與伺服器上的歷史資料合併</p>
-              <label className="cursor-pointer inline-block bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors">
+              <p className="text-gray-700 dark:text-gray-300 font-medium mb-1">
+                點擊或拖放您的健康存摺 JSON 檔案
+              </p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm mb-4">
+                新資料將自動與伺服器上的歷史資料合併
+              </p>
+              <label className="cursor-pointer inline-block btn-primary">
                 選擇檔案
-                <input type="file" accept=".json,.JSON" className="hidden" onChange={handleChange} />
+                <input
+                  type="file"
+                  accept=".json,.JSON"
+                  className="hidden"
+                  onChange={handleChange}
+                  aria-label="選擇健康存摺 JSON 檔案"
+                />
               </label>
             </>
           )}
         </div>
 
-        <p className="mt-3 text-center text-xs text-gray-400">
+        <p className="mt-3 text-center text-xs text-gray-400 dark:text-gray-500">
           門診紀錄 · 檢驗趨勢 · 疫苗接種 · 健檢報告
         </p>
 
+        {/* Upload result */}
         {uploadResult && (
-          <div className="mt-4 p-4 bg-teal-50 border border-teal-100 rounded-xl text-sm text-teal-800">
+          <div
+            className="mt-4 p-4 bg-teal-50 dark:bg-teal-950/30 border border-teal-100 dark:border-teal-800 rounded-xl text-sm text-teal-800 dark:text-teal-300 msg-fade"
+            role="status"
+            aria-live="polite"
+          >
             <p className="font-medium mb-2">{uploadResult.message}</p>
             <div className="flex flex-wrap gap-2 text-xs">
               {Object.entries(uploadResult.stats).map(([type, s]) =>
                 (s.added > 0 || s.skipped > 0) ? (
-                  <span key={type} className="bg-white border border-teal-100 px-2 py-1 rounded-md">
+                  <span
+                    key={type}
+                    className="bg-white dark:bg-teal-900/40 border border-teal-100 dark:border-teal-700 px-2 py-1 rounded-md"
+                  >
                     {type.toUpperCase()} +{s.added}
-                    {s.skipped > 0 && <span className="text-gray-400 ml-1">略過{s.skipped}</span>}
+                    {s.skipped > 0 && (
+                      <span className="text-gray-400 dark:text-gray-500 ml-1">略過{s.skipped}</span>
+                    )}
                   </span>
                 ) : null
               )}
@@ -139,11 +169,15 @@ export default function FileLoader({ onLoad }: Props) {
           </div>
         )}
 
+        {/* Error state */}
         {status === 'error' && error && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-700 text-sm">{error}</p>
+          <div
+            className="mt-4 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg msg-fade"
+            role="alert"
+          >
+            <p className="text-red-700 dark:text-red-400 text-sm">{error}</p>
             <button
-              className="mt-2 text-sm text-red-600 underline"
+              className="mt-2 text-sm text-red-600 dark:text-red-400 underline cursor-pointer hover:text-red-800 dark:hover:text-red-300"
               onClick={() => { setStatus('idle'); setError(null); }}
             >
               重試
