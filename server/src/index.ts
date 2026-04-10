@@ -13,10 +13,13 @@ import adminRouter from './routes/admin.js';
   const app = express();
   const PORT = process.env.PORT ?? 3001;
 
-  app.use(cors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-    credentials: true,
-  }));
+  // In production (Docker) the SPA is served by Express itself — same origin,
+  // no CORS needed. CORS_ORIGIN lets you explicitly allowlist external origins
+  // (e.g. a separate CDN front-end). In dev, default to the Vite dev server.
+  const corsOrigins = process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
+    : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+  app.use(cors({ origin: corsOrigins, credentials: true }));
   app.use(express.json({ limit: '50mb' })); // NHI JSON files can be large
 
   app.use('/api/auth', authRouter);
