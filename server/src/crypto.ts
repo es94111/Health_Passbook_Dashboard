@@ -43,7 +43,7 @@ export async function loadMasterKey(): Promise<void> {
   if (process.env.ENCRYPTION_KEY) {
     const hex = process.env.ENCRYPTION_KEY.trim();
     if (hex.length !== 64) {
-      throw new Error('ENCRYPTION_KEY 必須為 64 個 hex 字元（32 bytes）');
+      throw new Error('ENCRYPTION_KEY 必須為 64 個 hex 字元（32 bytes）。生成指令：openssl rand -hex 32');
     }
     _masterKey = Buffer.from(hex, 'hex');
     console.log('[crypto] 使用環境變數 ENCRYPTION_KEY');

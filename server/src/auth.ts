@@ -3,6 +3,11 @@ import jwt from 'jsonwebtoken';
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'nhi-dashboard-secret-change-in-prod';
 
+if (!process.env.JWT_SECRET) {
+  console.warn('[auth] ⚠  JWT_SECRET 未設定，使用預設值。請設定此環境變數以確保安全性。');
+  console.warn('[auth]    生成指令：openssl rand -hex 32');
+}
+
 export interface JwtPayload {
   userId: string;
   username: string;
