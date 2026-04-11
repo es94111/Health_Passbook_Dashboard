@@ -23,7 +23,9 @@
       "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"health medical minimal trust clean\" --domain color)",
       "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"dashboard analytics minimal clean\" --domain style -n 3)",
       "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"accessibility forms dark mode settings\" --domain ux -n 5)",
-      "Bash(echo \"BUILD_EXIT:$?\")"
+      "Bash(echo \"BUILD_EXIT:$?\")",
+      "Skill(browse)",
+      "Skill(browse:*)"
     ]
   }
 }
