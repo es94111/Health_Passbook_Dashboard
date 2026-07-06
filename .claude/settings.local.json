@@ -26,7 +26,9 @@
       "PowerShell(Set-Location server; & .\\\\node_modules\\\\.bin\\\\tsc.cmd --noEmit; \"exit=$LASTEXITCODE\")",
       "PowerShell($ping = Invoke-WebRequest -Uri 'http://localhost:3001/api/ping' -UseBasicParsing; \"ping: $\\($ping.StatusCode\\) $\\($ping.Content\\)\"; try { Invoke-WebRequest -Uri 'http://localhost:3001/some/spa/route' -UseBasicParsing -ErrorAction Stop } catch { \"spa-fallback: $\\($_.Exception.Response.StatusCode.value__\\) \\(expected 404 in dev, no public/\\)\" }; try { $login = Invoke-WebRequest -Uri 'http://localhost:3001/api/auth/login' -Method POST -ContentType 'application/json' -Body '{}' -UseBasicParsing -ErrorAction Stop; \"login: $\\($login.StatusCode\\)\" } catch { $r = $_.Exception.Response; $body = \\(New-Object IO.StreamReader\\($r.GetResponseStream\\(\\)\\)\\).ReadToEnd\\(\\); \"login: $\\($r.StatusCode.value__\\) $body\" })",
       "PowerShell(Set-Location 'd:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard\\\\dashboard'; npm install --no-save eslint-plugin-react-hooks@7.0.1; npx eslint . ; \"exit=$LASTEXITCODE\")",
-      "PowerShell(Set-Location 'd:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard'; & .\\\\node_modules\\\\.bin\\\\concurrently.cmd --names \"a,b\" --prefix-colors \"cyan,teal\" \"node -e 1\" \"node -e 1\"; \"exit=$LASTEXITCODE\"; Remove-Item -Recurse -Force server\\\\dist -Confirm:$false)"
+      "PowerShell(Set-Location 'd:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard'; & .\\\\node_modules\\\\.bin\\\\concurrently.cmd --names \"a,b\" --prefix-colors \"cyan,teal\" \"node -e 1\" \"node -e 1\"; \"exit=$LASTEXITCODE\"; Remove-Item -Recurse -Force server\\\\dist -Confirm:$false)",
+      "Bash(git -C \"d:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard\" remote -v)",
+      "Bash(git -C \"d:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard\" branch --show-current)"
     ]
   }
 }
