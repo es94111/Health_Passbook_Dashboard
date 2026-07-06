@@ -3,9 +3,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import type { Visit } from '../parsers/types';
+import type { DateRangePreset } from '../api';
+import { presetToStartDate, formatDay } from '../lib/keySummary';
 
 interface Props {
   visits: Visit[];
+  defaultRange?: DateRangePreset;
 }
 
 // Drug codes start with two uppercase letters (e.g., AA, AC, BC, VC, NC)
@@ -26,7 +29,7 @@ const TOP_N = 20;
 
 type Tab = 'drug' | 'procedure';
 
-export default function BilledItemsChart({ visits }: Props) {
+export default function BilledItemsChart({ visits, defaultRange = 'all' }: Props) {
   const [tab, setTab] = useState<Tab>('drug');
 
   // Date range — derive min/max from data as defaults
@@ -39,7 +42,14 @@ export default function BilledItemsChart({ visits }: Props) {
     };
   }, [visits]);
 
-  const [startDate, setStartDate] = useState('');
+  // Seed the start date from the user's preferred default range, measured back
+  // from the most recent visit (NHI data is historical, so "now" isn't reliable).
+  const [startDate, setStartDate] = useState<string>(() => {
+    if (defaultRange === 'all' || visits.length === 0) return '';
+    const latest = visits.reduce((m, v) => (v.date > m ? v.date : m), visits[0].date);
+    const start = presetToStartDate(defaultRange, latest);
+    return start ? formatDay(start) : '';
+  });
   const [endDate, setEndDate] = useState('');
 
   const filteredVisits = useMemo(() => {

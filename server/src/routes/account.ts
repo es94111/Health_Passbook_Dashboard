@@ -7,10 +7,13 @@ import {
   getUserById,
   getUserByGoogleId,
   updateUser,
+  updateUserPreferences,
   deleteUser,
   getLoginLogs,
   deleteLoginLogs,
   adminCount,
+  toPublicProfile,
+  type UserPreferences,
 } from '../store.js';
 
 const googleClient = new OAuth2Client();
@@ -27,18 +30,23 @@ router.get('/me', async (req, res) => {
     res.status(404).json({ error: '使用者不存在' });
     return;
   }
-  res.json({
-    userId: user.id,
-    username: user.username,
-    displayName: user.displayName ?? null,
-    isAdmin: user.isAdmin,
-    themeMode: user.themeMode ?? 'system',
-    googleEmail: user.googleEmail ?? null,
-    avatarUrl: user.avatarUrl ?? null,
-    hasPassword: Boolean(user.passwordHash),
-    hasGoogle: Boolean(user.googleId),
-    createdAt: user.createdAt,
-  });
+  res.json(toPublicProfile(user));
+});
+
+// ── PUT /api/account/preferences ──────────────────────────────────────────────
+// Accepts a partial preferences patch; merges, validates and persists server-side.
+router.put('/preferences', async (req, res) => {
+  const body = req.body as Partial<UserPreferences> | null;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    res.status(400).json({ error: '無效的偏好設定格式' });
+    return;
+  }
+  const updated = await updateUserPreferences(req.user!.userId, body);
+  if (!updated) {
+    res.status(404).json({ error: '使用者不存在' });
+    return;
+  }
+  res.json(updated);
 });
 
 // ── PUT /api/account/theme ────────────────────────────────────────────────────

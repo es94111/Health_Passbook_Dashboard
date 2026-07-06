@@ -12,6 +12,7 @@ import {
   addLoginLog,
   updateLogCountry,
   canSelfRegister,
+  toPublicProfile,
 } from '../store.js';
 import { signToken, requireAuth } from '../auth.js';
 
@@ -286,18 +287,7 @@ router.get('/me', requireAuth, async (req, res) => {
     res.status(404).json({ error: '使用者不存在' });
     return;
   }
-  res.json({
-    userId: user.id,
-    username: user.username,
-    displayName: user.displayName ?? null,
-    isAdmin: user.isAdmin,
-    themeMode: user.themeMode ?? 'system',
-    googleEmail: user.googleEmail ?? null,
-    avatarUrl: user.avatarUrl ?? null,
-    hasPassword: Boolean(user.passwordHash),
-    hasGoogle: Boolean(user.googleId),
-    createdAt: user.createdAt,
-  });
+  res.json(toPublicProfile(user));
 });
 
 export default router;

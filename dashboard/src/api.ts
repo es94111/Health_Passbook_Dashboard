@@ -61,6 +61,17 @@ export interface AuthResponse {
   isAdmin: boolean;
 }
 
+export type DateRangePreset = 'all' | '3m' | '6m' | '1y' | '3y';
+
+export interface UserPreferences {
+  pinnedLabItems: string[];      // lab subItem names tracked long-term
+  pinnedMedications: string[];   // drug codes tracked long-term
+  hiddenSections: string[];      // dashboard section keys the user has hidden
+  defaultDateRange: DateRangePreset;
+  lastActiveTab: string | null;  // last selected dashboard tab
+  acknowledgedAlerts: string[];  // dismissed alert ids
+}
+
 export interface UserProfile {
   userId: string;
   username: string;
@@ -72,6 +83,7 @@ export interface UserProfile {
   hasPassword: boolean;
   hasGoogle: boolean;
   createdAt: string;
+  preferences: UserPreferences;
 }
 
 export function register(username: string, password: string): Promise<AuthResponse> {
@@ -130,6 +142,16 @@ export function updateDisplayName(displayName: string): Promise<{ displayName: s
   return request('/account/display-name', {
     method: 'PUT',
     body: JSON.stringify({ displayName }),
+  });
+}
+
+// ── User preferences ──────────────────────────────────────────────────────────
+
+/** Persist a partial preferences patch; returns the merged server-side preferences. */
+export function updatePreferences(patch: Partial<UserPreferences>): Promise<UserPreferences> {
+  return request('/account/preferences', {
+    method: 'PUT',
+    body: JSON.stringify(patch),
   });
 }
 

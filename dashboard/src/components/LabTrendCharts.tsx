@@ -4,6 +4,7 @@ import {
   ReferenceLine, ResponsiveContainer, ReferenceArea,
 } from 'recharts';
 import type { LabResult } from '../parsers/types';
+import { useUserStore } from '../UserStore';
 
 interface Props {
   labResults: LabResult[];
@@ -29,6 +30,7 @@ interface SubItemGroup {
 const MIN_READINGS = 3;
 
 export default function LabTrendCharts({ labResults }: Props) {
+  const store = useUserStore();
   const [search, setSearch] = useState('');
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [showFewReadings, setShowFewReadings] = useState(false);
@@ -163,9 +165,24 @@ export default function LabTrendCharts({ labResults }: Props) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {groups.map(({ subItem, testGroup, points, refLow, refHigh, outOfRangeCount }) => (
-            <div key={subItem} className="border border-gray-100 rounded-lg p-3">
+            <div key={subItem} className="border border-gray-100 dark:border-gray-700 rounded-lg p-3">
               <div className="flex items-start justify-between mb-0.5">
-                <div className="text-sm font-medium text-gray-700">{subItem}</div>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <button
+                    onClick={() => store.toggleLabPin(subItem)}
+                    title={store.isLabPinned(subItem) ? '取消釘選' : '釘選到重點摘要'}
+                    aria-label={store.isLabPinned(subItem) ? `取消釘選 ${subItem}` : `釘選 ${subItem}`}
+                    aria-pressed={store.isLabPinned(subItem)}
+                    className={`shrink-0 text-sm leading-none cursor-pointer ${
+                      store.isLabPinned(subItem)
+                        ? 'text-amber-500 hover:text-amber-600'
+                        : 'text-gray-300 dark:text-gray-600 hover:text-amber-400'
+                    }`}
+                  >
+                    {store.isLabPinned(subItem) ? '★' : '☆'}
+                  </button>
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-200 truncate">{subItem}</div>
+                </div>
                 {outOfRangeCount > 0 && (
                   <span className="text-xs text-red-500 shrink-0 ml-1">
                     {outOfRangeCount} 次異常

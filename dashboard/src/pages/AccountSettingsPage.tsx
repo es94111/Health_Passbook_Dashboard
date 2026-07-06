@@ -12,6 +12,8 @@ import {
   changePassword,
 } from '../api';
 import { useTheme } from '../ThemeContext';
+import { useUserStore, HIDEABLE_SECTIONS } from '../UserStore';
+import { DATE_RANGE_OPTIONS } from '../lib/keySummary';
 
 interface Props {
   profile: UserProfile;
@@ -59,6 +61,67 @@ function ThemeSection() {
             {opt.label}
           </button>
         ))}
+      </div>
+    </section>
+  );
+}
+
+// ── Dashboard preferences section ─────────────────────────────────────────────
+
+function DashboardPreferencesSection() {
+  const store = useUserStore();
+
+  return (
+    <section className="card">
+      <h2 className="section-title">儀表板偏好</h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        設定申報項目圖表的預設日期範圍，並選擇要在首頁顯示的區塊。
+      </p>
+
+      {/* Default date range */}
+      <div className="mt-4">
+        <span className="label">預設日期範圍（申報項目圖表）</span>
+        <div className="flex flex-wrap gap-2 mt-1">
+          {DATE_RANGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => store.setDefaultDateRange(opt.value)}
+              className={`px-3 py-1.5 rounded-lg border text-sm transition-colors cursor-pointer ${
+                store.preferences.defaultDateRange === opt.value
+                  ? 'bg-teal-600 text-white border-teal-600'
+                  : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:border-teal-400'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Visible sections */}
+      <div className="mt-4">
+        <span className="label">首頁顯示區塊</span>
+        <div className="mt-1 divide-y divide-gray-100 dark:divide-gray-700">
+          {HIDEABLE_SECTIONS.map((s) => {
+            const visible = !store.isSectionHidden(s.key);
+            return (
+              <label key={s.key} className="flex items-center justify-between py-2 cursor-pointer select-none">
+                <span className="text-sm text-gray-700 dark:text-gray-300">{s.label}</span>
+                <span className="relative flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    onChange={() => store.toggleSection(s.key)}
+                    className="sr-only peer"
+                    aria-label={`${visible ? '隱藏' : '顯示'} ${s.label}`}
+                  />
+                  <div className="w-9 h-5 bg-gray-200 dark:bg-gray-600 rounded-full peer-checked:bg-teal-500 transition-colors" />
+                  <div className="absolute left-0.5 top-0.5 w-4 h-4 bg-white rounded-full shadow peer-checked:translate-x-4 transition-transform" />
+                </span>
+              </label>
+            );
+          })}
+        </div>
       </div>
     </section>
   );
@@ -466,6 +529,7 @@ export default function AccountSettingsPage({ profile, googleClientId, onLogout,
 
       <main className="max-w-2xl mx-auto px-4 py-6 space-y-4">
         <ThemeSection />
+        <DashboardPreferencesSection />
         <DisplayNameSection profile={profile} onProfileUpdate={onProfileUpdate} />
         <PasswordSection profile={profile} />
         <GoogleSection profile={profile} googleClientId={googleClientId} onProfileUpdate={onProfileUpdate} />

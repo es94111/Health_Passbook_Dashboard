@@ -1,0 +1,20 @@
+{
+  "currentVersion": "1.1.0",
+  "releases": [
+    {
+      "version": "1.1.0",
+      "date": "2026-07-06",
+      "title": "重點摘要與儀表板個人化設定",
+      "type": "feature",
+      "changes": [
+        { "tag": "new", "text": "新增「重點摘要」區塊，顯示使用者釘選的檢驗項目與用藥的最新數值、趨勢與異常警示" },
+        { "tag": "new", "text": "檢驗趨勢圖表項目可釘選／取消釘選至重點摘要" },
+        { "tag": "new", "text": "帳號設定新增「儀表板偏好」：可設定申報項目圖表的預設日期範圍，並自訂首頁顯示區塊（含各分頁）" },
+        { "tag": "new", "text": "使用者偏好設定（釘選項目、隱藏區塊、預設日期範圍、最後檢視分頁、已讀警示）改為伺服器端儲存，換裝置或瀏覽器登入後仍會保留" },
+        { "tag": "improved", "text": "新增 PUT /api/account/preferences 端點，伺服器端驗證並清理偏好設定內容（陣列去重、長度上限）" },
+        { "tag": "improved", "text": "/api/auth/me 與 /api/account/me 回傳的個人資料統一經由共用的 toPublicProfile()，並附帶使用者偏好設定" },
+        { "tag": "improved", "text": "檢驗趨勢卡片與圖表元件補上深色模式樣式" }
+      ]
+    }
+  ]
+}

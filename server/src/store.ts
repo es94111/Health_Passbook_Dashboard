@@ -15,6 +15,40 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const LOGS_FILE = path.join(DATA_DIR, 'login-logs.json');
 
+// ── User preferences ──────────────────────────────────────────────────────────
+
+export type DateRangePreset = 'all' | '3m' | '6m' | '1y' | '3y';
+
+/** Per-user dashboard preferences. Persisted on the User record. */
+export interface UserPreferences {
+  pinnedLabItems: string[];      // lab subItem names the user tracks long-term
+  pinnedMedications: string[];   // drug codes the user tracks long-term
+  hiddenSections: string[];      // dashboard section keys the user has hidden
+  defaultDateRange: DateRangePreset;
+  lastActiveTab: string | null;  // last selected dashboard tab (restored on load)
+  acknowledgedAlerts: string[];  // alert ids the user has dismissed
+}
+
+export const DEFAULT_PREFERENCES: UserPreferences = {
+  pinnedLabItems: [],
+  pinnedMedications: [],
+  hiddenSections: [],
+  defaultDateRange: 'all',
+  lastActiveTab: null,
+  acknowledgedAlerts: [],
+};
+
+// Caps to keep the encrypted record bounded regardless of client behaviour
+const MAX_PINS = 50;
+const MAX_HIDDEN = 30;
+const MAX_ACK_ALERTS = 200;
+const DATE_RANGE_PRESETS: DateRangePreset[] = ['all', '3m', '6m', '1y', '3y'];
+
+/** Merge stored preferences (possibly missing/partial) with defaults. */
+export function normalizePreferences(p?: Partial<UserPreferences>): UserPreferences {
+  return { ...DEFAULT_PREFERENCES, ...(p ?? {}) };
+}
+
 // ── User types ────────────────────────────────────────────────────────────────
 
 export interface User {
@@ -29,6 +63,38 @@ export interface User {
   displayName?: string;   // user-facing name (max 50 chars)
   themeMode?: 'light' | 'dark' | 'system';
   avatarUrl?: string;     // sourced from Google profile on link/login
+  preferences?: UserPreferences;
+}
+
+/** Public profile DTO returned by /me endpoints (never leaks passwordHash / salt). */
+export interface PublicProfile {
+  userId: string;
+  username: string;
+  displayName: string | null;
+  isAdmin: boolean;
+  themeMode: 'light' | 'dark' | 'system';
+  googleEmail: string | null;
+  avatarUrl: string | null;
+  hasPassword: boolean;
+  hasGoogle: boolean;
+  createdAt: string;
+  preferences: UserPreferences;
+}
+
+export function toPublicProfile(user: User): PublicProfile {
+  return {
+    userId: user.id,
+    username: user.username,
+    displayName: user.displayName ?? null,
+    isAdmin: user.isAdmin,
+    themeMode: user.themeMode ?? 'system',
+    googleEmail: user.googleEmail ?? null,
+    avatarUrl: user.avatarUrl ?? null,
+    hasPassword: Boolean(user.passwordHash),
+    hasGoogle: Boolean(user.googleId),
+    createdAt: user.createdAt,
+    preferences: normalizePreferences(user.preferences),
+  };
 }
 
 // ── NHI record types (mirrored from frontend) ─────────────────────────────────
@@ -152,6 +218,61 @@ export async function updateUser(id: string, patch: Partial<Omit<User, 'id' | 'e
   users[idx] = { ...users[idx], ...patch };
   await writeUsers(users);
   return users[idx];
+}
+
+/**
+ * Merge a partial preferences patch onto the user's stored preferences.
+ * Unknown keys are ignored; arrays are sanitised (string-only, deduped, capped);
+ * defaultDateRange is validated against the allowed presets.
+ * Returns the merged preferences, or null if the user does not exist.
+ */
+export async function updateUserPreferences(
+  id: string,
+  patch: Partial<UserPreferences>,
+): Promise<UserPreferences | null> {
+  const users = await readUsers();
+  const idx = users.findIndex((u) => u.id === id);
+  if (idx === -1) return null;
+
+  const current = normalizePreferences(users[idx].preferences);
+  const next: UserPreferences = { ...current };
+
+  const cleanArray = (v: unknown, cap: number): string[] | undefined => {
+    if (!Array.isArray(v)) return undefined;
+    const strings = v.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean);
+    return [...new Set(strings)].slice(0, cap);
+  };
+
+  if ('pinnedLabItems' in patch) {
+    const a = cleanArray(patch.pinnedLabItems, MAX_PINS);
+    if (a) next.pinnedLabItems = a;
+  }
+  if ('pinnedMedications' in patch) {
+    const a = cleanArray(patch.pinnedMedications, MAX_PINS);
+    if (a) next.pinnedMedications = a;
+  }
+  if ('hiddenSections' in patch) {
+    const a = cleanArray(patch.hiddenSections, MAX_HIDDEN);
+    if (a) next.hiddenSections = a;
+  }
+  if ('acknowledgedAlerts' in patch) {
+    // Keep the most recent acks (client appends to the end)
+    const a = cleanArray(patch.acknowledgedAlerts, Number.MAX_SAFE_INTEGER);
+    if (a) next.acknowledgedAlerts = a.slice(-MAX_ACK_ALERTS);
+  }
+  if ('defaultDateRange' in patch) {
+    if (DATE_RANGE_PRESETS.includes(patch.defaultDateRange as DateRangePreset)) {
+      next.defaultDateRange = patch.defaultDateRange as DateRangePreset;
+    }
+  }
+  if ('lastActiveTab' in patch) {
+    const t = patch.lastActiveTab;
+    next.lastActiveTab = typeof t === 'string' ? t.slice(0, 40) : null;
+  }
+
+  users[idx] = { ...users[idx], preferences: next };
+  await writeUsers(users);
+  return next;
 }
 
 export async function deleteUser(id: string): Promise<boolean> {

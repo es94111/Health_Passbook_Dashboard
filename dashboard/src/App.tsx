@@ -5,8 +5,10 @@ import { parseNHIJson } from './parsers/nhi-parser';
 import type { UserProfile } from './api';
 import { me, fetchHealthData, fetchConfig } from './api';
 import { ThemeProvider } from './ThemeContext';
+import { UserStoreProvider, useUserStore, SECTION_KEY, tabSectionKey } from './UserStore';
 import LoginScreen from './components/LoginScreen';
 import FileLoader from './components/FileLoader';
+import KeySummary from './components/KeySummary';
 import SummaryStats from './components/SummaryStats';
 import VisitTimeline from './components/VisitTimeline';
 import LabTrendCharts from './components/LabTrendCharts';
@@ -46,7 +48,11 @@ interface DashboardProps {
 
 function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps) {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<Tab>('門診');
+  const store = useUserStore();
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    const last = store.preferences.lastActiveTab;
+    return last && (TABS as string[]).includes(last) ? (last as Tab) : '門診';
+  });
 
   if (!nhiData) {
     return (
@@ -69,6 +75,14 @@ function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps)
         </div>
       </>
     );
+  }
+
+  const visibleTabs = TABS.filter((t) => !store.isSectionHidden(tabSectionKey(t)));
+  const currentTab: Tab = visibleTabs.includes(activeTab) ? activeTab : (visibleTabs[0] ?? '門診');
+
+  function selectTab(tab: Tab) {
+    setActiveTab(tab);
+    store.setLastActiveTab(tab);
   }
 
   return (
@@ -102,48 +116,52 @@ function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps)
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6 space-y-4">
-        <SummaryStats data={nhiData} />
+        {!store.isSectionHidden(SECTION_KEY.keySummary) && <KeySummary data={nhiData} />}
+
+        {!store.isSectionHidden(SECTION_KEY.summaryStats) && <SummaryStats data={nhiData} />}
 
         {/* Tab navigation */}
-        <div
-          role="tablist"
-          aria-label="資料分類"
-          className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit"
-        >
-          {TABS.map((tab) => (
-            <button
-              key={tab}
-              role="tab"
-              aria-selected={activeTab === tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-1.5 text-sm rounded-md transition-colors duration-150 cursor-pointer ${
-                activeTab === tab
-                  ? 'bg-white dark:bg-gray-700 text-teal-700 dark:text-teal-400 font-medium shadow-sm'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab content */}
-        {activeTab === '門診' && (
-          <div className="space-y-6">
-            <VisitTimeline visits={nhiData.visits} />
-            <BilledItemsChart visits={nhiData.visits} />
+        {visibleTabs.length > 0 && (
+          <div
+            role="tablist"
+            aria-label="資料分類"
+            className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit"
+          >
+            {visibleTabs.map((tab) => (
+              <button
+                key={tab}
+                role="tab"
+                aria-selected={currentTab === tab}
+                onClick={() => selectTab(tab)}
+                className={`px-4 py-1.5 text-sm rounded-md transition-colors duration-150 cursor-pointer ${
+                  currentTab === tab
+                    ? 'bg-white dark:bg-gray-700 text-teal-700 dark:text-teal-400 font-medium shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
           </div>
         )}
-        {activeTab === '檢驗' && (
+
+        {/* Tab content */}
+        {currentTab === '門診' && (
+          <div className="space-y-6">
+            <VisitTimeline visits={nhiData.visits} />
+            <BilledItemsChart visits={nhiData.visits} defaultRange={store.preferences.defaultDateRange} />
+          </div>
+        )}
+        {currentTab === '檢驗' && (
           <LabTrendCharts labResults={nhiData.labResults} />
         )}
-        {activeTab === '住院' && (
+        {currentTab === '住院' && (
           <HospitalizationList hospitalizations={nhiData.hospitalizations} />
         )}
-        {activeTab === '牙科' && (
+        {currentTab === '牙科' && (
           <DentalVisitList dentalVisits={nhiData.dentalVisits} />
         )}
-        {activeTab === '預防保健' && (
+        {currentTab === '預防保健' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <VaccinationCard vaccinations={nhiData.vaccinations} />
             <CheckupReportList reports={nhiData.checkupReports} />
@@ -236,38 +254,40 @@ function AppRoot() {
 
   return (
     <ThemeProvider initialTheme={profile.themeMode}>
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <DashboardPage
-              profile={profile}
-              nhiData={nhiData}
-              dispatch={dispatch}
-              onLogout={handleLogout}
-            />
-          }
-        />
-        <Route
-          path="/settings/account"
-          element={
-            <AccountSettingsPage
-              profile={profile}
-              googleClientId={googleClientId}
-              onLogout={handleLogout}
-              onProfileUpdate={handleProfileUpdate}
-            />
-          }
-        />
-        {profile.isAdmin && (
+      <UserStoreProvider profile={profile} onProfileUpdate={handleProfileUpdate}>
+        <Routes>
           <Route
-            path="/settings/admin"
-            element={<AdminSettingsPage currentUserId={profile.userId} />}
+            path="/"
+            element={
+              <DashboardPage
+                profile={profile}
+                nhiData={nhiData}
+                dispatch={dispatch}
+                onLogout={handleLogout}
+              />
+            }
           />
-        )}
-        {/* Fallback: any unknown route → home */}
-        <Route path="*" element={<DashboardPage profile={profile} nhiData={nhiData} dispatch={dispatch} onLogout={handleLogout} />} />
-      </Routes>
+          <Route
+            path="/settings/account"
+            element={
+              <AccountSettingsPage
+                profile={profile}
+                googleClientId={googleClientId}
+                onLogout={handleLogout}
+                onProfileUpdate={handleProfileUpdate}
+              />
+            }
+          />
+          {profile.isAdmin && (
+            <Route
+              path="/settings/admin"
+              element={<AdminSettingsPage currentUserId={profile.userId} />}
+            />
+          )}
+          {/* Fallback: any unknown route → home */}
+          <Route path="*" element={<DashboardPage profile={profile} nhiData={nhiData} dispatch={dispatch} onLogout={handleLogout} />} />
+        </Routes>
+      </UserStoreProvider>
     </ThemeProvider>
   );
 }
