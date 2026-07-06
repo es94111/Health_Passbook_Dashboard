@@ -34,7 +34,6 @@ export const HIDEABLE_SECTIONS: HideableSection[] = [
 
 interface UserStoreValue {
   profile: UserProfile;
-  token: string | null;
   preferences: UserPreferences;
   // pins
   isLabPinned: (subItem: string) => boolean;
@@ -91,7 +90,6 @@ export function UserStoreProvider({ profile, onProfileUpdate, children }: Provid
     };
     return {
       profile,
-      token: localStorage.getItem('nhi_token'),
       preferences,
       isLabPinned: (subItem) => preferences.pinnedLabItems.includes(subItem),
       toggleLabPin: (subItem) => toggleInArray('pinnedLabItems', subItem),

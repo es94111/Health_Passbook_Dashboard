@@ -13,6 +13,57 @@ import fs from 'fs/promises';
 import path from 'path';
 
 const KEY_FILE = path.join(process.cwd(), 'data', '.key');
+const KEY_BYTES = 32;
+const IV_BYTES = 12;
+const TAG_BYTES = 16;
+const HEX_RE = /^(?:[0-9a-fA-F]{2})*$/;
+const TRUE_VALUES = new Set(['1', 'true', 'yes']);
+
+function assertHex(value: string, bytes: number, label: string): void {
+  if (value.length !== bytes * 2 || !HEX_RE.test(value)) {
+    throw new Error(`${label} must be ${bytes * 2} hex characters`);
+  }
+}
+
+function assertHexBytes(value: string, label: string): void {
+  if (!HEX_RE.test(value)) {
+    throw new Error(`${label} must be an even-length hex string`);
+  }
+}
+
+function bufferFromHex(value: string, bytes: number, label: string): Buffer {
+  assertHex(value, bytes, label);
+  return Buffer.from(value, 'hex');
+}
+
+function bufferFromEvenHex(value: string, label: string): Buffer {
+  assertHexBytes(value, label);
+  return Buffer.from(value, 'hex');
+}
+
+function allowPlaintextMigration(): boolean {
+  return TRUE_VALUES.has((process.env.ALLOW_PLAINTEXT_MIGRATION ?? '').toLowerCase());
+}
+
+async function ensurePrivateDir(dir: string): Promise<void> {
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await bestEffortChmod(dir, 0o700);
+}
+
+async function writePrivateFile(file: string, data: string): Promise<void> {
+  await fs.writeFile(file, data, { encoding: 'utf-8', mode: 0o600 });
+  await bestEffortChmod(file, 0o600);
+}
+
+async function bestEffortChmod(file: string, mode: number): Promise<void> {
+  try {
+    await fs.chmod(file, mode);
+  } catch (err) {
+    if (process.platform !== 'win32') {
+      throw err;
+    }
+  }
+}
 
 // ── Encrypted envelope format ─────────────────────────────────────────────────
 
@@ -42,10 +93,10 @@ let _masterKey: Buffer | null = null;
 export async function loadMasterKey(): Promise<void> {
   if (process.env.ENCRYPTION_KEY) {
     const hex = process.env.ENCRYPTION_KEY.trim();
-    if (hex.length !== 64) {
+    if (hex.length !== 64 || !HEX_RE.test(hex)) {
       throw new Error('ENCRYPTION_KEY 必須為 64 個 hex 字元（32 bytes）。生成指令：openssl rand -hex 32');
     }
-    _masterKey = Buffer.from(hex, 'hex');
+    _masterKey = bufferFromHex(hex, KEY_BYTES, 'ENCRYPTION_KEY');
     console.log('[crypto] 使用環境變數 ENCRYPTION_KEY');
     return;
   }
@@ -54,10 +105,11 @@ export async function loadMasterKey(): Promise<void> {
   try {
     const raw = await fs.readFile(KEY_FILE, 'utf-8');
     const hex = raw.trim();
-    if (hex.length !== 64) {
+    if (hex.length !== 64 || !HEX_RE.test(hex)) {
       throw new Error(`[crypto] 金鑰檔案格式錯誤（長度 ${hex.length}，應為 64）：${KEY_FILE}\n請確認金鑰檔案完整，或刪除後重新啟動以產生新金鑰（注意：現有資料將無法解密）。`);
     }
-    _masterKey = Buffer.from(hex, 'hex');
+    _masterKey = bufferFromHex(hex, KEY_BYTES, KEY_FILE);
+    await bestEffortChmod(KEY_FILE, 0o600);
     console.log(`[crypto] 從金鑰檔案載入主金鑰：${KEY_FILE}`);
   } catch (err: unknown) {
     // Only auto-generate if the file doesn't exist yet (ENOENT)
@@ -65,9 +117,9 @@ export async function loadMasterKey(): Promise<void> {
       throw err; // Corrupt/unreadable key file — do NOT silently generate a new key
     }
     // First run: auto-generate a new master key and persist it
-    _masterKey = crypto.randomBytes(32);
-    await fs.mkdir(path.dirname(KEY_FILE), { recursive: true });
-    await fs.writeFile(KEY_FILE, _masterKey.toString('hex'), { encoding: 'utf-8', mode: 0o600 });
+    _masterKey = crypto.randomBytes(KEY_BYTES);
+    await ensurePrivateDir(path.dirname(KEY_FILE));
+    await writePrivateFile(KEY_FILE, _masterKey.toString('hex'));
     console.warn('[crypto] ⚠  自動產生新的主金鑰，已儲存至：' + KEY_FILE);
     console.warn('[crypto] ⚠  請妥善備份此金鑰檔案！遺失將導致所有健康資料永久無法解密。');
   }
@@ -96,9 +148,9 @@ export function deriveKey(salt: Buffer, info: string): Buffer {
 
 // Fixed derivation parameters — salts must never change once data has been encrypted.
 // Non-zero fixed constants improve HKDF hygiene (RFC 5869 §3.1 recommends non-zero salt).
-const USERS_SALT    = Buffer.from('4e48492d75736572732d66696c652d73616c742d7631', 'hex');
-const SETTINGS_SALT = Buffer.from('4e48492d73657474696e67732d73616c742d7631000', 'hex');
-const LOGS_SALT     = Buffer.from('4e48492d6c6f67732d66696c652d73616c742d763100', 'hex');
+const USERS_SALT    = bufferFromEvenHex('4e48492d75736572732d66696c652d73616c742d7631', 'users salt');
+const SETTINGS_SALT = bufferFromEvenHex('4e48492d73657474696e67732d73616c742d763100', 'settings salt');
+const LOGS_SALT     = bufferFromEvenHex('4e48492d6c6f67732d66696c652d73616c742d763100', 'logs salt');
 
 const USERS_INFO    = 'nhi-users-file-v1';
 const RECORDS_INFO  = 'nhi-health-records-v1';
@@ -110,7 +162,7 @@ export function deriveUsersKey(): Buffer {
 }
 
 export function deriveRecordsKey(saltHex: string): Buffer {
-  return deriveKey(Buffer.from(saltHex, 'hex'), RECORDS_INFO);
+  return deriveKey(bufferFromHex(saltHex, KEY_BYTES, 'records salt'), RECORDS_INFO);
 }
 
 export function deriveSettingsKey(): Buffer {
@@ -138,8 +190,9 @@ export function encryptJson(key: Buffer, obj: unknown): EncryptedEnvelope {
 }
 
 export function decryptJson(key: Buffer, envelope: EncryptedEnvelope): unknown {
-  const iv = Buffer.from(envelope.iv, 'hex');
-  const tag = Buffer.from(envelope.tag, 'hex');
+  const iv = bufferFromHex(envelope.iv, IV_BYTES, 'encrypted envelope iv');
+  const tag = bufferFromHex(envelope.tag, TAG_BYTES, 'encrypted envelope tag');
+  assertHexBytes(envelope.data, 'encrypted envelope data');
   const ciphertext = Buffer.from(envelope.data, 'hex');
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
   decipher.setAuthTag(tag);
@@ -165,15 +218,18 @@ export async function readMaybeEncrypted<T>(
   let raw: string;
   try {
     raw = await fs.readFile(file, 'utf-8');
-  } catch {
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw err;
+    }
     return { data: fallback, wasMigrated: false };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch {
-    return { data: fallback, wasMigrated: false };
+  } catch (err) {
+    throw new Error(`Could not parse data file ${file}: ${(err as Error).message}`);
   }
 
   if (isEncryptedEnvelope(parsed)) {
@@ -183,10 +239,16 @@ export async function readMaybeEncrypted<T>(
   }
 
   // Plaintext (legacy) — return data and signal migration needed
+  if (!allowPlaintextMigration()) {
+    throw new Error(
+      `${file} is plaintext. Refusing to auto-migrate without ALLOW_PLAINTEXT_MIGRATION=true.`,
+    );
+  }
+
   return { data: parsed as T, wasMigrated: true };
 }
 
 export async function writeEncrypted(file: string, key: Buffer, obj: unknown): Promise<void> {
   const envelope = encryptJson(key, obj);
-  await fs.writeFile(file, JSON.stringify(envelope), 'utf-8');
+  await writePrivateFile(file, JSON.stringify(envelope));
 }

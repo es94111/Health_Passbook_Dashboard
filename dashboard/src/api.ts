@@ -2,19 +2,14 @@
 
 const BASE = '/api';
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('nhi_token');
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {
       ...init,
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
-        ...authHeaders(),
         ...(init?.headers ?? {}),
       },
     });
@@ -56,7 +51,6 @@ export function fetchConfig(): Promise<ServerConfig> {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export interface AuthResponse {
-  token: string;
   username: string;
   isAdmin: boolean;
 }
@@ -107,6 +101,10 @@ export function loginWithGoogle(credential: string): Promise<AuthResponse> {
   });
 }
 
+export function logout(): Promise<{ ok: boolean }> {
+  return request('/auth/logout', { method: 'POST' });
+}
+
 export function me(): Promise<UserProfile> {
   return request('/auth/me');
 }
@@ -118,14 +116,28 @@ export interface UploadResult {
   stats: Record<string, { added: number; skipped: number }>;
 }
 
-export function fetchHealthData(): Promise<Record<string, object[]>> {
+export interface ClientEncryptedRecords {
+  __clientEnc: true;
+  v: 1;
+  alg: 'AES-GCM';
+  kdf: 'PBKDF2-SHA256';
+  iterations: number;
+  salt: string;
+  iv: string;
+  data: string;
+}
+
+export function fetchHealthData(): Promise<{ envelope: ClientEncryptedRecords | null }> {
   return request('/data');
 }
 
-export function uploadNHIJson(json: object): Promise<UploadResult> {
+export function uploadEncryptedHealthData(
+  envelope: ClientEncryptedRecords,
+  stats: Record<string, { added: number; skipped: number }>,
+): Promise<UploadResult> {
   return request('/data/upload', {
     method: 'POST',
-    body: JSON.stringify(json),
+    body: JSON.stringify({ envelope, stats }),
   });
 }
 
@@ -237,10 +249,6 @@ export function createUser(username: string, password: string, isAdmin: boolean)
 
 export function deleteUser(id: string): Promise<{ message: string }> {
   return request(`/admin/users/${id}`, { method: 'DELETE' });
-}
-
-export function fetchUserData(id: string): Promise<Record<string, object[]>> {
-  return request(`/admin/users/${id}/data`);
 }
 
 export interface AppSettings {

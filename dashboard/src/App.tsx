@@ -1,9 +1,8 @@
 import { useReducer, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import type { NHIData } from './parsers/types';
-import { parseNHIJson } from './parsers/nhi-parser';
-import type { UserProfile } from './api';
-import { me, fetchHealthData, fetchConfig } from './api';
+import type { ClientEncryptedRecords, UserProfile } from './api';
+import { me, fetchHealthData, fetchConfig, logout } from './api';
 import { ThemeProvider } from './ThemeContext';
 import { UserStoreProvider, useUserStore, SECTION_KEY, tabSectionKey } from './UserStore';
 import LoginScreen from './components/LoginScreen';
@@ -42,11 +41,13 @@ const TABS: Tab[] = ['門診', '住院', '檢驗', '牙科', '預防保健'];
 interface DashboardProps {
   profile: UserProfile;
   nhiData: NHIData | null;
+  storedEnvelope: ClientEncryptedRecords | null;
   dispatch: React.Dispatch<DataAction>;
+  onEnvelopeSaved: (envelope: ClientEncryptedRecords) => void;
   onLogout: () => void;
 }
 
-function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps) {
+function DashboardPage({ profile, nhiData, storedEnvelope, dispatch, onEnvelopeSaved, onLogout }: DashboardProps) {
   const navigate = useNavigate();
   const store = useUserStore();
   const [activeTab, setActiveTab] = useState<Tab>(() => {
@@ -71,7 +72,11 @@ function DashboardPage({ profile, nhiData, dispatch, onLogout }: DashboardProps)
           </div>
         </div>
         <div className="pt-14">
-          <FileLoader onLoad={(data) => dispatch({ type: 'LOAD', data })} />
+          <FileLoader
+            storedEnvelope={storedEnvelope}
+            onEnvelopeSaved={onEnvelopeSaved}
+            onLoad={(data) => dispatch({ type: 'LOAD', data })}
+          />
         </div>
       </>
     );
@@ -179,50 +184,36 @@ function AppRoot() {
   const [authLoading, setAuthLoading] = useState(true);
   const [nhiData, dispatch] = useReducer(dataReducer, null);
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
+  const [storedEnvelope, setStoredEnvelope] = useState<ClientEncryptedRecords | null>(null);
 
   // Fetch server config (Google Client ID, etc.)
   useEffect(() => {
     fetchConfig().then((cfg) => setGoogleClientId(cfg.googleClientId)).catch(() => {});
   }, []);
 
-  // On mount: check stored token and auto-load data
+  // On mount: check HttpOnly cookie session and remember encrypted health data if present.
   useEffect(() => {
-    const token = localStorage.getItem('nhi_token');
-    if (!token) { setAuthLoading(false); return; }
-
     me()
       .then(async (user) => {
         setProfile(user);
         try {
-          const raw = await fetchHealthData();
-          const hasData = Object.values(raw).some((arr) => arr.length > 0);
-          if (hasData) {
-            const parsed = parseNHIJson(raw as Record<string, unknown[]>);
-            dispatch({ type: 'LOAD', data: parsed });
-          }
+          const { envelope } = await fetchHealthData();
+          setStoredEnvelope(envelope);
         } catch {
           // No data yet
         }
       })
-      .catch(() => {
-        localStorage.removeItem('nhi_token');
-      })
+      .catch(() => {})
       .finally(() => setAuthLoading(false));
   }, []);
 
-  function handleAuth(token: string, _username: string, _isAdmin: boolean) {
-    // Decode token to get userId, then fetch full profile
-    void token; // token already stored by LoginScreen
+  function handleAuth(_username: string, _isAdmin: boolean) {
     me()
       .then(async (user) => {
         setProfile(user);
         try {
-          const raw = await fetchHealthData();
-          const hasData = Object.values(raw).some((arr) => arr.length > 0);
-          if (hasData) {
-            const parsed = parseNHIJson(raw as Record<string, unknown[]>);
-            dispatch({ type: 'LOAD', data: parsed });
-          }
+          const { envelope } = await fetchHealthData();
+          setStoredEnvelope(envelope);
         } catch {
           // No data yet
         }
@@ -231,8 +222,9 @@ function AppRoot() {
   }
 
   function handleLogout() {
-    localStorage.removeItem('nhi_token');
+    void logout().catch(() => {});
     setProfile(null);
+    setStoredEnvelope(null);
     dispatch({ type: 'CLEAR' });
   }
 
@@ -262,7 +254,9 @@ function AppRoot() {
               <DashboardPage
                 profile={profile}
                 nhiData={nhiData}
+                storedEnvelope={storedEnvelope}
                 dispatch={dispatch}
+                onEnvelopeSaved={setStoredEnvelope}
                 onLogout={handleLogout}
               />
             }
@@ -285,7 +279,19 @@ function AppRoot() {
             />
           )}
           {/* Fallback: any unknown route → home */}
-          <Route path="*" element={<DashboardPage profile={profile} nhiData={nhiData} dispatch={dispatch} onLogout={handleLogout} />} />
+          <Route
+            path="*"
+            element={
+              <DashboardPage
+                profile={profile}
+                nhiData={nhiData}
+                storedEnvelope={storedEnvelope}
+                dispatch={dispatch}
+                onEnvelopeSaved={setStoredEnvelope}
+                onLogout={handleLogout}
+              />
+            }
+          />
         </Routes>
       </UserStoreProvider>
     </ThemeProvider>

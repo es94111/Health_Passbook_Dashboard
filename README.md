@@ -66,6 +66,23 @@ Docker 部署時務必掛載 Volume，並定期備份。
 openssl rand -hex 32
 ```
 
+### Security hardening notes
+
+- `JWT_SECRET` must be at least 32 bytes in production.
+- `JWT_EXPIRES_IN` controls token lifetime. Default is `12h`.
+- `ENCRYPTION_KEY` must be exactly 64 hex characters.
+- Legacy plaintext data files are not auto-migrated by default. For a one-time migration from old plaintext JSON, start the server once with `ALLOW_PLAINTEXT_MIGRATION=true`, verify the files were rewritten as encrypted envelopes, then remove the setting.
+
+### Session and health data security
+
+- JWTs are stored in an HttpOnly cookie named `nhi_session`; frontend code no longer stores or reads JWTs from `localStorage`.
+- The session cookie is `Secure` in production. For local HTTP development, set `SESSION_COOKIE_SECURE=false`.
+- Password login is rate-limited by IP and username; all auth mutation endpoints also have an IP-level limiter.
+- Passwords must be at least 12 characters and include at least three of lowercase, uppercase, number, and symbol.
+- Health records are encrypted in the browser before upload with WebCrypto AES-GCM. The server stores only an opaque client encrypted envelope, then wraps that envelope with server-side encryption at rest.
+- The data encryption passphrase is never sent to the server. If it is lost, existing health records cannot be recovered.
+- Existing legacy server-readable health records must be re-uploaded from the original NHI JSON to migrate into client-side encryption.
+
 ---
 
 ## Google SSO 設定（選填）

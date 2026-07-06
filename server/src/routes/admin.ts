@@ -2,14 +2,13 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { requireAdmin } from '../auth.js';
+import { BCRYPT_ROUNDS, validatePasswordStrength } from '../security.js';
 import {
   getUsers,
   getUserById,
   createUser,
   deleteUser,
   adminCount,
-  getRecords,
-  flattenRecords,
   getLoginLogs,
   deleteLoginLogs,
   getSettings,
@@ -50,8 +49,13 @@ router.post('/users', async (req, res) => {
     res.status(400).json({ error: '帳號長度需在 3-32 字元之間' });
     return;
   }
-  if (!password || password.length < 6) {
-    res.status(400).json({ error: '密碼至少 6 個字元' });
+  if (!password) {
+    res.status(400).json({ error: 'Password is required' });
+    return;
+  }
+  const passwordError = validatePasswordStrength(password, username);
+  if (passwordError) {
+    res.status(400).json({ error: passwordError });
     return;
   }
 
@@ -61,7 +65,7 @@ router.post('/users', async (req, res) => {
     return;
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const newUser = {
     id: crypto.randomUUID(),
     username,
@@ -116,9 +120,8 @@ router.delete('/users/:id', async (req, res) => {
 
 // ── GET /api/admin/users/:id/data  — view a specific user's health data
 router.get('/users/:id/data', async (req, res) => {
-  const { id } = req.params;
-  const stored = await getRecords(id);
-  res.json(flattenRecords(stored));
+  void req;
+  res.status(403).json({ error: 'Health records are client-side encrypted and cannot be decrypted by admins.' });
 });
 
 // ── GET /api/admin/settings ───────────────────────────────────────────────────

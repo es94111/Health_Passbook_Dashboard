@@ -11,6 +11,8 @@ import {
   deleteAdminLoginLogs,
 } from '../api';
 
+const PASSWORD_MIN_LENGTH = 12;
+
 // ── System settings section ───────────────────────────────────────────────────
 
 function SystemSettingsSection() {
@@ -147,8 +149,8 @@ function CreateUserSection({ onCreated }: { onCreated: (user: UserInfo) => void 
       setError('帳號長度需在 3-32 字元之間');
       return;
     }
-    if (!password || password.length < 6) {
-      setError('密碼至少 6 個字元');
+    if (!password || password.length < PASSWORD_MIN_LENGTH) {
+      setError(`密碼至少 ${PASSWORD_MIN_LENGTH} 個字元`);
       return;
     }
     setError('');
@@ -187,10 +189,10 @@ function CreateUserSection({ onCreated }: { onCreated: (user: UserInfo) => void 
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           className="input w-full"
-          placeholder="密碼（至少 6 個字元）"
+          placeholder={`密碼（至少 ${PASSWORD_MIN_LENGTH} 個字元）`}
           autoComplete="new-password"
           aria-label="新使用者密碼"
-          minLength={6}
+          minLength={PASSWORD_MIN_LENGTH}
         />
         <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
           <input

@@ -15,6 +15,8 @@ import { useTheme } from '../ThemeContext';
 import { useUserStore, HIDEABLE_SECTIONS } from '../UserStore';
 import { DATE_RANGE_OPTIONS } from '../lib/keySummary';
 
+const PASSWORD_MIN_LENGTH = 12;
+
 interface Props {
   profile: UserProfile;
   googleClientId: string | null;
@@ -200,7 +202,7 @@ function PasswordSection({ profile }: Pick<Props, 'profile'>) {
   const [success, setSuccess] = useState(false);
 
   async function handleSubmit() {
-    if (!newPw || newPw.length < 6) { setError('密碼至少 6 個字元'); return; }
+    if (!newPw || newPw.length < PASSWORD_MIN_LENGTH) { setError(`密碼至少 ${PASSWORD_MIN_LENGTH} 個字元`); return; }
     setError('');
     setSaving(true);
     try {
@@ -248,10 +250,10 @@ function PasswordSection({ profile }: Pick<Props, 'profile'>) {
           value={newPw}
           onChange={(e) => setNewPw(e.target.value)}
           className="input w-full"
-          placeholder="新密碼（至少 6 個字元）"
+          placeholder={`新密碼（至少 ${PASSWORD_MIN_LENGTH} 個字元）`}
           autoComplete="new-password"
           aria-label="新密碼"
-          minLength={6}
+          minLength={PASSWORD_MIN_LENGTH}
         />
         <button onClick={handleSubmit} disabled={saving} className="btn-primary">
           {saving ? '儲存中…' : profile.hasPassword ? '變更密碼' : '設定密碼'}

@@ -109,6 +109,17 @@ export interface StoredRecords {
   r8: Record<string, object>;   // checkup reports
 }
 
+export interface ClientEncryptedRecords {
+  __clientEnc: true;
+  v: 1;
+  alg: 'AES-GCM';
+  kdf: 'PBKDF2-SHA256';
+  iterations: number;
+  salt: string;
+  iv: string;
+  data: string;
+}
+
 function emptyRecords(): StoredRecords {
   return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {} };
 }
@@ -302,10 +313,48 @@ function recordsFile(userId: string): string {
   return path.join(DATA_DIR, `records-${userId}.json`);
 }
 
+function isClientEncryptedRecords(value: unknown): value is ClientEncryptedRecords {
+  if (typeof value !== 'object' || value === null) return false;
+  const envelope = value as Partial<ClientEncryptedRecords>;
+  return (
+    envelope.__clientEnc === true &&
+    envelope.v === 1 &&
+    envelope.alg === 'AES-GCM' &&
+    envelope.kdf === 'PBKDF2-SHA256' &&
+    typeof envelope.iterations === 'number' &&
+    Number.isInteger(envelope.iterations) &&
+    envelope.iterations >= 100_000 &&
+    typeof envelope.salt === 'string' &&
+    typeof envelope.iv === 'string' &&
+    typeof envelope.data === 'string'
+  );
+}
+
 async function recordsKey(userId: string): Promise<{ key: ReturnType<typeof deriveRecordsKey>; user: User }> {
   const user = await getUserById(userId);
   if (!user) throw new Error(`使用者 ${userId} 不存在`);
   return { key: deriveRecordsKey(user.encryptionSalt), user };
+}
+
+export async function getClientEncryptedRecords(userId: string): Promise<ClientEncryptedRecords | null> {
+  const { key } = await recordsKey(userId);
+  const file = recordsFile(userId);
+  const { data } = await readMaybeEncrypted<ClientEncryptedRecords | StoredRecords | null>(file, key, null);
+  if (data === null) return null;
+  if (isClientEncryptedRecords(data)) return data;
+  throw new Error('Stored health records use the legacy server-readable format. Re-upload the NHI JSON to migrate to client-side encryption.');
+}
+
+export async function saveClientEncryptedRecords(
+  userId: string,
+  envelope: ClientEncryptedRecords,
+): Promise<void> {
+  if (!isClientEncryptedRecords(envelope)) {
+    throw new Error('Invalid client encrypted health records envelope');
+  }
+  const { key } = await recordsKey(userId);
+  await ensureDataDir();
+  await writeEncrypted(recordsFile(userId), key, envelope);
 }
 
 export async function getRecords(userId: string): Promise<StoredRecords> {

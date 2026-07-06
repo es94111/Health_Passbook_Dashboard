@@ -2,8 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import { login, register, loginWithGoogle, fetchConfig } from '../api';
 
 interface Props {
-  onAuth: (token: string, username: string, isAdmin: boolean) => void;
+  onAuth: (username: string, isAdmin: boolean) => void;
 }
+
+const PASSWORD_MIN_LENGTH = 12;
 
 export default function LoginScreen({ onAuth }: Props) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -57,8 +59,7 @@ export default function LoginScreen({ onAuth }: Props) {
     setLoading(true);
     try {
       const res = await loginWithGoogle(response.credential);
-      localStorage.setItem('nhi_token', res.token);
-      onAuth(res.token, res.username, res.isAdmin);
+      onAuth(res.username, res.isAdmin);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google 登入失敗');
     } finally {
@@ -73,8 +74,7 @@ export default function LoginScreen({ onAuth }: Props) {
     try {
       const fn = mode === 'login' ? login : register;
       const res = await fn(username.trim(), password);
-      localStorage.setItem('nhi_token', res.token);
-      onAuth(res.token, res.username, res.isAdmin);
+      onAuth(res.username, res.isAdmin);
     } catch (err) {
       setError(err instanceof Error ? err.message : '發生錯誤');
     } finally {
@@ -179,10 +179,10 @@ export default function LoginScreen({ onAuth }: Props) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-teal-400 focus:border-transparent transition-colors"
-                placeholder={mode === 'register' ? '至少 6 個字元' : '輸入密碼'}
+                placeholder={mode === 'register' ? `至少 ${PASSWORD_MIN_LENGTH} 個字元` : '輸入密碼'}
                 autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 required
-                minLength={mode === 'register' ? 6 : 1}
+                minLength={mode === 'register' ? PASSWORD_MIN_LENGTH : 1}
               />
             </div>
 

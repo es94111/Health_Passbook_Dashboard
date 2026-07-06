@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { requireAuth } from '../auth.js';
+import { BCRYPT_ROUNDS, validatePasswordStrength } from '../security.js';
 import {
   getUserById,
   getUserByGoogleId,
@@ -206,10 +207,6 @@ router.post('/delete', async (req, res) => {
 // Allows Google-only accounts to set a password (enables unlink + backup login)
 router.post('/set-password', async (req, res) => {
   const { newPassword } = req.body as { newPassword?: string };
-  if (!newPassword || newPassword.length < 6) {
-    res.status(400).json({ error: '密碼至少 6 個字元' });
-    return;
-  }
   const user = await getUserById(req.user!.userId);
   if (!user) {
     res.status(404).json({ error: '使用者不存在' });
@@ -219,7 +216,16 @@ router.post('/set-password', async (req, res) => {
     res.status(400).json({ error: '已設定密碼，請使用修改密碼功能' });
     return;
   }
-  const hash = await bcrypt.hash(newPassword, 10);
+  if (!newPassword) {
+    res.status(400).json({ error: 'Password is required' });
+    return;
+  }
+  const passwordError = validatePasswordStrength(newPassword, user.username);
+  if (passwordError) {
+    res.status(400).json({ error: passwordError });
+    return;
+  }
+  const hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
   await updateUser(req.user!.userId, { passwordHash: hash });
   res.json({ message: '密碼已設定' });
 });
@@ -245,11 +251,16 @@ router.put('/password', async (req, res) => {
     res.status(401).json({ error: '目前密碼錯誤' });
     return;
   }
-  if (!newPassword || newPassword.length < 6) {
-    res.status(400).json({ error: '新密碼至少 6 個字元' });
+  if (!newPassword) {
+    res.status(400).json({ error: 'Password is required' });
     return;
   }
-  const hash = await bcrypt.hash(newPassword, 10);
+  const passwordError = validatePasswordStrength(newPassword, user.username);
+  if (passwordError) {
+    res.status(400).json({ error: passwordError });
+    return;
+  }
+  const hash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
   await updateUser(req.user!.userId, { passwordHash: hash });
   res.json({ message: '密碼已更新' });
 });

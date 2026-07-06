@@ -14,10 +14,34 @@ import {
   canSelfRegister,
   toPublicProfile,
 } from '../store.js';
-import { signToken, requireAuth } from '../auth.js';
+import { signToken, setSessionCookie, clearSessionCookie, requireAuth } from '../auth.js';
+import {
+  BCRYPT_ROUNDS,
+  validatePasswordStrength,
+  createRateLimiter,
+  clientIp,
+} from '../security.js';
 
 const googleClient = new OAuth2Client();
 const router = Router();
+const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+
+const authRateLimit = createRateLimiter({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  max: 20,
+  message: 'Too many authentication attempts. Please wait and try again.',
+  key: (req) => `auth:${clientIp(req)}`,
+});
+
+const passwordLoginRateLimit = createRateLimiter({
+  windowMs: AUTH_RATE_LIMIT_WINDOW_MS,
+  max: 8,
+  message: 'Too many login attempts for this account. Please wait and try again.',
+  key: (req) => {
+    const username = typeof req.body?.username === 'string' ? req.body.username.toLowerCase().trim() : '';
+    return `login:${clientIp(req)}:${username}`;
+  },
+});
 
 // ── IP helpers ────────────────────────────────────────────────────────────────
 
@@ -80,7 +104,7 @@ router.get('/config', (_req, res) => {
 });
 
 // ── POST /api/auth/register ───────────────────────────────────────────────────
-router.post('/register', async (req, res) => {
+router.post('/register', authRateLimit, async (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
 
   if (!username || !password) {
@@ -91,8 +115,9 @@ router.post('/register', async (req, res) => {
     res.status(400).json({ error: '帳號長度需在 3-32 字元之間' });
     return;
   }
-  if (password.length < 6) {
-    res.status(400).json({ error: '密碼至少 6 個字元' });
+  const passwordError = validatePasswordStrength(password, username);
+  if (passwordError) {
+    res.status(400).json({ error: passwordError });
     return;
   }
 
@@ -112,7 +137,7 @@ router.post('/register', async (req, res) => {
   const count = await userCount();
   const isAdmin = count === 0; // first registered user becomes admin
 
-  const passwordHash = await bcrypt.hash(password, 10);
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const user = {
     id: crypto.randomUUID(),
     username,
@@ -124,11 +149,12 @@ router.post('/register', async (req, res) => {
   await createUser(user);
 
   const token = signToken({ userId: user.id, username, isAdmin });
-  res.json({ token, username, isAdmin });
+  setSessionCookie(res, token);
+  res.json({ username, isAdmin });
 });
 
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', passwordLoginRateLimit, async (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
   const ip = extractIp(req);
 
@@ -179,11 +205,12 @@ router.post('/login', async (req, res) => {
   }).then((log) => lookupCountry(log.id, ip)).catch(() => undefined);
 
   const token = signToken({ userId: user.id, username: user.username, isAdmin: user.isAdmin });
-  res.json({ token, username: user.username, isAdmin: user.isAdmin });
+  setSessionCookie(res, token);
+  res.json({ username: user.username, isAdmin: user.isAdmin });
 });
 
 // ── POST /api/auth/google — verify Google ID token, auto-create account if needed
-router.post('/google', async (req, res) => {
+router.post('/google', authRateLimit, async (req, res) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   if (!clientId) {
     res.status(501).json({ error: '伺服器未設定 GOOGLE_CLIENT_ID，無法使用 Google 登入' });
@@ -277,7 +304,13 @@ router.post('/google', async (req, res) => {
   }).then((log) => lookupCountry(log.id, ip)).catch(() => undefined);
 
   const token = signToken({ userId: user.id, username: user.username, isAdmin: user.isAdmin });
-  res.json({ token, username: user.username, isAdmin: user.isAdmin });
+  setSessionCookie(res, token);
+  res.json({ username: user.username, isAdmin: user.isAdmin });
+});
+
+router.post('/logout', (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ ok: true });
 });
 
 // ── GET /api/auth/me — full profile from DB (not just JWT payload) ────────────
