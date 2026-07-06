@@ -35,7 +35,8 @@ import { accountRouter } from './routes/account.js';
   // In dev the Vite dev server handles this via proxy — only activate when public/ exists
   const PUBLIC = path.join(process.cwd(), 'public');
   app.use(express.static(PUBLIC));
-  app.get('*', (_req, res, next) => {
+  // Express 5: bare '*' is no longer a valid route pattern; '/{*splat}' matches all paths incl. '/'
+  app.get('/{*splat}', (_req, res, next) => {
     const indexFile = path.join(PUBLIC, 'index.html');
     res.sendFile(indexFile, (err) => { if (err) next(); });
   });

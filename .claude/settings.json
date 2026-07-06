@@ -25,7 +25,22 @@
       "Bash(py \"C:/Users/hongyu/.claude/plugins/cache/ui-ux-pro-max-skill/ui-ux-pro-max/2.5.0/cli/assets/scripts/search.py\" \"accessibility forms dark mode settings\" --domain ux -n 5)",
       "Bash(echo \"BUILD_EXIT:$?\")",
       "Skill(browse)",
-      "Skill(browse:*)"
+      "Skill(browse:*)",
+      "PowerShell(gh api \"repos/es94111/Health_Passbook_Dashboard/dependabot/alerts?state=open&per_page=100\" --jq '.[] | \"\\\\\\(.number\\) | \\\\\\(.security_advisory.severity\\) | \\\\\\(.dependency.package.name\\) | \\\\\\(.dependency.manifest_path\\) | vulnerable: \\\\\\(.security_vulnerability.vulnerable_version_range\\) | patched: \\\\\\(.security_vulnerability.first_patched_version.identifier\\) | \\\\\\(.security_advisory.summary\\)\"')",
+      "PowerShell(gh --% api repos/es94111/Health_Passbook_Dashboard/dependabot/alerts?state=open&per_page=100 --jq \".[] | {n: .number, sev: .security_advisory.severity, pkg: .dependency.package.name, manifest: .dependency.manifest_path, range: .security_vulnerability.vulnerable_version_range, patched: .security_vulnerability.first_patched_version.identifier, title: .security_advisory.summary}\")",
+      "PowerShell(node -e \"const l=require\\('./server/package-lock.json'\\); for \\(const [k,v] of Object.entries\\(l.packages\\)\\) { if \\(k.includes\\('esbuild'\\)===false && k.endsWith\\('/qs'\\)===false\\) continue; console.log\\(k, v.version\\); }\")",
+      "PowerShell(node -e \"const l=require\\('./package-lock.json'\\); for \\(const [k,v] of Object.entries\\(l.packages\\)\\) { if \\(k.includes\\('shell-quote'\\)\\) console.log\\(k, v.version\\); }\")",
+      "PowerShell(node -e \"const l=require\\('./server/package-lock.json'\\); for \\(const [k,v] of Object.entries\\(l.packages\\)\\) { const d={...v.dependencies,...v.devDependencies,...v.optionalDependencies}; for \\(const n of ['esbuild','qs']\\) if \\(d[n]\\) console.log\\(k||'\\(root\\)','->',n,d[n]\\); }\")",
+      "PowerShell(node -e \"const l=require\\('./dashboard/package-lock.json'\\); for \\(const [k,v] of Object.entries\\(l.packages\\)\\) { const d={...v.dependencies,...v.devDependencies,...v.optionalDependencies,...v.peerDependencies}; for \\(const n of ['undici','brace-expansion','@babel/core','react-router','vite']\\) if \\(d[n]\\) console.log\\(k||'\\(root\\)','->',n,d[n]\\); }\")",
+      "PowerShell(npm view tsx@latest version dependencies)",
+      "PowerShell(npm view express@latest version dependencies.qs)",
+      "PowerShell(node -e \"console.log\\(require\\('./server/package-lock.json'\\).packages['node_modules/express'].version, require\\('./server/package-lock.json'\\).packages['node_modules/tsx'].version\\)\")",
+      "PowerShell(npm audit fix)",
+      "PowerShell(node -e \"const l=require\\('./package-lock.json'\\); for \\(const k of ['node_modules/@babel/core','node_modules/undici','node_modules/react-router','node_modules/react-router-dom','node_modules/vite','node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion','node_modules/js-yaml']\\) console.log\\(k, l.packages[k] ? l.packages[k].version : 'MISSING'\\)\")",
+      "PowerShell(node -e \"const l=require\\('./package-lock.json'\\); for \\(const k of ['node_modules/esbuild','node_modules/qs','node_modules/tsx']\\) console.log\\(k, l.packages[k].version\\)\")",
+      "PowerShell(npx vitest run 2>$null)",
+      "PowerShell(git add package-lock.json server/package.json server/package-lock.json dashboard/package-lock.json)",
+      "PowerShell(git push origin main)"
     ]
   }
 }

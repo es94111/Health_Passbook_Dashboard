@@ -1,6 +1,17 @@
 {
-  "currentVersion": "1.1.0",
+  "currentVersion": "1.1.1",
   "releases": [
+    {
+      "version": "1.1.1",
+      "date": "2026-07-06",
+      "title": "相依套件安全性更新與維護",
+      "type": "fix",
+      "changes": [
+        { "tag": "fixed", "text": "修復 Dependabot 回報之相依套件安全性警告（vite、react-router、undici、@babel/core、brace-expansion、js-yaml、tsx/esbuild、qs、shell-quote 等）" },
+        { "tag": "improved", "text": "升級 express 至 5.x、bcryptjs 至 3.x、google-auth-library、react/react-dom、recharts、eslint 等套件至最新版本" },
+        { "tag": "fixed", "text": "因應 Express 5 路由語法變更，SPA fallback 路由由 app.get('*') 改為 app.get('/{*splat}')" }
+      ]
+    },
     {
       "version": "1.1.0",
       "date": "2026-07-06",
