@@ -1,5 +1,7 @@
 // Thin API client — all calls go to /api (proxied to :3001 in dev)
 
+import type { StoredRecords } from './cryptoVault';
+
 const BASE = '/api';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -127,8 +129,17 @@ export interface ClientEncryptedRecords {
   data: string;
 }
 
-export function fetchHealthData(): Promise<{ envelope: ClientEncryptedRecords | null }> {
+export interface HealthDataResponse {
+  envelope: ClientEncryptedRecords | null;
+  needsClientEncryptionMigration: boolean;
+}
+
+export function fetchHealthData(): Promise<HealthDataResponse> {
   return request('/data');
+}
+
+export function fetchLegacyHealthData(): Promise<{ records: StoredRecords }> {
+  return request('/data/legacy');
 }
 
 export function uploadEncryptedHealthData(

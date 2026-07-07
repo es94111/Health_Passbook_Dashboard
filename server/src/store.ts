@@ -109,6 +109,9 @@ export interface StoredRecords {
   r8: Record<string, object>;   // checkup reports
 }
 
+const RECORD_TYPES = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8'] as const;
+type RecordType = typeof RECORD_TYPES[number];
+
 export interface ClientEncryptedRecords {
   __clientEnc: true;
   v: 1;
@@ -122,6 +125,47 @@ export interface ClientEncryptedRecords {
 
 function emptyRecords(): StoredRecords {
   return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {} };
+}
+
+function normalizeRecordMap(type: RecordType, value: unknown): Record<string, object> {
+  if (Array.isArray(value)) {
+    const records: Record<string, object> = {};
+    for (const rec of value) {
+      if (typeof rec === 'object' && rec !== null && !Array.isArray(rec)) {
+        records[dedupKey(type, rec as Record<string, unknown>)] = rec;
+      }
+    }
+    return records;
+  }
+
+  if (typeof value !== 'object' || value === null) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, object] =>
+        typeof entry[0] === 'string' &&
+        typeof entry[1] === 'object' &&
+        entry[1] !== null &&
+        !Array.isArray(entry[1]),
+    ),
+  );
+}
+
+function normalizeStoredRecords(value: unknown): StoredRecords {
+  const root = typeof value === 'object' && value !== null
+    ? value as Partial<Record<keyof StoredRecords, unknown>>
+    : {};
+
+  return {
+    r1: normalizeRecordMap('r1', root.r1),
+    r2: normalizeRecordMap('r2', root.r2),
+    r3: normalizeRecordMap('r3', root.r3),
+    r6: normalizeRecordMap('r6', root.r6),
+    r7: normalizeRecordMap('r7', root.r7),
+    r8: normalizeRecordMap('r8', root.r8),
+  };
 }
 
 // ── Login log types ───────────────────────────────────────────────────────────
@@ -337,12 +381,45 @@ async function recordsKey(userId: string): Promise<{ key: ReturnType<typeof deri
 }
 
 export async function getClientEncryptedRecords(userId: string): Promise<ClientEncryptedRecords | null> {
+  const data = await getHealthDataForClient(userId);
+  return data.envelope;
+}
+
+export async function getHealthDataForClient(userId: string): Promise<{
+  envelope: ClientEncryptedRecords | null;
+  needsClientEncryptionMigration: boolean;
+}> {
   const { key } = await recordsKey(userId);
   const file = recordsFile(userId);
-  const { data } = await readMaybeEncrypted<ClientEncryptedRecords | StoredRecords | null>(file, key, null);
-  if (data === null) return null;
-  if (isClientEncryptedRecords(data)) return data;
-  throw new Error('Stored health records use the legacy server-readable format. Re-upload the NHI JSON to migrate to client-side encryption.');
+  const { data, wasMigrated } = await readMaybeEncrypted<ClientEncryptedRecords | StoredRecords | null>(file, key, null);
+  if (data === null) {
+    return { envelope: null, needsClientEncryptionMigration: false };
+  }
+  if (isClientEncryptedRecords(data)) {
+    return { envelope: data, needsClientEncryptionMigration: false };
+  }
+  if (wasMigrated) {
+    await ensureDataDir();
+    await writeEncrypted(file, key, normalizeStoredRecords(data));
+  }
+  return { envelope: null, needsClientEncryptionMigration: true };
+}
+
+export async function getLegacyRecordsForClientEncryption(userId: string): Promise<StoredRecords> {
+  const { key } = await recordsKey(userId);
+  const file = recordsFile(userId);
+  const { data, wasMigrated } = await readMaybeEncrypted<ClientEncryptedRecords | StoredRecords | null>(file, key, null);
+  if (data === null) return emptyRecords();
+  if (isClientEncryptedRecords(data)) {
+    throw new Error('Health records are already client-side encrypted.');
+  }
+
+  const records = normalizeStoredRecords(data);
+  if (wasMigrated) {
+    await ensureDataDir();
+    await writeEncrypted(file, key, records);
+  }
+  return records;
 }
 
 export async function saveClientEncryptedRecords(
@@ -377,9 +454,7 @@ export async function mergeRecords(
   const existing = await getRecords(userId);
   const stats: Record<string, { added: number; skipped: number }> = {};
 
-  const types = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8'] as const;
-
-  for (const type of types) {
+  for (const type of RECORD_TYPES) {
     const records = (incoming[type] as object[] | undefined) ?? [];
     let added = 0;
     let skipped = 0;

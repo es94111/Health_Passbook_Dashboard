@@ -28,7 +28,14 @@
       "PowerShell(Set-Location 'd:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard\\\\dashboard'; npm install --no-save eslint-plugin-react-hooks@7.0.1; npx eslint . ; \"exit=$LASTEXITCODE\")",
       "PowerShell(Set-Location 'd:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard'; & .\\\\node_modules\\\\.bin\\\\concurrently.cmd --names \"a,b\" --prefix-colors \"cyan,teal\" \"node -e 1\" \"node -e 1\"; \"exit=$LASTEXITCODE\"; Remove-Item -Recurse -Force server\\\\dist -Confirm:$false)",
       "Bash(git -C \"d:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard\" remote -v)",
-      "Bash(git -C \"d:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard\" branch --show-current)"
+      "Bash(git -C \"d:\\\\SynologyDrive\\\\web\\\\Health_Passbook_Dashboard\" branch --show-current)",
+      "Bash(git add *)",
+      "Bash(git checkout *)",
+      "Bash(git merge *)",
+      "Bash(git commit *)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "claude-flow"
+  ]
 }
