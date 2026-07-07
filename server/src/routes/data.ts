@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { requireAuth } from '../auth.js';
 import {
-  getClientEncryptedRecords,
+  getHealthDataForClient,
+  getLegacyRecordsForClientEncryption,
   saveClientEncryptedRecords,
   type ClientEncryptedRecords,
 } from '../store.js';
@@ -16,8 +17,13 @@ interface UploadBody {
 }
 
 router.get('/', async (req, res) => {
-  const envelope = await getClientEncryptedRecords(req.user!.userId);
-  res.json({ envelope });
+  const data = await getHealthDataForClient(req.user!.userId);
+  res.json(data);
+});
+
+router.get('/legacy', async (req, res) => {
+  const records = await getLegacyRecordsForClientEncryption(req.user!.userId);
+  res.json({ records });
 });
 
 router.post('/upload', async (req, res) => {

@@ -1,6 +1,18 @@
 {
-  "currentVersion": "1.1.1",
+  "currentVersion": "1.2.0",
   "releases": [
+    {
+      "version": "1.2.0",
+      "date": "2026-07-07",
+      "title": "既有明文健康資料可遷移至用戶端加密格式",
+      "type": "feature",
+      "changes": [
+        { "tag": "new", "text": "偵測到伺服器端仍為明文（舊格式）的健康資料時，前端會提示使用者輸入資料加密密碼並一鍵加密遷移" },
+        { "tag": "new", "text": "新增 GET /api/data/legacy 端點，供用戶端讀取尚未加密的既有資料以完成遷移" },
+        { "tag": "improved", "text": "GET /api/data 回傳新增 needsClientEncryptionMigration 旗標，取代先前遇到舊格式資料即拋出錯誤的行為" },
+        { "tag": "improved", "text": "伺服器端讀取舊格式資料時，同步正規化並嘗試升級底層儲存的加密狀態，相容陣列與物件兩種舊資料結構" }
+      ]
+    },
     {
       "version": "1.1.1",
       "date": "2026-07-06",

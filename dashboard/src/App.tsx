@@ -1,4 +1,4 @@
-import { useReducer, useEffect, useState } from 'react';
+import { useCallback, useReducer, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
 import type { NHIData } from './parsers/types';
 import type { ClientEncryptedRecords, UserProfile } from './api';
@@ -42,12 +42,21 @@ interface DashboardProps {
   profile: UserProfile;
   nhiData: NHIData | null;
   storedEnvelope: ClientEncryptedRecords | null;
+  needsClientEncryptionMigration: boolean;
   dispatch: React.Dispatch<DataAction>;
   onEnvelopeSaved: (envelope: ClientEncryptedRecords) => void;
   onLogout: () => void;
 }
 
-function DashboardPage({ profile, nhiData, storedEnvelope, dispatch, onEnvelopeSaved, onLogout }: DashboardProps) {
+function DashboardPage({
+  profile,
+  nhiData,
+  storedEnvelope,
+  needsClientEncryptionMigration,
+  dispatch,
+  onEnvelopeSaved,
+  onLogout,
+}: DashboardProps) {
   const navigate = useNavigate();
   const store = useUserStore();
   const [activeTab, setActiveTab] = useState<Tab>(() => {
@@ -74,6 +83,7 @@ function DashboardPage({ profile, nhiData, storedEnvelope, dispatch, onEnvelopeS
         <div className="pt-14">
           <FileLoader
             storedEnvelope={storedEnvelope}
+            needsClientEncryptionMigration={needsClientEncryptionMigration}
             onEnvelopeSaved={onEnvelopeSaved}
             onLoad={(data) => dispatch({ type: 'LOAD', data })}
           />
@@ -185,10 +195,22 @@ function AppRoot() {
   const [nhiData, dispatch] = useReducer(dataReducer, null);
   const [googleClientId, setGoogleClientId] = useState<string | null>(null);
   const [storedEnvelope, setStoredEnvelope] = useState<ClientEncryptedRecords | null>(null);
+  const [needsClientEncryptionMigration, setNeedsClientEncryptionMigration] = useState(false);
 
   // Fetch server config (Google Client ID, etc.)
   useEffect(() => {
     fetchConfig().then((cfg) => setGoogleClientId(cfg.googleClientId)).catch(() => {});
+  }, []);
+
+  const refreshStoredHealthData = useCallback(async () => {
+    try {
+      const data = await fetchHealthData();
+      setStoredEnvelope(data.envelope);
+      setNeedsClientEncryptionMigration(data.needsClientEncryptionMigration);
+    } catch {
+      setStoredEnvelope(null);
+      setNeedsClientEncryptionMigration(false);
+    }
   }, []);
 
   // On mount: check HttpOnly cookie session and remember encrypted health data if present.
@@ -196,35 +218,31 @@ function AppRoot() {
     me()
       .then(async (user) => {
         setProfile(user);
-        try {
-          const { envelope } = await fetchHealthData();
-          setStoredEnvelope(envelope);
-        } catch {
-          // No data yet
-        }
+        await refreshStoredHealthData();
       })
       .catch(() => {})
       .finally(() => setAuthLoading(false));
-  }, []);
+  }, [refreshStoredHealthData]);
 
-  function handleAuth(_username: string, _isAdmin: boolean) {
+  function handleAuth() {
     me()
       .then(async (user) => {
         setProfile(user);
-        try {
-          const { envelope } = await fetchHealthData();
-          setStoredEnvelope(envelope);
-        } catch {
-          // No data yet
-        }
+        await refreshStoredHealthData();
       })
       .catch(() => {});
+  }
+
+  function handleEnvelopeSaved(envelope: ClientEncryptedRecords) {
+    setStoredEnvelope(envelope);
+    setNeedsClientEncryptionMigration(false);
   }
 
   function handleLogout() {
     void logout().catch(() => {});
     setProfile(null);
     setStoredEnvelope(null);
+    setNeedsClientEncryptionMigration(false);
     dispatch({ type: 'CLEAR' });
   }
 
@@ -255,8 +273,9 @@ function AppRoot() {
                 profile={profile}
                 nhiData={nhiData}
                 storedEnvelope={storedEnvelope}
+                needsClientEncryptionMigration={needsClientEncryptionMigration}
                 dispatch={dispatch}
-                onEnvelopeSaved={setStoredEnvelope}
+                onEnvelopeSaved={handleEnvelopeSaved}
                 onLogout={handleLogout}
               />
             }
@@ -286,8 +305,9 @@ function AppRoot() {
                 profile={profile}
                 nhiData={nhiData}
                 storedEnvelope={storedEnvelope}
+                needsClientEncryptionMigration={needsClientEncryptionMigration}
                 dispatch={dispatch}
-                onEnvelopeSaved={setStoredEnvelope}
+                onEnvelopeSaved={handleEnvelopeSaved}
                 onLogout={handleLogout}
               />
             }

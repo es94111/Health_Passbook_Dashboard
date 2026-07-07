@@ -1,5 +1,10 @@
 import { useState, useCallback } from 'react';
-import { uploadEncryptedHealthData, type ClientEncryptedRecords, type UploadResult } from '../api';
+import {
+  fetchLegacyHealthData,
+  uploadEncryptedHealthData,
+  type ClientEncryptedRecords,
+  type UploadResult,
+} from '../api';
 import type { NHIData } from '../parsers/types';
 import { parseNHIJson } from '../parsers/nhi-parser';
 import {
@@ -8,6 +13,7 @@ import {
   emptyRecords,
   flattenRecords,
   mergeNHIJson,
+  type StoredRecords,
   validateVaultPassphrase,
   VAULT_PASSPHRASE_MIN_LENGTH,
 } from '../cryptoVault';
@@ -15,6 +21,7 @@ import {
 interface Props {
   onLoad: (data: NHIData) => void;
   storedEnvelope: ClientEncryptedRecords | null;
+  needsClientEncryptionMigration: boolean;
   onEnvelopeSaved: (envelope: ClientEncryptedRecords) => void;
 }
 
@@ -40,9 +47,23 @@ function HeartbeatIcon() {
   );
 }
 
-type Status = 'idle' | 'uploading' | 'loading' | 'error';
+type Status = 'idle' | 'uploading' | 'migrating' | 'loading' | 'error';
 
-export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: Props) {
+function statsForRecords(records: StoredRecords): Record<string, { added: number; skipped: number }> {
+  return Object.fromEntries(
+    Object.entries(records).map(([type, values]) => [
+      type,
+      { added: Object.keys(values).length, skipped: 0 },
+    ]),
+  );
+}
+
+export default function FileLoader({
+  onLoad,
+  storedEnvelope,
+  needsClientEncryptionMigration,
+  onEnvelopeSaved,
+}: Props) {
   const [dragging, setDragging] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
@@ -63,6 +84,27 @@ export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: 
     }
   }, [onLoad, passphrase, storedEnvelope]);
 
+  const migrateLegacyData = useCallback(async () => {
+    if (!needsClientEncryptionMigration) return;
+    setStatus('migrating');
+    setError(null);
+    setUploadResult(null);
+
+    try {
+      validateVaultPassphrase(passphrase);
+      const { records } = await fetchLegacyHealthData();
+      const envelope = await encryptRecords(records, passphrase, null);
+      await uploadEncryptedHealthData(envelope, statsForRecords(records));
+      onEnvelopeSaved(envelope);
+
+      setStatus('loading');
+      onLoad(parseNHIJson(flattenRecords(records) as Record<string, unknown[]>));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '無法加密既有資料，請確認資料加密密碼');
+      setStatus('error');
+    }
+  }, [needsClientEncryptionMigration, onEnvelopeSaved, onLoad, passphrase]);
+
   const processFile = useCallback(async (file: File) => {
     setStatus('uploading');
     setError(null);
@@ -76,7 +118,11 @@ export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: 
 
       if (typeof json !== 'object' || json === null) throw new Error('JSON 格式不正確');
 
-      const existing = storedEnvelope ? await decryptRecords(storedEnvelope, passphrase) : emptyRecords();
+      const existing = storedEnvelope
+        ? await decryptRecords(storedEnvelope, passphrase)
+        : needsClientEncryptionMigration
+          ? (await fetchLegacyHealthData()).records
+          : emptyRecords();
       const { records, stats } = mergeNHIJson(existing, json);
       const envelope = await encryptRecords(records, passphrase, storedEnvelope);
       const result = await uploadEncryptedHealthData(envelope, stats);
@@ -89,7 +135,7 @@ export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: 
       setError(err instanceof Error ? err.message : '無法讀取或加密檔案，請確認 NHI JSON 與資料加密密碼');
       setStatus('error');
     }
-  }, [onEnvelopeSaved, onLoad, passphrase, storedEnvelope]);
+  }, [needsClientEncryptionMigration, onEnvelopeSaved, onLoad, passphrase, storedEnvelope]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -103,7 +149,7 @@ export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: 
     if (file) { void processFile(file); }
   }
 
-  const busy = status === 'uploading' || status === 'loading';
+  const busy = status === 'uploading' || status === 'migrating' || status === 'loading';
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
@@ -133,11 +179,25 @@ export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: 
             autoComplete="off"
             className="input w-full"
             placeholder={`至少 ${VAULT_PASSPHRASE_MIN_LENGTH} 個字元`}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              if (storedEnvelope) {
+                void unlockStoredData();
+              } else if (needsClientEncryptionMigration) {
+                void migrateLegacyData();
+              }
+            }}
           />
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
             這組密碼只在瀏覽器中用來加密/解密健康資料，不會送到伺服器。遺失後既有資料無法復原。
           </p>
-          {storedEnvelope && (
+          {needsClientEncryptionMigration && !storedEnvelope && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+              偵測到既有資料。送出後會以這組密碼重新加密並保存。
+            </p>
+          )}
+          {storedEnvelope ? (
             <button
               type="button"
               onClick={() => void unlockStoredData()}
@@ -146,7 +206,16 @@ export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: 
             >
               解鎖既有資料
             </button>
-          )}
+          ) : needsClientEncryptionMigration ? (
+            <button
+              type="button"
+              onClick={() => void migrateLegacyData()}
+              disabled={busy || passphrase.length < VAULT_PASSPHRASE_MIN_LENGTH}
+              className="mt-3 btn-primary w-full"
+            >
+              加密並載入既有資料
+            </button>
+          ) : null}
         </div>
 
         <div
@@ -168,7 +237,11 @@ export default function FileLoader({ onLoad, storedEnvelope, onEnvelopeSaved }: 
                 aria-hidden="true"
               />
               <p className="text-gray-500 dark:text-gray-400 text-sm">
-                {status === 'uploading' ? '加密並儲存資料中...' : '載入儀表板...'}
+                {status === 'uploading'
+                  ? '加密並儲存資料中...'
+                  : status === 'migrating'
+                    ? '加密既有資料中...'
+                    : '載入儀表板...'}
               </p>
             </div>
           ) : (
