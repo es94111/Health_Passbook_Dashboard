@@ -9,7 +9,9 @@ COPY dashboard/package*.json dashboard/
 # Use npm install (not ci) — lock file generated on Windows/npm-11 omits some
 # Linux-only optional deps (@emnapi/core, @emnapi/runtime) that npm-10 on Alpine
 # would reject. ci is only needed for the lean production runtime stage.
-RUN npm install --prefix dashboard
+# --ignore-scripts skips postinstall (sets up the isolated .lint-toolchain/),
+# which isn't copied in yet at this layer and isn't needed to build anyway.
+RUN npm install --prefix dashboard --ignore-scripts
 COPY dashboard/ dashboard/
 RUN npm run build --prefix dashboard
 
