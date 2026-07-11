@@ -1,27 +1,47 @@
 {
-  "currentVersion": "1.2.0",
+  "currentVersion": "1.4.0",
   "releases": [
     {
-      "version": "1.2.0",
+      "version": "1.4.0",
+      "date": "2026-07-11",
+      "title": "系統完成例行技術升級與安全維護",
+      "type": "improved",
+      "changes": [
+        { "tag": "improved", "text": "系統核心開發工具與多項相依套件升級至最新版本，有助於提升系統的長期穩定性與安全性。" }
+      ]
+    },
+    {
+      "version": "1.3.0",
       "date": "2026-07-07",
-      "title": "既有明文健康資料可遷移至用戶端加密格式",
+      "title": "既有健康資料可一鍵遷移為加密格式",
       "type": "feature",
       "changes": [
-        { "tag": "new", "text": "偵測到伺服器端仍為明文（舊格式）的健康資料時，前端會提示使用者輸入資料加密密碼並一鍵加密遷移" },
-        { "tag": "new", "text": "新增 GET /api/data/legacy 端點，供用戶端讀取尚未加密的既有資料以完成遷移" },
-        { "tag": "improved", "text": "GET /api/data 回傳新增 needsClientEncryptionMigration 旗標，取代先前遇到舊格式資料即拋出錯誤的行為" },
-        { "tag": "improved", "text": "伺服器端讀取舊格式資料時，同步正規化並嘗試升級底層儲存的加密狀態，相容陣列與物件兩種舊資料結構" }
+        { "tag": "new", "text": "系統偵測到尚未完成加密保護的既有健康資料時，會提示使用者輸入資料加密密碼，一鍵完成加密與遷移，過程中不需重新上傳原始檔案。" },
+        { "tag": "improved", "text": "無論既有資料是何種舊版格式儲存，系統都會自動正確處理，確保遷移過程順利完成、資料不遺漏。" }
+      ]
+    },
+    {
+      "version": "1.2.0",
+      "date": "2026-07-06",
+      "title": "健康資料改為在裝置端加密，並強化密碼與登入防護",
+      "type": "feature",
+      "changes": [
+        { "tag": "new", "text": "健康資料現在會先在使用者的瀏覽器完成加密才上傳保存，伺服器僅存放加密後的內容，無法直接讀取原始資料。" },
+        { "tag": "new", "text": "上傳或檢視健康資料前，需輸入專屬的資料加密密碼；此密碼僅在瀏覽器端使用，不會傳送到伺服器，遺失後既有資料將無法復原，請務必妥善保管。" },
+        { "tag": "improved", "text": "帳號密碼規則全面提升：最短長度由 8 個字元提高為 12 個字元、禁止使用過於常見的密碼或包含使用者名稱，並要求同時包含大小寫字母、數字與符號其中至少三種。" },
+        { "tag": "new", "text": "登入、註冊等帳號功能新增防護機制，短時間內嘗試次數過多會暫時受到限制，藉此降低帳號被惡意破解密碼的風險。" },
+        { "tag": "improved", "text": "新增自動化安全掃描機制，定期檢查相依套件是否存在已知安全性問題，以便及早發現並修補。" }
       ]
     },
     {
       "version": "1.1.1",
       "date": "2026-07-06",
-      "title": "相依套件安全性更新與維護",
+      "title": "修復相依套件安全性警告並強化系統穩定性",
       "type": "fix",
       "changes": [
-        { "tag": "fixed", "text": "修復 Dependabot 回報之相依套件安全性警告（vite、react-router、undici、@babel/core、brace-expansion、js-yaml、tsx/esbuild、qs、shell-quote 等）" },
-        { "tag": "improved", "text": "升級 express 至 5.x、bcryptjs 至 3.x、google-auth-library、react/react-dom、recharts、eslint 等套件至最新版本" },
-        { "tag": "fixed", "text": "因應 Express 5 路由語法變更，SPA fallback 路由由 app.get('*') 改為 app.get('/{*splat}')" }
+        { "tag": "fixed", "text": "修復多項相依套件的已知安全性警告，降低潛在資安風險。" },
+        { "tag": "improved", "text": "升級網站伺服器、密碼加密與圖表顯示等多項相依套件至最新版本，提升系統穩定性。" },
+        { "tag": "fixed", "text": "修正部分頁面重新整理或直接以網址開啟時，可能無法正確載入儀表板的問題。" }
       ]
     },
     {
@@ -34,8 +54,7 @@
         { "tag": "new", "text": "檢驗趨勢圖表項目可釘選／取消釘選至重點摘要" },
         { "tag": "new", "text": "帳號設定新增「儀表板偏好」：可設定申報項目圖表的預設日期範圍，並自訂首頁顯示區塊（含各分頁）" },
         { "tag": "new", "text": "使用者偏好設定（釘選項目、隱藏區塊、預設日期範圍、最後檢視分頁、已讀警示）改為伺服器端儲存，換裝置或瀏覽器登入後仍會保留" },
-        { "tag": "improved", "text": "新增 PUT /api/account/preferences 端點，伺服器端驗證並清理偏好設定內容（陣列去重、長度上限）" },
-        { "tag": "improved", "text": "/api/auth/me 與 /api/account/me 回傳的個人資料統一經由共用的 toPublicProfile()，並附帶使用者偏好設定" },
+        { "tag": "improved", "text": "偏好設定內容會先經過檢查與清理才儲存，避免重複或過長的內容造成顯示異常" },
         { "tag": "improved", "text": "檢驗趨勢卡片與圖表元件補上深色模式樣式" }
       ]
     }

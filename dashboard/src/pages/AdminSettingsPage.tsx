@@ -218,16 +218,16 @@ function UserManagementSection({ currentUserId }: { currentUserId: string }) {
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchUsers();
-  }, []);
-
   function fetchUsers() {
     listUsers()
       .then(setUsers)
       .catch(() => {})
       .finally(() => setLoading(false));
   }
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
 
   function handleCreated(user: UserInfo) {
     setUsers((prev) => [...prev, user]);

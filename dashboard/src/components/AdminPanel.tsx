@@ -13,7 +13,6 @@ export default function AdminPanel({ currentUserId, onClose }: Props) {
   const [deleting, setDeleting] = useState<string | null>(null);
 
   async function load() {
-    setLoading(true);
     try {
       setUsers(await listUsers());
     } catch (err) {

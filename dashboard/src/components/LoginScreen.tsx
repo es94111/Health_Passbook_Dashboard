@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { login, register, loginWithGoogle, fetchConfig } from '../api';
 
 interface Props {
@@ -21,6 +21,19 @@ export default function LoginScreen({ onAuth }: Props) {
       .then((cfg) => setGoogleClientId(cfg.googleClientId))
       .catch(() => {});
   }, []);
+
+  const handleGoogleCredential = useCallback(async (response: { credential: string }) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await loginWithGoogle(response.credential);
+      onAuth(res.username, res.isAdmin);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Google 登入失敗');
+    } finally {
+      setLoading(false);
+    }
+  }, [onAuth]);
 
   useEffect(() => {
     if (!googleClientId) return;
@@ -52,20 +65,7 @@ export default function LoginScreen({ onAuth }: Props) {
       }, 200);
       return () => clearInterval(interval);
     }
-  }, [googleClientId]);
-
-  async function handleGoogleCredential(response: { credential: string }) {
-    setError(null);
-    setLoading(true);
-    try {
-      const res = await loginWithGoogle(response.credential);
-      onAuth(res.username, res.isAdmin);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google 登入失敗');
-    } finally {
-      setLoading(false);
-    }
-  }
+  }, [googleClientId, handleGoogleCredential]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

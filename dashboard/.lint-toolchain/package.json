@@ -1,0 +1,14 @@
+{
+  "name": "dashboard-lint-toolchain",
+  "private": true,
+  "description": "Isolated ESLint + typescript-eslint install, pinned to a TypeScript version typescript-eslint actually supports. typescript-eslint has no support yet for the TypeScript 7 native compiler used by the main dashboard project (its Compiler API dependency crashes on import), so this keeps linting working without holding the whole project back on TypeScript 6. Remove this folder and fold its deps back into dashboard/package.json once typescript-eslint ships TS7 support.",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.7.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.63.0"
+  }
+}
