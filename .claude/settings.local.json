@@ -91,7 +91,13 @@
       "Bash(git stash *)",
       "Bash(node -e \"require\\('./changelog.json'\\); console.log\\('changelog OK'\\)\")",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('.claude/settings.local.json','utf8'\\)\\); console.log\\('settings OK'\\)\")",
-      "Bash(git --no-pager diff --check -- SRS.md changelog.json .claude/settings.local.json)"
+      "Bash(git --no-pager diff --check -- SRS.md changelog.json .claude/settings.local.json)",
+      "Bash(git --no-pager diff --cached --stat)",
+      "Bash(git push *)",
+      "Bash(git tag *)",
+      "Bash(git --no-pager log --oneline -3)",
+      "Bash(gh run *)",
+      "Bash(docker *)"
     ]
   },
   "enabledMcpjsonServers": [
