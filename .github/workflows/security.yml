@@ -62,6 +62,9 @@ jobs:
   secret-scan:
     name: Gitleaks secret scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4

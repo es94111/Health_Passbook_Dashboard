@@ -1,5 +1,5 @@
 import { useCallback, useReducer, useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate } from 'react-router';
 import type { NHIData } from './parsers/types';
 import type { ClientEncryptedRecords, UserProfile } from './api';
 import { me, fetchHealthData, fetchConfig, logout } from './api';
