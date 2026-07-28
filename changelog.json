@@ -1,6 +1,15 @@
 {
-  "currentVersion": "1.4.0",
+  "currentVersion": "1.4.1",
   "releases": [
+    {
+      "version": "1.4.1",
+      "date": "2026-07-28",
+      "title": "修復相依套件安全性警告",
+      "type": "fix",
+      "changes": [
+        { "tag": "fixed", "text": "修復開發工具相依套件 shell-quote 的高風險阻斷服務（DoS）安全性警告，升級 concurrently 至最新版本一併帶入修補。" }
+      ]
+    },
     {
       "version": "1.4.0",
       "date": "2026-07-11",
