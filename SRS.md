@@ -97,6 +97,7 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
+| 1.4.2 | 2026-08-10 | 修復 dashboard 相依套件 nanoid／undici 及 lint 工具鏈 brace-expansion 高風險安全性警告，並將 lint 工具鏈納入 CI 安全掃描矩陣 |
 | 1.4.1 | 2026-07-28 | 修復 shell-quote 相依套件高風險 DoS 安全性警告 |
 | 1.4.0 | 2026-07-11 | 升級至 TypeScript 7 與 Tailwind CSS 4，相依套件全面更新 |
 | 1.3.0 | 2026-07-07 | 既有明文健康資料可於前端一鍵加密遷移至用戶端加密格式 |
