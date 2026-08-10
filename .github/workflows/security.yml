@@ -29,6 +29,8 @@ jobs:
             path: .
           - name: dashboard
             path: dashboard
+          - name: dashboard-lint-toolchain
+            path: dashboard/.lint-toolchain
           - name: server
             path: server
     steps:
