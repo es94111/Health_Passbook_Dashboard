@@ -10,6 +10,6 @@
     "postinstall": "npm install --prefix server && npm install --prefix dashboard"
   },
   "devDependencies": {
-    "concurrently": "^10.0.4"
+    "concurrently": "^10.0.5"
   }
 }
