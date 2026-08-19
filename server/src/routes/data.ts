@@ -35,8 +35,12 @@ router.post('/upload', async (req, res) => {
 
   await saveClientEncryptedRecords(req.user!.userId, envelope);
   const safeStats = stats ?? {};
-  const totalAdded = Object.values(safeStats).reduce((s, v) => s + Number(v.added ?? 0), 0);
-  const totalSkipped = Object.values(safeStats).reduce((s, v) => s + Number(v.skipped ?? 0), 0);
+  const toCount = (v: unknown, key: 'added' | 'skipped'): number => {
+    const n = Number((v as { [k: string]: unknown } | null)?.[key]);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+  const totalAdded = Object.values(safeStats).reduce((s, v) => s + toCount(v, 'added'), 0);
+  const totalSkipped = Object.values(safeStats).reduce((s, v) => s + toCount(v, 'skipped'), 0);
 
   res.json({
     message: `Encrypted health data saved. Added ${totalAdded}, skipped ${totalSkipped}.`,

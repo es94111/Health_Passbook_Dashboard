@@ -44,38 +44,40 @@ const passwordLoginRateLimit = createRateLimiter({
 });
 
 // ── IP helpers ────────────────────────────────────────────────────────────────
-
-function getClientIp(req: Parameters<typeof router.post>[1] extends (req: infer R, ...args: unknown[]) => unknown ? R : never): string {
-  const forwarded = (req as { headers: Record<string, string | string[] | undefined> }).headers['x-forwarded-for'];
-  if (forwarded) {
-    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
-    return first.trim();
-  }
-  return (req as { socket?: { remoteAddress?: string } }).socket?.remoteAddress ?? 'unknown';
-}
-
-import type { Request } from 'express';
-
-function extractIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) {
-    const first = Array.isArray(forwarded) ? forwarded[0] : forwarded.split(',')[0];
-    return first.trim();
-  }
-  return req.socket?.remoteAddress ?? 'unknown';
-}
+// Real client IP is resolved by the shared clientIp() in security.ts, which only
+// trusts X-Forwarded-For when TRUST_PROXY=true (see there).
 
 function isPrivateIp(ip: string): boolean {
+  let addr = ip;
+  // Normalize IPv4-mapped IPv6 (::ffff:1.2.3.4) so the IPv4 rules below apply.
+  if (addr.startsWith('::ffff:') && addr.includes('.')) {
+    addr = addr.slice('::ffff:'.length);
+  }
+  if (addr === 'unknown' || addr === '::1' || addr === '0.0.0.0') return true;
+
+  if (!addr.includes(':')) {
+    const octets = addr.split('.').map(Number);
+    if (octets.length !== 4 || octets.some((o) => Number.isNaN(o) || o < 0 || o > 255)) return true;
+    const [a, b] = octets;
+    if (a === 10) return true;                          // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true;   // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;            // 192.168.0.0/16
+    if (a === 127) return true;                         // loopback
+    if (a === 169 && b === 254) return true;            // link-local
+    return false;
+  }
+
+  const lower = addr.toLowerCase();
+  // IPv6 loopback / link-local (fe80::/10) / unique-local (fc00::/7)
   return (
-    ip === 'unknown' ||
-    ip === '::1' ||
-    ip.startsWith('127.') ||
-    ip.startsWith('10.') ||
-    ip.startsWith('192.168.') ||
-    ip.startsWith('172.') ||
-    ip.startsWith('::ffff:127.') ||
-    ip.startsWith('::ffff:10.') ||
-    ip.startsWith('::ffff:192.168.')
+    lower.startsWith('fe8') ||
+    lower.startsWith('fe9') ||
+    lower.startsWith('fea') ||
+    lower.startsWith('feb') ||
+    lower.startsWith('fc') ||
+    lower.startsWith('fd') ||
+    lower === '::' ||
+    lower.startsWith('::1')
   );
 }
 
@@ -107,7 +109,7 @@ router.get('/config', (_req, res) => {
 router.post('/register', authRateLimit, async (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
 
-  if (!username || !password) {
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
     res.status(400).json({ error: '請輸入帳號和密碼' });
     return;
   }
@@ -156,9 +158,15 @@ router.post('/register', authRateLimit, async (req, res) => {
 // ── POST /api/auth/login ──────────────────────────────────────────────────────
 router.post('/login', passwordLoginRateLimit, async (req, res) => {
   const { username, password } = req.body as { username?: string; password?: string };
-  const ip = extractIp(req);
+  const ip = clientIp(req);
 
-  if (!username || !password) {
+  // Type/length validation BEFORE any logging — a huge or non-string username
+  // would otherwise bloat the login-logs file on every attempt.
+  if (typeof username !== 'string' || username.trim().length === 0 || username.length > 64) {
+    res.status(400).json({ error: '請輸入有效帳號' });
+    return;
+  }
+  if (typeof password !== 'string' || password.length === 0) {
     res.status(400).json({ error: '請輸入帳號和密碼' });
     return;
   }
@@ -169,9 +177,11 @@ router.post('/login', passwordLoginRateLimit, async (req, res) => {
     return;
   }
 
-  // Google-only accounts have no password — reject password login attempts
+  // Google-only accounts have no password — reject password login attempts.
+  // Use the same generic error as a wrong password so account existence (and
+  // whether the account is Google-only) isn't revealed.
   if (!user.passwordHash) {
-    res.status(401).json({ error: '此帳號僅支援 Google 登入' });
+    res.status(401).json({ error: '帳號或密碼錯誤' });
     return;
   }
 
@@ -226,7 +236,7 @@ router.post('/google', authRateLimit, async (req, res) => {
   let googleId: string;
   let email: string;
   let picture: string | undefined;
-  const ip = extractIp(req);
+  const ip = clientIp(req);
 
   try {
     const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: clientId });
