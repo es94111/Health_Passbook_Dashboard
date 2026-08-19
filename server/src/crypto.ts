@@ -250,5 +250,9 @@ export async function readMaybeEncrypted<T>(
 
 export async function writeEncrypted(file: string, key: Buffer, obj: unknown): Promise<void> {
   const envelope = encryptJson(key, obj);
-  await writePrivateFile(file, JSON.stringify(envelope));
+  // Write to a temp file then atomically rename over the target. A concurrent
+  // reader never sees a partially-written file.
+  const tmp = `${file}.tmp`;
+  await writePrivateFile(tmp, JSON.stringify(envelope));
+  await fs.rename(tmp, file);
 }

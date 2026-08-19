@@ -37,8 +37,15 @@ COPY --from=server-build /app/server/dist ./dist/
 # Dashboard static files served by Express at /public
 COPY --from=dashboard-build /app/dashboard/dist ./public/
 
+# Run as non-root. Create /app/data and chown before the VOLUME declaration so a
+# fresh anonymous volume inherits the app user's ownership.
+RUN addgroup -S app && adduser -S app -G app \
+    && mkdir -p /app/data && chown -R app:app /app
+
 # Persist health data and encryption key across restarts
 VOLUME ["/app/data"]
+
+USER app
 
 ENV NODE_ENV=production
 EXPOSE 3001

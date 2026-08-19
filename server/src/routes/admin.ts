@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { requireAdmin } from '../auth.js';
-import { BCRYPT_ROUNDS, validatePasswordStrength } from '../security.js';
+import { BCRYPT_ROUNDS, validatePasswordStrength, clientIp } from '../security.js';
 import {
   getUsers,
   getUserById,
@@ -16,6 +16,36 @@ import {
 } from '../store.js';
 
 const router = Router();
+
+// ── Admin IP allowlist ────────────────────────────────────────────────────────
+// If configured (via the admin settings UI or ENV_ADMIN_IP_ALLOWLIST), only the
+// listed source IPs may reach admin endpoints. Empty list = no restriction.
+function mergeAdminIpAllowlist(configured: string[]): string[] {
+  const fromEnv = (process.env.ENV_ADMIN_IP_ALLOWLIST ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...new Set([...configured, ...fromEnv])];
+}
+
+router.use(async (req, res, next) => {
+  try {
+    const settings = await getSettings();
+    const allowlist = mergeAdminIpAllowlist(settings.adminIpAllowlist);
+    if (allowlist.length === 0) {
+      next();
+      return;
+    }
+    const ip = clientIp(req);
+    if (!allowlist.includes(ip)) {
+      res.status(403).json({ error: '來源 IP 不在管理員允許清單內' });
+      return;
+    }
+    next();
+  } catch (err) {
+    next(err as Error);
+  }
+});
 
 // All admin routes require admin role
 router.use(requireAdmin);

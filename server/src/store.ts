@@ -15,6 +15,20 @@ const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const LOGS_FILE = path.join(DATA_DIR, 'login-logs.json');
 
+// ── Per-file write lock ────────────────────────────────────────────────────────
+// Serializes read-modify-write operations on the same file so concurrent
+// requests (two uploads, two logins writing login logs, …) can't lose updates.
+// Internal helpers must NOT call withLock (it would deadlock on the same key).
+
+const fileLocks = new Map<string, Promise<unknown>>();
+
+function withLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+  const prev = fileLocks.get(name) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  fileLocks.set(name, run.then(() => undefined, () => undefined));
+  return run;
+}
+
 // ── User preferences ──────────────────────────────────────────────────────────
 
 export type DateRangePreset = 'all' | '3m' | '6m' | '1y' | '3y';
@@ -256,23 +270,27 @@ export async function getUserByGoogleId(googleId: string): Promise<User | undefi
   return users.find((u) => u.googleId === googleId);
 }
 
-export async function createUser(user: Omit<User, 'encryptionSalt'>): Promise<void> {
-  const users = await readUsers();
-  const fullUser: User = {
-    ...user,
-    encryptionSalt: crypto.randomBytes(32).toString('hex'),
-  };
-  users.push(fullUser);
-  await writeUsers(users);
+export function createUser(user: Omit<User, 'encryptionSalt'>): Promise<void> {
+  return withLock('users', async () => {
+    const users = await readUsers();
+    const fullUser: User = {
+      ...user,
+      encryptionSalt: crypto.randomBytes(32).toString('hex'),
+    };
+    users.push(fullUser);
+    await writeUsers(users);
+  });
 }
 
-export async function updateUser(id: string, patch: Partial<Omit<User, 'id' | 'encryptionSalt'>>): Promise<User | null> {
-  const users = await readUsers();
-  const idx = users.findIndex((u) => u.id === id);
-  if (idx === -1) return null;
-  users[idx] = { ...users[idx], ...patch };
-  await writeUsers(users);
-  return users[idx];
+export function updateUser(id: string, patch: Partial<Omit<User, 'id' | 'encryptionSalt'>>): Promise<User | null> {
+  return withLock('users', async () => {
+    const users = await readUsers();
+    const idx = users.findIndex((u) => u.id === id);
+    if (idx === -1) return null;
+    users[idx] = { ...users[idx], ...patch };
+    await writeUsers(users);
+    return users[idx];
+  });
 }
 
 /**
@@ -281,64 +299,68 @@ export async function updateUser(id: string, patch: Partial<Omit<User, 'id' | 'e
  * defaultDateRange is validated against the allowed presets.
  * Returns the merged preferences, or null if the user does not exist.
  */
-export async function updateUserPreferences(
+export function updateUserPreferences(
   id: string,
   patch: Partial<UserPreferences>,
 ): Promise<UserPreferences | null> {
-  const users = await readUsers();
-  const idx = users.findIndex((u) => u.id === id);
-  if (idx === -1) return null;
+  return withLock('users', async () => {
+    const users = await readUsers();
+    const idx = users.findIndex((u) => u.id === id);
+    if (idx === -1) return null;
 
-  const current = normalizePreferences(users[idx].preferences);
-  const next: UserPreferences = { ...current };
+    const current = normalizePreferences(users[idx].preferences);
+    const next: UserPreferences = { ...current };
 
-  const cleanArray = (v: unknown, cap: number): string[] | undefined => {
-    if (!Array.isArray(v)) return undefined;
-    const strings = v.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean);
-    return [...new Set(strings)].slice(0, cap);
-  };
+    const cleanArray = (v: unknown, cap: number): string[] | undefined => {
+      if (!Array.isArray(v)) return undefined;
+      const strings = v.filter((x): x is string => typeof x === 'string').map((s) => s.trim()).filter(Boolean);
+      return [...new Set(strings)].slice(0, cap);
+    };
 
-  if ('pinnedLabItems' in patch) {
-    const a = cleanArray(patch.pinnedLabItems, MAX_PINS);
-    if (a) next.pinnedLabItems = a;
-  }
-  if ('pinnedMedications' in patch) {
-    const a = cleanArray(patch.pinnedMedications, MAX_PINS);
-    if (a) next.pinnedMedications = a;
-  }
-  if ('hiddenSections' in patch) {
-    const a = cleanArray(patch.hiddenSections, MAX_HIDDEN);
-    if (a) next.hiddenSections = a;
-  }
-  if ('acknowledgedAlerts' in patch) {
-    // Keep the most recent acks (client appends to the end)
-    const a = cleanArray(patch.acknowledgedAlerts, Number.MAX_SAFE_INTEGER);
-    if (a) next.acknowledgedAlerts = a.slice(-MAX_ACK_ALERTS);
-  }
-  if ('defaultDateRange' in patch) {
-    if (DATE_RANGE_PRESETS.includes(patch.defaultDateRange as DateRangePreset)) {
-      next.defaultDateRange = patch.defaultDateRange as DateRangePreset;
+    if ('pinnedLabItems' in patch) {
+      const a = cleanArray(patch.pinnedLabItems, MAX_PINS);
+      if (a) next.pinnedLabItems = a;
     }
-  }
-  if ('lastActiveTab' in patch) {
-    const t = patch.lastActiveTab;
-    next.lastActiveTab = typeof t === 'string' ? t.slice(0, 40) : null;
-  }
+    if ('pinnedMedications' in patch) {
+      const a = cleanArray(patch.pinnedMedications, MAX_PINS);
+      if (a) next.pinnedMedications = a;
+    }
+    if ('hiddenSections' in patch) {
+      const a = cleanArray(patch.hiddenSections, MAX_HIDDEN);
+      if (a) next.hiddenSections = a;
+    }
+    if ('acknowledgedAlerts' in patch) {
+      // Keep the most recent acks (client appends to the end)
+      const a = cleanArray(patch.acknowledgedAlerts, Number.MAX_SAFE_INTEGER);
+      if (a) next.acknowledgedAlerts = a.slice(-MAX_ACK_ALERTS);
+    }
+    if ('defaultDateRange' in patch) {
+      if (DATE_RANGE_PRESETS.includes(patch.defaultDateRange as DateRangePreset)) {
+        next.defaultDateRange = patch.defaultDateRange as DateRangePreset;
+      }
+    }
+    if ('lastActiveTab' in patch) {
+      const t = patch.lastActiveTab;
+      next.lastActiveTab = typeof t === 'string' ? t.slice(0, 40) : null;
+    }
 
-  users[idx] = { ...users[idx], preferences: next };
-  await writeUsers(users);
-  return next;
+    users[idx] = { ...users[idx], preferences: next };
+    await writeUsers(users);
+    return next;
+  });
 }
 
-export async function deleteUser(id: string): Promise<boolean> {
-  const users = await readUsers();
-  const filtered = users.filter((u) => u.id !== id);
-  if (filtered.length === users.length) return false;
-  await writeUsers(filtered);
-  // Also remove their health records
-  const recordFile = recordsFile(id);
-  await fs.unlink(recordFile).catch(() => undefined);
-  return true;
+export function deleteUser(id: string): Promise<boolean> {
+  return withLock('users', async () => {
+    const users = await readUsers();
+    const filtered = users.filter((u) => u.id !== id);
+    if (filtered.length === users.length) return false;
+    await writeUsers(filtered);
+    // Also remove their health records
+    const recordFile = recordsFile(id);
+    await fs.unlink(recordFile).catch(() => undefined);
+    return true;
+  });
 }
 
 export async function userCount(): Promise<number> {
@@ -446,34 +468,36 @@ export async function getRecords(userId: string): Promise<StoredRecords> {
   return data;
 }
 
-export async function mergeRecords(
+export function mergeRecords(
   userId: string,
   incoming: Partial<Record<string, object[]>>,
 ): Promise<Record<string, { added: number; skipped: number }>> {
-  const { key } = await recordsKey(userId);
-  const existing = await getRecords(userId);
-  const stats: Record<string, { added: number; skipped: number }> = {};
+  return withLock(`records:${userId}`, async () => {
+    const { key } = await recordsKey(userId);
+    const existing = await getRecords(userId);
+    const stats: Record<string, { added: number; skipped: number }> = {};
 
-  for (const type of RECORD_TYPES) {
-    const records = (incoming[type] as object[] | undefined) ?? [];
-    let added = 0;
-    let skipped = 0;
+    for (const type of RECORD_TYPES) {
+      const records = (incoming[type] as object[] | undefined) ?? [];
+      let added = 0;
+      let skipped = 0;
 
-    for (const rec of records) {
-      const k = dedupKey(type, rec as Record<string, unknown>);
-      if (k in existing[type]) {
-        skipped++;
-      } else {
-        existing[type][k] = rec;
-        added++;
+      for (const rec of records) {
+        const k = dedupKey(type, rec as Record<string, unknown>);
+        if (k in existing[type]) {
+          skipped++;
+        } else {
+          existing[type][k] = rec;
+          added++;
+        }
       }
+
+      stats[type] = { added, skipped };
     }
 
-    stats[type] = { added, skipped };
-  }
-
-  await writeEncrypted(recordsFile(userId), key, existing);
-  return stats;
+    await writeEncrypted(recordsFile(userId), key, existing);
+    return stats;
+  });
 }
 
 export function flattenRecords(stored: StoredRecords): Record<string, object[]> {
@@ -501,14 +525,16 @@ async function writeLogs(logs: LoginLog[]): Promise<void> {
   await writeEncrypted(LOGS_FILE, key, logs);
 }
 
-export async function addLoginLog(log: Omit<LoginLog, 'id'>): Promise<LoginLog> {
-  const logs = await readLogs();
-  const entry: LoginLog = { id: crypto.randomUUID(), ...log };
-  logs.push(entry);
-  // Prune to MAX_LOGS (keep most recent)
-  const pruned = logs.length > MAX_LOGS ? logs.slice(logs.length - MAX_LOGS) : logs;
-  await writeLogs(pruned);
-  return entry;
+export function addLoginLog(log: Omit<LoginLog, 'id'>): Promise<LoginLog> {
+  return withLock('logs', async () => {
+    const logs = await readLogs();
+    const entry: LoginLog = { id: crypto.randomUUID(), ...log };
+    logs.push(entry);
+    // Prune to MAX_LOGS (keep most recent)
+    const pruned = logs.length > MAX_LOGS ? logs.slice(logs.length - MAX_LOGS) : logs;
+    await writeLogs(pruned);
+    return entry;
+  });
 }
 
 /** Get login logs. userId = undefined → all logs (admin). userId set → user's own successful logins only. */
@@ -521,23 +547,27 @@ export async function getLoginLogs(userId?: string, limit = 100): Promise<LoginL
 }
 
 /** Update country field async after IP lookup. */
-export async function updateLogCountry(logId: string, country: string): Promise<void> {
-  const logs = await readLogs();
-  const idx = logs.findIndex((l) => l.id === logId);
-  if (idx !== -1) {
-    logs[idx] = { ...logs[idx], country };
-    await writeLogs(logs);
-  }
+export function updateLogCountry(logId: string, country: string): Promise<void> {
+  return withLock('logs', async () => {
+    const logs = await readLogs();
+    const idx = logs.findIndex((l) => l.id === logId);
+    if (idx !== -1) {
+      logs[idx] = { ...logs[idx], country };
+      await writeLogs(logs);
+    }
+  });
 }
 
 /** Delete specific log entries (admin batch delete). */
-export async function deleteLoginLogs(ids: string[]): Promise<number> {
-  const idSet = new Set(ids);
-  const logs = await readLogs();
-  const filtered = logs.filter((l) => !idSet.has(l.id));
-  const deleted = logs.length - filtered.length;
-  await writeLogs(filtered);
-  return deleted;
+export function deleteLoginLogs(ids: string[]): Promise<number> {
+  return withLock('logs', async () => {
+    const idSet = new Set(ids);
+    const logs = await readLogs();
+    const filtered = logs.filter((l) => !idSet.has(l.id));
+    const deleted = logs.length - filtered.length;
+    await writeLogs(filtered);
+    return deleted;
+  });
 }
 
 // ── App settings store ────────────────────────────────────────────────────────
@@ -559,11 +589,13 @@ export async function getSettings(): Promise<AppSettings> {
   return readSettings();
 }
 
-export async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-  const current = await readSettings();
-  const updated = { ...current, ...patch };
-  await writeSettings(updated);
-  return updated;
+export function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+  return withLock('settings', async () => {
+    const current = await readSettings();
+    const updated = { ...current, ...patch };
+    await writeSettings(updated);
+    return updated;
+  });
 }
 
 /**

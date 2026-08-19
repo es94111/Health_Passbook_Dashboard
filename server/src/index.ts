@@ -23,6 +23,42 @@ import { accountRouter } from './routes/account.js';
   app.use(cors({ origin: corsOrigins, credentials: true }));
   app.use(express.json({ limit: '50mb' })); // NHI JSON files can be large
 
+  // Requests without a JSON body (no Content-Type header) leave req.body
+  // undefined; a literal `null` body also parses to null. Normalize both to {}
+  // so handlers never crash on destructuring.
+  app.use((req, _res, next) => {
+    if (req.body === undefined || req.body === null) req.body = {};
+    next();
+  });
+
+  // Basic security headers. CSP allows Google Sign-In (gsi) and Google Fonts —
+  // keep in sync with the external resources in dashboard/index.html.
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader(
+      'Content-Security-Policy',
+      [
+        "default-src 'self'",
+        "script-src 'self' https://accounts.google.com",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data: https:",
+        "connect-src 'self' https://accounts.google.com",
+        "frame-src https://accounts.google.com",
+        "frame-ancestors 'none'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+      ].join('; '),
+    );
+    if (process.env.NODE_ENV === 'production') {
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+    next();
+  });
+
   app.use('/api/auth', authRouter);
   app.use('/api/data', dataRouter);
   app.use('/api/admin', adminRouter);
@@ -49,7 +85,13 @@ import { accountRouter } from './routes/account.js';
     const status = (err as { status?: number; statusCode?: number }).status
       ?? (err as { statusCode?: number }).statusCode
       ?? 500;
-    res.status(status).json({ error: err.message ?? '伺服器錯誤' });
+    // Never leak internal error details (file paths, key formats, stack traces)
+    // to clients in production — log them server-side instead.
+    const message =
+      process.env.NODE_ENV === 'production'
+        ? '伺服器錯誤'
+        : err.message ?? '伺服器錯誤';
+    res.status(status).json({ error: message });
   });
 
   app.listen(PORT, () => {

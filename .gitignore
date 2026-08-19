@@ -1,7 +1,10 @@
 myhealthbankapp/*
 .gstack/
-node_modules
+node_modules/
 # Server data — contains user health data, never commit
 server/data/
-node_modules/
 NHI_openapi.yaml
+# Build output
+dist/
+# Local pre-pull backups — must never be committed
+_backup_before_github_pull_*/

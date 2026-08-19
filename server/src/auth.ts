@@ -52,7 +52,12 @@ function readCookie(req: Request, name: string): string | null {
     .map((part) => part.trim())
     .find((part) => part.startsWith(`${name}=`));
   if (!pair) return null;
-  return decodeURIComponent(pair.slice(name.length + 1));
+  try {
+    return decodeURIComponent(pair.slice(name.length + 1));
+  } catch {
+    // Malformed percent-encoding — treat as no cookie rather than a 500.
+    return null;
+  }
 }
 
 export function setSessionCookie(res: Response, token: string): void {
