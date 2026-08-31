@@ -189,6 +189,8 @@ export interface LoginLog {
   ip: string;
   country?: string;
   timestamp: string;
+  action?: string;   // audit actions, e.g. 'admin-export' | 'admin-import'
+  note?: string;     // audit detail, e.g. backup stats summary
 }
 
 export function fetchLoginLogs(): Promise<LoginLog[]> {
@@ -287,5 +289,58 @@ export function deleteAdminLoginLogs(ids: string[]): Promise<{ deleted: number }
   return request('/admin/login-logs', {
     method: 'DELETE',
     body: JSON.stringify({ ids }),
+  });
+}
+
+// ── Admin backup ──────────────────────────────────────────────────────────────
+
+export interface ImportStats {
+  users: number;
+  settings: boolean;
+  loginLogs: number;
+  recordsRestored: number;
+  orphanRecordsDeleted: number;
+  warnings: string[];
+}
+
+export interface BackupDownload {
+  blob: Blob;
+  filename: string;
+}
+
+/** POST /admin/backup/export — verify password, return the backup as a downloadable Blob. */
+export async function exportBackup(password: string): Promise<BackupDownload> {
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/admin/backup/export`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+  } catch {
+    throw new Error('無法連線至伺服器，請確認後端是否已啟動（npm run server）');
+  }
+
+  const text = await res.text();
+  if (!res.ok) {
+    let error = `伺服器錯誤 (${res.status})`;
+    try {
+      const parsed = JSON.parse(text) as { error?: string };
+      if (parsed.error) error = parsed.error;
+    } catch { /* non-JSON error body */ }
+    throw new Error(error);
+  }
+
+  const filename =
+    res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] ?? 'nhi-backup.json';
+  return { blob: new Blob([text], { type: 'application/json' }), filename };
+}
+
+/** POST /admin/backup/import — upload the raw backup file text for a full restore. */
+export function importBackup(rawJson: string): Promise<{ message: string; stats: ImportStats }> {
+  return request('/admin/backup/import?confirm=true', {
+    method: 'POST',
+    body: rawJson,
   });
 }

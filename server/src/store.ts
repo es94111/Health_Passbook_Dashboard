@@ -167,7 +167,7 @@ function normalizeRecordMap(type: RecordType, value: unknown): Record<string, ob
   );
 }
 
-function normalizeStoredRecords(value: unknown): StoredRecords {
+export function normalizeStoredRecords(value: unknown): StoredRecords {
   const root = typeof value === 'object' && value !== null
     ? value as Partial<Record<keyof StoredRecords, unknown>>
     : {};
@@ -195,6 +195,8 @@ export interface LoginLog {
   ip: string;
   country?: string;              // filled async via IP lookup
   timestamp: string;
+  action?: string;               // audit actions, e.g. 'admin-export' | 'admin-import'
+  note?: string;                 // audit detail, e.g. backup stats summary
 }
 
 const MAX_LOGS = 1000;
@@ -207,7 +209,7 @@ export interface AppSettings {
   adminIpAllowlist: string[];           // merged with ENV_ADMIN_IP_ALLOWLIST at runtime
 }
 
-const DEFAULT_SETTINGS: AppSettings = {
+export const DEFAULT_SETTINGS: AppSettings = {
   publicRegistration: true,
   allowedRegistrationEmails: [],
   adminIpAllowlist: [],
@@ -379,7 +381,7 @@ function recordsFile(userId: string): string {
   return path.join(DATA_DIR, `records-${userId}.json`);
 }
 
-function isClientEncryptedRecords(value: unknown): value is ClientEncryptedRecords {
+export function isClientEncryptedRecords(value: unknown): value is ClientEncryptedRecords {
   if (typeof value !== 'object' || value === null) return false;
   const envelope = value as Partial<ClientEncryptedRecords>;
   return (
@@ -509,6 +511,110 @@ export function flattenRecords(stored: StoredRecords): Record<string, object[]> 
     r7: Object.values(stored.r7),
     r8: Object.values(stored.r8),
   };
+}
+
+// ── Backup primitives (used by admin backup import / export) ──────────────────
+// These are low-level helpers for the admin backup feature (server/src/backup.ts).
+// They deliberately bypass withLock — the import flow serialises writes itself
+// and users.json is written last as the commit point.
+
+/** Replace the entire users file (no read-modify-write, no lock). */
+export async function replaceUsers(users: User[]): Promise<void> {
+  await ensureDataDir();
+  await writeEncrypted(USERS_FILE, deriveUsersKey(), users);
+}
+
+/** Replace the entire settings file. */
+export async function replaceSettings(settings: AppSettings): Promise<void> {
+  await ensureDataDir();
+  await writeEncrypted(SETTINGS_FILE, deriveSettingsKey(), settings);
+}
+
+/** Replace the entire login-logs file. */
+export async function replaceLoginLogs(logs: LoginLog[]): Promise<void> {
+  await ensureDataDir();
+  await writeEncrypted(LOGS_FILE, deriveLogsKey(), logs);
+}
+
+/** Full (unpruned, unsorted) login logs — backup export uses all entries. */
+export async function getAllLoginLogs(): Promise<LoginLog[]> {
+  return readLogs();
+}
+
+/**
+ * Write a client-encrypted records envelope for a user, deriving the server-side
+ * file key from the *given* salt rather than the stored user record. Used by
+ * backup import where users.json has not been written yet and the salt must come
+ * from the backup itself.
+ */
+export async function writeRecordsEnvelope(
+  userId: string,
+  saltHex: string,
+  envelope: ClientEncryptedRecords,
+): Promise<void> {
+  if (!isClientEncryptedRecords(envelope)) {
+    throw new Error('Invalid client encrypted health records envelope');
+  }
+  await ensureDataDir();
+  const key = deriveRecordsKey(saltHex);
+  await writeEncrypted(recordsFile(userId), key, envelope);
+}
+
+/** Write legacy (not yet client-encrypted) records using the given salt. */
+export async function writeLegacyRecords(
+  userId: string,
+  saltHex: string,
+  records: StoredRecords,
+): Promise<void> {
+  await ensureDataDir();
+  const key = deriveRecordsKey(saltHex);
+  await writeEncrypted(recordsFile(userId), key, normalizeStoredRecords(records));
+}
+
+/** All userIds that currently have a records file on disk. */
+export async function listRecordFileIds(): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(DATA_DIR);
+    return entries
+      .map((name) => /^records-(.+)\.json$/.exec(name)?.[1])
+      .filter((id): id is string => typeof id === 'string');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+}
+
+/** Delete a user's records file (ENOENT ignored). */
+export async function deleteRecordsFile(userId: string): Promise<void> {
+  await fs.unlink(recordsFile(userId)).catch((err: unknown) => {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  });
+}
+
+/**
+ * Copy every current data file (users / settings / login-logs + all records-*.json)
+ * into DATA_DIR/<dirName>/ as an import safety net. Files are copied raw (still
+ * encrypted) — restoring means copying them back into DATA_DIR.
+ */
+export async function snapshotDataFiles(dirName: string): Promise<string> {
+  const snapshotDir = path.join(DATA_DIR, dirName);
+  await ensureDataDir();
+  await fs.mkdir(snapshotDir, { recursive: true });
+
+  const names = ['users.json', 'settings.json', 'login-logs.json'];
+  for (const id of await listRecordFileIds()) {
+    names.push(`records-${id}.json`);
+  }
+
+  for (const name of names) {
+    const src = path.join(DATA_DIR, name);
+    try {
+      await fs.copyFile(src, path.join(snapshotDir, name));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+  }
+  return snapshotDir;
 }
 
 // ── Login logs store ──────────────────────────────────────────────────────────

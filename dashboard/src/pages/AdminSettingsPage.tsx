@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
-import type { AppSettings, UserInfo, LoginLog } from '../api';
+import type { AppSettings, UserInfo, LoginLog, ImportStats } from '../api';
 import {
   fetchAdminSettings,
   updateAdminSettings,
@@ -9,6 +9,8 @@ import {
   deleteUser,
   fetchAdminLoginLogs,
   deleteAdminLoginLogs,
+  exportBackup,
+  importBackup,
 } from '../api';
 
 const PASSWORD_MIN_LENGTH = 12;
@@ -408,6 +410,16 @@ function AdminLoginLogsSection() {
                     {log.isAdmin && (
                       <span className="ml-1 text-xs text-teal-600 dark:text-teal-400">管</span>
                     )}
+                    {log.action === 'admin-export' && (
+                      <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                        備份匯出
+                      </span>
+                    )}
+                    {log.action === 'admin-import' && (
+                      <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                        備份還原
+                      </span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-3">
                     <span className={`text-xs px-1.5 py-0.5 rounded-full ${
@@ -441,6 +453,238 @@ function AdminLoginLogsSection() {
   );
 }
 
+// ── Backup section ────────────────────────────────────────────────────────────
+
+interface BackupSummary {
+  exportedAt: string;
+  users: number;
+  withRecords: number;
+  loginLogs: number;
+}
+
+function BackupSection() {
+  // ── Export state ──
+  const [showExportConfirm, setShowExportConfirm] = useState(false);
+  const [exportPassword, setExportPassword] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [exportSuccess, setExportSuccess] = useState('');
+
+  // ── Import state ──
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileText, setFileText] = useState<string | null>(null);
+  const [fileSummary, setFileSummary] = useState<BackupSummary | null>(null);
+  const [fileError, setFileError] = useState('');
+  const [confirmText, setConfirmText] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [importResult, setImportResult] = useState<{ message: string; stats: ImportStats } | null>(null);
+
+  async function handleExport() {
+    setExportError('');
+    setExportSuccess('');
+    setExporting(true);
+    try {
+      const { blob, filename } = await exportBackup(exportPassword);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      setExportSuccess('備份檔已下載，請妥善保管（內含密碼雜湊等敏感資料）');
+      setExportPassword('');
+      setShowExportConfirm(false);
+    } catch (e) {
+      setExportError((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileError('');
+    setImportError('');
+    setImportResult(null);
+    setConfirmText('');
+    setFileSummary(null);
+    setFileText(null);
+    void (async () => {
+      try {
+        const text = (await file.text()).replace(/^\uFEFF/, '');
+        const json: unknown = JSON.parse(text);
+        if (
+          typeof json !== 'object' || json === null ||
+          (json as Record<string, unknown>).format !== 'nhi-dashboard-backup'
+        ) {
+          throw new Error('not-backup');
+        }
+        const obj = json as Record<string, unknown>;
+        const counts = obj.counts as { users?: unknown; withRecords?: unknown; loginLogs?: unknown } | undefined;
+        setFileSummary({
+          exportedAt: typeof obj.exportedAt === 'string' ? obj.exportedAt : '',
+          users: typeof counts?.users === 'number' ? counts.users : 0,
+          withRecords: typeof counts?.withRecords === 'number' ? counts.withRecords : 0,
+          loginLogs: typeof counts?.loginLogs === 'number' ? counts.loginLogs : 0,
+        });
+        setFileText(text);
+      } catch {
+        setFileError('無法讀取備份檔：不是本系統匯出的備份 JSON');
+      }
+    })();
+  }
+
+  async function handleImport() {
+    if (!fileText || confirmText !== '還原') return;
+    if (!window.confirm('最後確認：還原將完全取代現有所有資料，且無法復原。確定執行？')) return;
+    setImportError('');
+    setImporting(true);
+    try {
+      const result = await importBackup(fileText);
+      setImportResult(result);
+      setFileText(null);
+      setFileSummary(null);
+      setConfirmText('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (e) {
+      setImportError((e as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  const importingEnabled = Boolean(fileText) && confirmText === '還原' && !importing;
+
+  return (
+    <section className="card">
+      <h2 className="section-title">資料備份</h2>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        匯出完整資料備份（帳號、設定、登入記錄與健康紀錄），或從備份檔還原。
+        健康紀錄在備份中保持原有加密狀態，還原後使用者仍可用原「資料加密密碼」解鎖。
+      </p>
+
+      {/* Export */}
+      <div className="mt-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">匯出備份</h3>
+        {!showExportConfirm ? (
+          <>
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+              備份檔包含所有帳號的密碼雜湊與中繼資料，請妥善保管。
+            </p>
+            <button
+              onClick={() => { setShowExportConfirm(true); setExportError(''); setExportSuccess(''); }}
+              className="mt-2 btn-primary"
+            >
+              匯出備份檔
+            </button>
+          </>
+        ) : (
+          <div className="mt-2 space-y-2">
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              請輸入您的管理員密碼以確認匯出。匯出操作會記錄在登入記錄中。
+            </p>
+            <input
+              type="password"
+              value={exportPassword}
+              onChange={(e) => setExportPassword(e.target.value)}
+              className="input w-full"
+              placeholder="管理員密碼"
+              autoComplete="new-password"
+              aria-label="管理員密碼確認"
+              onKeyDown={(e) => { if (e.key === 'Enter' && exportPassword) void handleExport(); }}
+            />
+            <div className="flex gap-2">
+              <button onClick={() => void handleExport()} disabled={exporting || !exportPassword} className="btn-primary">
+                {exporting ? '匯出中…' : '確認匯出'}
+              </button>
+              <button
+                onClick={() => { setShowExportConfirm(false); setExportPassword(''); setExportError(''); }}
+                className="btn-secondary"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        )}
+        {exportError && <p className="text-red-500 text-xs mt-2 msg-fade" role="alert">{exportError}</p>}
+        {exportSuccess && (
+          <p className="text-green-600 dark:text-green-400 text-xs mt-2 msg-fade" aria-live="polite">{exportSuccess}</p>
+        )}
+      </div>
+
+      {/* Import */}
+      <div className="mt-4 border-t border-gray-100 dark:border-gray-700 pt-4">
+        <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">從備份檔還原</h3>
+        <label className="cursor-pointer inline-block btn-secondary mt-2">
+          選擇備份檔
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,.JSON"
+            className="hidden"
+            onChange={handleFileChange}
+            aria-label="選擇備份檔"
+          />
+        </label>
+
+        {fileError && <p className="text-red-500 text-xs mt-2 msg-fade" role="alert">{fileError}</p>}
+
+        {fileSummary && (
+          <div className="mt-3 rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm">
+            <p className="text-gray-700 dark:text-gray-300">
+              備份時間：{fileSummary.exportedAt ? new Date(fileSummary.exportedAt).toLocaleString('zh-TW') : '—'}
+            </p>
+            <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">
+              {fileSummary.users} 位使用者、{fileSummary.withRecords} 份健康紀錄、{fileSummary.loginLogs} 筆登入記錄
+            </p>
+
+            <div className="mt-3 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3">
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">
+                ⚠️ 還原將「完全取代」現有所有帳號、設定、登入記錄與健康紀錄，且不可復原。
+              </p>
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                建議在還原前先匯出一份目前資料的備份。還原成功後，若目前登入的帳號已不存在將被自動登出。
+              </p>
+              <input
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                className="input w-full mt-2"
+                placeholder='請輸入「還原」以啟用按鈕'
+                aria-label="還原確認文字"
+                maxLength={2}
+              />
+              <button onClick={() => void handleImport()} disabled={!importingEnabled} className="mt-2 btn-danger">
+                {importing ? '還原中…' : '開始還原'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {importError && <p className="text-red-500 text-xs mt-2" role="alert">{importError}</p>}
+
+        {importResult && (
+          <div className="mt-3 rounded-lg border border-teal-200 dark:border-teal-800 bg-teal-50 dark:bg-teal-950/30 p-3 text-sm" role="status">
+            <p className="font-medium text-teal-800 dark:text-teal-300">{importResult.message}</p>
+            <p className="text-xs text-teal-700 dark:text-teal-400 mt-1">
+              清除 {importResult.stats.orphanRecordsDeleted} 個無對應使用者的紀錄檔
+            </p>
+            {importResult.stats.warnings.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {importResult.stats.warnings.map((w, i) => (
+                  <li key={i} className="text-xs text-amber-700 dark:text-amber-400">⚠ {w}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -466,6 +710,7 @@ export default function AdminSettingsPage({ currentUserId }: Props) {
       <main className="max-w-4xl mx-auto px-4 py-6 space-y-4">
         <SystemSettingsSection />
         <UserManagementSection currentUserId={currentUserId} />
+        <BackupSection />
         <AdminLoginLogsSection />
       </main>
     </div>
