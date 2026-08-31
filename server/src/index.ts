@@ -21,6 +21,9 @@ import { accountRouter } from './routes/account.js';
     ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
     : ['http://localhost:5173', 'http://127.0.0.1:5173'];
   app.use(cors({ origin: corsOrigins, credentials: true }));
+  // Admin backup import can carry every user's full health records — needs a much
+  // larger cap than the general 50mb parser (which skips requests already parsed).
+  app.use('/api/admin/backup/import', express.json({ limit: '200mb' }));
   app.use(express.json({ limit: '50mb' })); // NHI JSON files can be large
 
   // Requests without a JSON body (no Content-Type header) leave req.body

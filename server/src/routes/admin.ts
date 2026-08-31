@@ -2,7 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { requireAdmin } from '../auth.js';
-import { BCRYPT_ROUNDS, validatePasswordStrength, clientIp } from '../security.js';
+import { BCRYPT_ROUNDS, validatePasswordStrength, clientIp, createRateLimiter } from '../security.js';
 import {
   getUsers,
   getUserById,
@@ -13,9 +13,20 @@ import {
   deleteLoginLogs,
   getSettings,
   updateSettings,
+  addLoginLog,
 } from '../store.js';
+import { buildBackupBundle, importBackupBundle } from '../backup.js';
 
 const router = Router();
+
+// ── Backup rate limiter ───────────────────────────────────────────────────────
+// Export verifies the admin's password — keep attempts low to slow brute force.
+const backupRateLimit = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: '備份操作嘗試次數過多，請稍後再試。',
+  key: (req) => `admin-backup:${clientIp(req)}:${req.user?.userId ?? '?'}`,
+});
 
 // ── Admin IP allowlist ────────────────────────────────────────────────────────
 // If configured (via the admin settings UI or ENV_ADMIN_IP_ALLOWLIST), only the
@@ -152,6 +163,70 @@ router.delete('/users/:id', async (req, res) => {
 router.get('/users/:id/data', async (req, res) => {
   void req;
   res.status(403).json({ error: 'Health records are client-side encrypted and cannot be decrypted by admins.' });
+});
+
+// ── POST /api/admin/backup/export — decrypt + download full backup ───────────
+// High-sensitivity: response contains plaintext users (incl. password hashes).
+// Requires the admin to re-enter their password, and is audit-logged.
+router.post('/backup/export', backupRateLimit, async (req, res) => {
+  const admin = await getUserById(req.user!.userId);
+  if (!admin) {
+    res.status(401).json({ error: '管理員帳號不存在' });
+    return;
+  }
+  if (!admin.passwordHash) {
+    res.status(400).json({ error: '此帳號尚未設定密碼（僅 Google 登入），請先至帳號設定頁設定密碼後再匯出' });
+    return;
+  }
+  const { password } = req.body as { password?: unknown };
+  if (typeof password !== 'string' || password.length === 0) {
+    res.status(400).json({ error: '請輸入管理員密碼以確認匯出' });
+    return;
+  }
+  const valid = await bcrypt.compare(password, admin.passwordHash);
+  if (!valid) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  const bundle = await buildBackupBundle();
+
+  addLoginLog({
+    userId: admin.id,
+    username: admin.username,
+    isAdmin: true,
+    method: 'password',
+    success: true,
+    ip: clientIp(req),
+    timestamp: new Date().toISOString(),
+    action: 'admin-export',
+    note: `users=${bundle.counts.users} records=${bundle.counts.withRecords} logs=${bundle.counts.loginLogs}`,
+  }).catch(() => undefined);
+
+  const filename = `nhi-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.json(bundle);
+});
+
+// ── POST /api/admin/backup/import — validate + fully replace current data ────
+// Destructive restore; requires ?confirm=true (UI two-step confirmation) and is
+// audit-logged. Client-encrypted health records are restored verbatim, so the
+// users' own vault passphrases keep working (key migration is implicit).
+router.post('/backup/import', backupRateLimit, async (req, res) => {
+  if (req.query.confirm !== 'true') {
+    res.status(400).json({ error: '缺少 confirm=true，未經二次確認不得還原' });
+    return;
+  }
+  try {
+    const stats = await importBackupBundle(req.body);
+    res.json({
+      message: `資料已完整還原：${stats.users} 位使用者、${stats.recordsRestored} 份紀錄、${stats.loginLogs} 筆登入記錄`,
+      stats,
+    });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
 });
 
 // ── GET /api/admin/settings ───────────────────────────────────────────────────
