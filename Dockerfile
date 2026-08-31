@@ -1,5 +1,5 @@
 # ── Stage 1: Build dashboard (Vite SPA) ──────────────────────────────────────
-FROM node:22-alpine AS dashboard-build
+FROM node:26-alpine AS dashboard-build
 # VITE_GOOGLE_CLIENT_ID is a build-time arg — Vite bakes it into the JS bundle.
 # Pass it via: docker build --build-arg VITE_GOOGLE_CLIENT_ID=xxx ...
 ARG VITE_GOOGLE_CLIENT_ID
@@ -16,7 +16,7 @@ COPY dashboard/ dashboard/
 RUN npm run build --prefix dashboard
 
 # ── Stage 2: Compile server TypeScript ───────────────────────────────────────
-FROM node:22-alpine AS server-build
+FROM node:26-alpine AS server-build
 WORKDIR /app
 COPY server/package*.json server/
 RUN npm install --prefix server
@@ -24,7 +24,7 @@ COPY server/ server/
 RUN npm run build --prefix server
 
 # ── Stage 3: Production runtime ───────────────────────────────────────────────
-FROM node:22-alpine
+FROM node:26-alpine
 WORKDIR /app
 
 # Production dependencies only
