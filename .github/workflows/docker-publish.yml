@@ -19,7 +19,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # arm64 映像在 amd64 runner 上需要 QEMU 模擬。
       - name: Set up QEMU
