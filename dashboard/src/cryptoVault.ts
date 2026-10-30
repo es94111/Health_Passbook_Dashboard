@@ -82,7 +82,7 @@ export function mergeNHIJson(existing: StoredRecords, json: object): { records: 
         stats.fhir.added++;
       } else if (JSON.stringify(previous) !== JSON.stringify(resource)) {
         records.fhir[key] = resource;
-        stats.fhir.updated!++;
+        stats.fhir.updated = (stats.fhir.updated ?? 0) + 1;
       } else {
         stats.fhir.skipped++;
       }
