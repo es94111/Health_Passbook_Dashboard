@@ -1,0 +1,6 @@
+.env
+.runner*
+.credentials*
+.registration-complete
+_diag/
+_work/

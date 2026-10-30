@@ -1,6 +1,17 @@
 {
-  "currentVersion": "1.5.1",
+  "currentVersion": "1.5.2",
   "releases": [
+    {
+      "version": "1.5.2",
+      "date": "2026-10-30",
+      "title": "補齊所有分支 CI 與 Dependabot 自架執行器",
+      "type": "fixed",
+      "changes": [
+        { "tag": "fixed", "text": "補齊現存功能分支、Dependabot PR 與舊修補分支的 CI 設定，Docker 發佈、安全掃描與 Dashboard 測試均改用自架執行器，保留各分支的套件及 action 版本。" },
+        { "tag": "improved", "text": "新增 Linux／X64 的 Docker 自架執行器設定供 Dependabot 使用，與 macOS CI 執行器分開管理，並補充啟停、持久化與環境需求說明。" },
+        { "tag": "fixed", "text": "所有 PR 掃描與測試在排程前略過外部 fork；同步各分支的 Gitleaks 專屬暫存目錄設定，避免殘留下載檔衝突。" }
+      ]
+    },
     {
       "version": "1.5.1",
       "date": "2026-10-30",
