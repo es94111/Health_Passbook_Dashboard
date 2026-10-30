@@ -1,4 +1,4 @@
-import type { CheckupReport, Hospitalization, LabResult, MedicalReport, MedicationRecord, NHIData, Vaccination, Visit } from './types';
+import type { CheckupReport, Hospitalization, LabResult, MedicalAttachment, MedicalReport, MedicationRecord, NHIData, Vaccination, Visit } from './types';
 
 type Obj = Record<string, unknown>;
 const obj = (value: unknown): Obj => value && typeof value === 'object' && !Array.isArray(value) ? value as Obj : {};
@@ -32,7 +32,7 @@ const normalizeAttachment = (raw: unknown) => {
   // Never trust external URLs or untrusted MIME types as embeddable content.
   if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(contentType)) return null;
   if (!data || !/^[a-zA-Z0-9+/]*={0,2}$/.test(data) || data.length > 12 * 1024 * 1024) return null;
-  return { title: str(attachment.title) || '附件', contentType, data };
+  return { title: str(attachment.title) || '附件', contentType: contentType as MedicalAttachment['contentType'], data };
 };
 
 export function isFhirBundle(value: unknown): value is { resourceType: 'Bundle'; entry: unknown[] } {
@@ -81,7 +81,7 @@ export function parseFhirResources(resources: Obj[]): Pick<NHIData, 'visits' | '
           code: str(obj(arr(obj(r.code).coding)[0]).code),
           name: concept(r.code),
         }));
-      const inpatient = ['IMP', 'inpatient'].includes(str(obj(resource.class).code).toLowerCase()) ||
+      const inpatient = ['imp', 'inpatient'].includes(str(obj(resource.class).code).toLowerCase()) ||
         concept(resource.type).toLowerCase().includes('住院');
       if (inpatient) {
         hospitalizations.push({ admitDate: start, dischargeDate: dateValue(period.end) ?? start,
