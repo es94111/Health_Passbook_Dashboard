@@ -191,6 +191,8 @@ Runner 前置條件：
 - 已安裝 Git，且 runner 的執行帳號可使用 Docker CLI、Buildx，並連線至運作中的 Linux Docker Engine（例如已啟動的 Docker Desktop）。
 - Docker builder 必須支援 `linux/amd64` 與 `linux/arm64`，以維持原有的多架構映像發佈。可用 `docker info` 與 `docker buildx inspect` 確認環境。
 
+Gitleaks 的 `TMPDIR` 指向每個 job 會清理的 `runner.temp`，避免自架主機共用暫存目錄中的殘留下載檔造成後續掃描失敗。
+
 此為公開 repo，**外部 fork 的 PR 會在 job 排程前略過所有安全掃描**，不會在自架主機執行，也不會退回 GitHub-hosted runner。同 repo 分支的 PR、`main` 推送、每週排程與手動執行仍會進行安全掃描。請勿將不受信任的程式碼或正式環境資料放入 runner 執行環境。
 
 ### 設定 GitHub Actions Secrets

@@ -8,7 +8,8 @@
       "type": "improved",
       "changes": [
         { "tag": "improved", "text": "Docker 映像發佈與安全掃描全面改用 macOS／X64 自架 GitHub Actions runner，保留原有多架構映像與定期掃描流程。" },
-        { "tag": "improved", "text": "外部 fork 的 PR 不再排程安全掃描，避免在自架主機執行不受信任的程式碼；補充 runner 環境與 Docker 前置條件說明。" }
+        { "tag": "improved", "text": "外部 fork 的 PR 不再排程安全掃描，避免在自架主機執行不受信任的程式碼；補充 runner 環境與 Docker 前置條件說明。" },
+        { "tag": "fixed", "text": "Gitleaks 改用每個工作專屬的暫存目錄，避免自架主機的殘留下載檔導致安全掃描失敗。" }
       ]
     },
     {
