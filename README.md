@@ -181,6 +181,18 @@ docker run --rm -v nhi-data:/data -v $(pwd):/backup alpine \
 
 推送到 `main` 分支或建立 `v*` 標籤時，自動建置並推送至 Docker Hub 與 GitHub Container Registry。
 
+### Self-hosted runner
+
+Docker 發佈與安全掃描的所有 job 均使用標籤為 `[self-hosted, macOS, X64]` 的 runner，不再使用 GitHub-hosted runner。前往 GitHub repo → Settings → Actions → Runners，確認符合上述標籤的 runner 已註冊且在線；若 runner 離線，job 會等待可用的 runner。
+
+Runner 前置條件：
+
+- 保持 GitHub Actions runner 更新，需支援 Node.js 24 actions；安全掃描使用的 Node.js 22 由 `actions/setup-node` 自動安裝。
+- 已安裝 Git，且 runner 的執行帳號可使用 Docker CLI、Buildx，並連線至運作中的 Linux Docker Engine（例如已啟動的 Docker Desktop）。
+- Docker builder 必須支援 `linux/amd64` 與 `linux/arm64`，以維持原有的多架構映像發佈。可用 `docker info` 與 `docker buildx inspect` 確認環境。
+
+此為公開 repo，**外部 fork 的 PR 會在 job 排程前略過所有安全掃描**，不會在自架主機執行，也不會退回 GitHub-hosted runner。同 repo 分支的 PR、`main` 推送、每週排程與手動執行仍會進行安全掃描。請勿將不受信任的程式碼或正式環境資料放入 runner 執行環境。
+
 ### 設定 GitHub Actions Secrets
 
 前往 GitHub repo → Settings → Secrets and variables → Actions：

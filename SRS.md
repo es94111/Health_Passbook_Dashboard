@@ -97,6 +97,7 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
+| 1.5.1 | 2026-10-30 | GitHub Actions 的 Docker 多架構映像發佈與安全掃描全面改用 macOS／X64 self-hosted runner；外部 fork PR 在 job 排程前略過安全掃描，保留同 repo PR、推送、每週排程與手動執行；補充 runner 前置條件 |
 | 1.5.0 | 2026-08-31 | 新增管理員資料備份：POST /api/admin/backup/export（密碼再確認 + 審計 log）解密匯出 users/settings/login-logs 明文與各使用者 client-encrypted records 信封原樣；POST /api/admin/backup/import?confirm=true 嚴格驗證後完全取代還原，寫入前快照至 data/pre-import-*，users.json 最後寫入作為 commit point，孤兒 records 檔清除；備份檔不含 master key，匯入時以當前環境金鑰重新加密 → 金鑰遷移自動成立 |
 | 1.4.3 | 2026-08-19 | 修復 X-Forwarded-For 偽造繞過速率限制、登入帳號長度未驗證之 DoS、錯誤訊息洩漏內部細節等漏洞；實作 adminIpAllowlist 強制、安全標頭（CSP 等）、資料檔寫入鎖與原子寫入、Docker 非 root 執行 |
 | 1.4.1 | 2026-07-28 | 修復 shell-quote 相依套件高風險 DoS 安全性警告 |
