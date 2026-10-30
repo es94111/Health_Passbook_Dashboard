@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   dashboard:
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, macOS, X64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v7
