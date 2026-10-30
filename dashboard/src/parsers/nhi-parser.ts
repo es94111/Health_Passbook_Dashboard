@@ -1,3 +1,4 @@
+import { parseFhirResources } from './fhir-parser';
 import type { Visit, Hospitalization, Vaccination, LabResult, CheckupReport, DentalVisit, NHIData } from './types';
 
 // ICD-10 codes start with an uppercase letter followed by 2-3 digits
@@ -204,12 +205,18 @@ export function parseNHIJson(raw: string | Record<string, unknown[]>): NHIData {
 
   const data = extractBdata(parsed) as Record<string, Record<string, unknown>[]>;
 
+  const fhir = parseFhirResources((data.fhir ?? []).filter(
+    (item): item is Record<string, unknown> => typeof item === 'object' && item !== null && !Array.isArray(item),
+  ));
+
   return {
-    visits: parseVisits(data.r1 ?? []),
-    hospitalizations: parseHospitalizations(data.r2 ?? []),
-    vaccinations: parseVaccinations(data.r6 ?? []),
-    labResults: parseLabResults(data.r7 ?? []),
-    checkupReports: parseCheckupReports(data.r8 ?? []),
+    visits: [...parseVisits(data.r1 ?? []), ...fhir.visits],
+    hospitalizations: [...parseHospitalizations(data.r2 ?? []), ...fhir.hospitalizations],
+    vaccinations: [...parseVaccinations(data.r6 ?? []), ...fhir.vaccinations],
+    labResults: [...parseLabResults(data.r7 ?? []), ...fhir.labResults],
+    checkupReports: [...parseCheckupReports(data.r8 ?? []), ...fhir.checkupReports],
     dentalVisits: parseDentalVisits(data.r3 ?? []),
+    medicalReports: fhir.medicalReports,
+    medications: fhir.medications,
   };
 }
