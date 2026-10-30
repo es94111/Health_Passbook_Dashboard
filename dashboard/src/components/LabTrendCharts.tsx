@@ -20,6 +20,7 @@ interface DataPoint {
 
 interface SubItemGroup {
   subItem: string;
+  unit: string;
   testGroup: string;
   points: DataPoint[];
   refLow: number | null;
@@ -45,13 +46,18 @@ export default function LabTrendCharts({ labResults }: Props) {
   const allSubItemGroups = useMemo(() => {
     const map = new Map<string, LabResult[]>();
     for (const r of labResults) {
-      const arr = map.get(r.subItem) ?? [];
+      // Keep measurements with different units on separate Y axes.
+      // Missing units form their own group rather than being silently mixed.
+      const key = JSON.stringify([r.subItem, r.unit ?? '']);
+      const arr = map.get(key) ?? [];
       arr.push(r);
-      map.set(r.subItem, arr);
+      map.set(key, arr);
     }
 
     const all: SubItemGroup[] = [];
-    for (const [subItem, records] of map.entries()) {
+    for (const records of map.values()) {
+      const subItem = records[0].subItem;
+      const unit = records[0].unit ?? '';
       const sorted = [...records].sort((a, b) => a.date.getTime() - b.date.getTime());
       const refLow = sorted.find((r) => r.refLow !== null)?.refLow ?? null;
       const refHigh = sorted.find((r) => r.refHigh !== null)?.refHigh ?? null;
@@ -62,7 +68,7 @@ export default function LabTrendCharts({ labResults }: Props) {
         return { date: r.date.toISOString().slice(0, 10), value: r.value, refLow: r.refLow, refHigh: r.refHigh, outOfRange };
       });
       const outOfRangeCount = points.filter((p) => p.outOfRange).length;
-      all.push({ subItem, testGroup: records[0].testGroup, points, refLow, refHigh, outOfRangeCount });
+      all.push({ subItem, unit, testGroup: records[0].testGroup, points, refLow, refHigh, outOfRangeCount });
     }
     return all.sort((a, b) => a.subItem.localeCompare(b.subItem));
   }, [labResults]);
@@ -164,8 +170,8 @@ export default function LabTrendCharts({ labResults }: Props) {
         <p className="text-sm text-gray-400 text-center py-8">沒有符合條件的檢驗項目</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {groups.map(({ subItem, testGroup, points, refLow, refHigh, outOfRangeCount }) => (
-            <div key={subItem} className="border border-gray-100 dark:border-gray-700 rounded-lg p-3">
+          {groups.map(({ subItem, unit, testGroup, points, refLow, refHigh, outOfRangeCount }) => (
+            <div key={JSON.stringify([subItem, unit])} className="border border-gray-100 dark:border-gray-700 rounded-lg p-3">
               <div className="flex items-start justify-between mb-0.5">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <button
@@ -189,14 +195,14 @@ export default function LabTrendCharts({ labResults }: Props) {
                   </span>
                 )}
               </div>
-              <div className="text-xs text-gray-400 mb-2">{testGroup}</div>
+              <div className="text-xs text-gray-400 mb-2">{testGroup}{unit ? ` · ${unit}` : " · 單位未提供"}</div>
               <ResponsiveContainer width="100%" height={120}>
                 <LineChart data={points}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="date" hide />
                   <YAxis domain={['auto', 'auto']} tick={{ fontSize: 10 }} width={40} />
                   <Tooltip
-                    formatter={(val) => [val, subItem]}
+                    formatter={(val) => [unit ? `${val} ${unit}` : val, subItem]}
                     labelFormatter={(label) => `日期: ${label}`}
                   />
                   {refLow !== null && refHigh !== null && (
