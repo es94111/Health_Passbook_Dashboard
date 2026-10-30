@@ -20,7 +20,8 @@ permissions:
 jobs:
   npm-audit:
     name: npm audit (${{ matrix.package.name }})
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, macOS, X64]
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +64,8 @@ jobs:
 
   secret-scan:
     name: Gitleaks secret scan
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, macOS, X64]
     permissions:
       contents: read
       pull-requests: write
@@ -77,3 +79,4 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TMPDIR: ${{ runner.temp }}
