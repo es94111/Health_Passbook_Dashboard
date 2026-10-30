@@ -112,6 +112,10 @@ export default function FileLoader({
 
     try {
       validateVaultPassphrase(passphrase);
+      // JSON is encrypted then base64-encoded before transport; keep under Express's 50 MB limit.
+      if (file.size > 32 * 1024 * 1024) {
+        throw new Error('檔案超過 32 MiB 上限；請在 Bridge 縮小日期範圍或關閉影像後分次匯入');
+      }
       const text = await file.text();
       const stripped = text.replace(/^\uFEFF/, '');
       const json: unknown = JSON.parse(stripped);
@@ -140,6 +144,7 @@ export default function FileLoader({
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) { void processFile(file); }
+    e.target.value = '';
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -220,7 +225,7 @@ export default function FileLoader({
 
         <div
           role="region"
-          aria-label="上傳 NHI JSON"
+          aria-label="上傳健保署 JSON 或 FHIR Bundle"
           className={`border-2 border-dashed rounded-xl p-10 text-center transition-colors duration-200 ${
             dragging
               ? 'border-teal-400 bg-teal-50 dark:bg-teal-950/30'
@@ -247,7 +252,7 @@ export default function FileLoader({
           ) : (
             <>
               <p className="text-gray-700 dark:text-gray-300 font-medium mb-1">
-                選擇或拖曳健保署匯出的 JSON 檔
+                選擇或拖曳健保署 JSON／NHI-FHIR Bridge FHIR Bundle
               </p>
               <p className="text-gray-400 dark:text-gray-500 text-sm mb-4">
                 檔案會先在此瀏覽器加密，再上傳保存
@@ -256,15 +261,23 @@ export default function FileLoader({
                 選擇檔案
                 <input
                   type="file"
-                  accept=".json,.JSON"
+                  accept=".json,.JSON,.txt,application/json"
                   className="hidden"
                   onChange={handleChange}
-                  aria-label="選擇 NHI JSON 檔案"
+                  aria-label="選擇 NHI JSON 或 FHIR Bundle 檔案"
                 />
               </label>
             </>
           )}
         </div>
+
+        <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+          支援健保署原生 JSON 與 NHI-FHIR Bridge 匯出的 FHIR R4 Bundle。
+          請先自行登入健保署並使用 Bridge 下載 JSON，再於此匯入。
+          <a href="https://mediprisma.tw/nhi-fhir-bridge/quick-start/" target="_blank" rel="noopener noreferrer"
+            className="ml-1 text-teal-700 dark:text-teal-400 underline">Bridge 使用教學</a>。
+          健保登入憑證不會由本網站收集。
+        </p>
 
         {uploadResult && (
           <div
@@ -281,6 +294,7 @@ export default function FileLoader({
                     className="bg-white dark:bg-teal-900/40 border border-teal-100 dark:border-teal-700 px-2 py-1 rounded-md"
                   >
                     {type.toUpperCase()} +{s.added}
+                    {s.updated ? <span className="ml-1 text-teal-700 dark:text-teal-300">更新 {s.updated}</span> : null}
                     {s.skipped > 0 && (
                       <span className="text-gray-400 dark:text-gray-500 ml-1">略過 {s.skipped}</span>
                     )}
