@@ -1,0 +1,80 @@
+name: health-passbook-dependabot
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+services:
+  docker:
+    image: docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977
+    platform: linux/amd64
+    privileged: true
+    restart: unless-stopped
+    cpus: 4
+    mem_limit: 5g
+    pids_limit: 4096
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+      DOCKER_HOST: unix:///run/runner-docker/docker.sock
+    # Explicit dockerd avoids the official entrypoint's default TCP listeners.
+    command:
+      - dockerd
+      - --host=unix:///run/runner-docker/docker.sock
+      - --group=123
+      - --storage-driver=overlay2
+      - --feature=containerd-snapshotter=false
+      - --log-level=warn
+    volumes:
+      - docker-data:/var/lib/docker
+      - docker-socket:/run/runner-docker
+      # Nested bind sources must exist at the same absolute path in this daemon.
+      - runner-work:/home/runner/_work
+    healthcheck:
+      test: ["CMD-SHELL", "docker info >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+    logging: *logging
+
+  runner:
+    image: health-passbook-dependabot-runner:2.338.2
+    platform: linux/amd64
+    build:
+      context: .
+    init: true
+    user: "1001:1001"
+    group_add: ["123"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    stop_grace_period: 2m
+    cpus: 2
+    mem_limit: 1g
+    pids_limit: 512
+    environment:
+      RUNNER_REPOSITORY: ${RUNNER_REPOSITORY:-es94111/Health_Passbook_Dashboard}
+      RUNNER_NAME: ${RUNNER_NAME:-health-passbook-dependabot-linux-x64}
+    depends_on:
+      docker:
+        condition: service_healthy
+    volumes:
+      # Registration credentials and runner auto-updates stay outside the checkout.
+      - runner-state:/home/runner
+      - runner-work:/home/runner/_work
+      - docker-socket:/run/runner-docker
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/dependabot-runner", "health"]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    logging: *logging
+
+volumes:
+  runner-state:
+  runner-work:
+  docker-data:
+  docker-socket:
