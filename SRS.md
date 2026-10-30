@@ -97,6 +97,7 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
+| 1.5.3 | 2026-10-30 | 專案改為公開後，Docker 發佈與安全掃描改回 GitHub-hosted `ubuntu-latest` runner（自架 runner 已無註冊導致 workflow 永久排隊、checkout 出現 bad object 錯誤）；Docker 多架構建置補上 QEMU；npm audit 開放 fork PR 執行並改為只回報不阻擋 PR，弱點修復交由 Dependabot 追蹤 |
 | 1.5.2 | 2026-10-30 | 補齊現存功能、Dependabot 與舊修補分支的所有 CI self-hosted 設定，保留各分支套件及 action 版本；Dashboard PR 測試同步略過外部 fork；各分支 Gitleaks 使用 job 專屬暫存目錄；新增專用 Linux／X64 Docker Dependabot runner 設定與操作說明 |
 | 1.5.1 | 2026-10-30 | GitHub Actions 的 Docker 多架構映像發佈與安全掃描全面改用 macOS／X64 self-hosted runner；外部 fork PR 在 job 排程前略過安全掃描，保留同 repo PR、推送、每週排程與手動執行；Gitleaks 使用 job 專屬暫存目錄避免殘留檔衝突；補充 runner 前置條件 |
 | 1.5.0 | 2026-08-31 | 新增管理員資料備份：POST /api/admin/backup/export（密碼再確認 + 審計 log）解密匯出 users/settings/login-logs 明文與各使用者 client-encrypted records 信封原樣；POST /api/admin/backup/import?confirm=true 嚴格驗證後完全取代還原，寫入前快照至 data/pre-import-*，users.json 最後寫入作為 commit point，孤兒 records 檔清除；備份檔不含 master key，匯入時以當前環境金鑰重新加密 → 金鑰遷移自動成立 |

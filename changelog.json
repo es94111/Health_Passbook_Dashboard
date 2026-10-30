@@ -1,6 +1,19 @@
 {
-  "currentVersion": "1.5.2",
+  "currentVersion": "1.5.3",
   "releases": [
+    {
+      "version": "1.5.3",
+      "date": "2026-10-30",
+      "title": "CI 改回 GitHub-hosted runner",
+      "type": "fixed",
+      "changes": [
+        { "tag": "fixed", "text": "專案改為公開後，Docker 發佈與安全掃描全部改回 GitHub 提供的 ubuntu-latest runner；原本的自架 macOS runner 未註冊，導致所有 workflow 永久排隊、checkout 因殘留工作區而出現 bad object 錯誤。" },
+        { "tag": "new", "text": "Docker 多架構建置新增 docker/setup-qemu-action，在 amd64 runner 上穩定產生 linux/arm64 映像。" },
+        { "tag": "improved", "text": "npm audit 只需 lockfile、不依賴 secret，因此公開 repo 的 fork PR 也會執行；Gitleaks 仍只掃描同 repo 分支，避免唯讀 token 失敗。" },
+        { "tag": "improved", "text": "npm audit 改為只產生報告並上傳 artifact，不再阻擋 PR；弱點修復交由 Dependabot alerts 與其 PR 追蹤。" },
+        { "tag": "removed", "text": "移除 Gitleaks 的自架主機專用 TMPDIR 設定與自架 runner 前置條件說明。" }
+      ]
+    },
     {
       "version": "1.5.2",
       "date": "2026-10-30",

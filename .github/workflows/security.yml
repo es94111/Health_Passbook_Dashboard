@@ -20,8 +20,8 @@ permissions:
 jobs:
   npm-audit:
     name: npm audit (${{ matrix.package.name }})
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, macOS, X64]
+    # 不依賴任何 secret，公開 repo 的 fork PR 也能安全執行。
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +47,8 @@ jobs:
 
       - name: Audit dependencies
         working-directory: ${{ matrix.package.path }}
+        # 只回報不擋 PR：弱點修復由 Dependabot 追蹤（Security → Dependabot alerts）。
+        continue-on-error: true
         run: npm audit --audit-level=high
 
       - name: Save full audit report
@@ -64,8 +66,9 @@ jobs:
 
   secret-scan:
     name: Gitleaks secret scan
+    # GITHUB_TOKEN 對 fork PR 只有唯讀權限，因此只在同 repo 的 PR 與 main 上執行。
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: [self-hosted, macOS, X64]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
@@ -79,4 +82,3 @@ jobs:
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TMPDIR: ${{ runner.temp }}

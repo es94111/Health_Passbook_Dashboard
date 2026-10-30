@@ -11,7 +11,8 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: [self-hosted, macOS, X64]
+    # GitHub-hosted runner (free for public repositories).
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -19,6 +20,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # arm64 映像在 amd64 runner 上需要 QEMU 模擬。
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
