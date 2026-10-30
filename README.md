@@ -181,49 +181,33 @@ docker run --rm -v nhi-data:/data -v $(pwd):/backup alpine \
 
 推送到 `main` 分支或建立 `v*` 標籤時，自動建置並推送至 Docker Hub 與 GitHub Container Registry。
 
-### Self-hosted runner
+### GitHub-hosted runner
 
-Docker 發佈、安全掃描，以及 FHIR 功能分支的 Dashboard 建置與測試，均使用標籤為 `[self-hosted, macOS, X64]` 的 runner，不再使用 GitHub-hosted runner。現存的 Dependabot PR 與舊修補分支也已同步 CI 設定，未合併任何套件更新或功能。前往 GitHub repo → Settings → Actions → Runners，確認符合上述標籤的 runner 已註冊且在線；若 runner 離線，job 會等待可用的 runner。
+本專案為公開 repo，所有 workflow 都使用 GitHub 提供的 runner（`ubuntu-latest`），不需要自架 runner，也不必在 Settings → Actions → Runners 註冊機器：
 
-Runner 前置條件：
+- **Build & Push Docker Image**：`ubuntu-latest` 搭配 `docker/setup-qemu-action` 與 Buildx，建置並推送 `linux/amd64` 與 `linux/arm64` 多架構映像。
+- **Security Checks**：`npm audit` 與 Gitleaks 都在 `ubuntu-latest` 上執行；Node.js 22 由 `actions/setup-node` 安裝。
+- **Dependabot Updates**：公開 repo 由 GitHub 直接提供 runner，不需要額外設定。
 
-- 保持 GitHub Actions runner 更新，需支援 Node.js 24 actions；安全掃描使用的 Node.js 22 由 `actions/setup-node` 自動安裝。
-- 已安裝 Git，且 runner 的執行帳號可使用 Docker CLI、Buildx，並連線至運作中的 Linux Docker Engine（例如已啟動的 Docker Desktop）。
-- Docker builder 必須支援 `linux/amd64` 與 `linux/arm64`，以維持原有的多架構映像發佈。可用 `docker info` 與 `docker buildx inspect` 確認環境。
+公開 repo 的 fork PR 不會取得 secrets。`npm audit` 不需 secret，因此 fork PR 也會執行；Gitleaks 需要 `pull-requests: write` 權限（fork PR 只有唯讀 token），因此只在同 repo 分支的 PR、`main` 推送、每週排程與手動執行時掃描。
 
-Gitleaks 的 `TMPDIR` 指向每個 job 會清理的 `runner.temp`，避免自架主機共用暫存目錄中的殘留下載檔造成後續掃描失敗。
-
-**外部 fork 的 PR 會在 job 排程前略過所有安全掃描與 Dashboard 測試**，不會在自架主機執行，也不會退回 GitHub-hosted runner。同 repo 分支的 PR、`main` 推送、每週排程與手動執行仍依各工作流程原有事件執行。請勿將不受信任的程式碼或正式環境資料放入 runner 執行環境。
+`npm audit` 只產生報告並上傳 artifact，不會阻擋 PR；弱點修復由 Dependabot alerts 與其 PR 追蹤。
 
 修改分支上的 workflow 不會改寫過去的執行紀錄或已發佈的 tag。重新執行舊 commit 的工作仍會使用該 commit 的 workflow；請從已更新的分支觸發新的執行。
 
-### Dependabot 專用 Linux runner
+### Dependabot 專用 runner（僅私有 repo 適用）
 
-GitHub 自動產生的 `Dependabot Updates` 不是一般的 workflow YAML，不能只修改 `runs-on`。[官方系統需求](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-on-actions#system-requirements)為 **Linux、X64，以及可供 runner 使用的 Docker**，並使用 `dependabot` 標籤派送工作；macOS runner 即使增加此標籤也不符合需求。
-
-Dependabot 使用專用的 `[self-hosted, Linux, X64, dependabot]` runner，與一般 macOS CI 分開管理。**GitHub 目前僅支援私有 repo 的 Dependabot 使用 self-hosted runner**；若改為公開 repo，必須先重新規劃此部分，不能直接沿用。repo → Settings → Code security → Dependabot 的 Runner type 應選擇帶有 `dependabot` 標籤的 runner（舊版介面為「Dependabot on self-hosted runners」）；setup 不會修改此設定。
-
-`scripts/dependabot-runner/` 提供可重建的 Docker Compose 設定：
+`Dependabot Updates` 不是一般的 workflow YAML，不能只修改 `runs-on`。GitHub 僅支援**私有 repo** 的 Dependabot 使用 self-hosted runner；本專案改為公開後已回到 GitHub-hosted runner，只有在 repo 轉回私有時才需要啟用 `scripts/dependabot-runner/` 的 Docker Compose 設定（需求為 `[self-hosted, Linux, X64, dependabot]`，且須在 repo → Settings → Code security → Dependabot 選擇該 runner）。
 
 ```bash
 # 需要已啟動的 Docker Desktop／Compose、gh（repo 管理權限）及 jq
 ./scripts/dependabot-runner/manage.sh setup
 ./scripts/dependabot-runner/manage.sh status
 ./scripts/dependabot-runner/manage.sh verify
-
-# 暫停、恢復；暫停或重新註冊前會確認 runner 沒有執行中的工作
-./scripts/dependabot-runner/manage.sh stop
-./scripts/dependabot-runner/manage.sh start
-./scripts/dependabot-runner/manage.sh reregister
 ```
 
-需要自訂 repo 或 runner 名稱時，**首次 setup 前**將該目錄的 `.env.example` 複製為 `.env` 並修改非機密設定。setup 在 Mac 上使用 `gh` 取得短效註冊 token，透過標準輸入傳給 runner；不會把個人 GitHub 憑證、PAT 或註冊 token 放進 Compose、映像或 `.env`。請勿自行在 `.env` 儲存 token。
+`manage.sh` 的 setup 會以 `gh` 取得短效註冊 token 並透過標準輸入傳給 runner，不會把憑證或 token 寫進 Compose、映像或 `.env`；註冊資訊與快取保存在專用 named volume，**不要執行 `docker compose down --volumes`**。
 
-runner 與專用 Docker-in-Docker daemon 都固定使用官方、digest 鎖定的 `linux/amd64` 映像。若 Docker Desktop 的主機架構為 ARM64，會透過模擬執行，速度與資源用量可能與原生 X64 不同。runner 以非 root 使用者執行；daemon 使用 privileged 模式，僅在 Docker Desktop 的 Linux VM 內運作，**仍屬高權限設定，不是獨立 VM 等級的隔離**。兩者不掛載 Mac 資料夾或主機 Docker socket，不開放主機連接埠，僅透過專用 Unix socket 通訊。
-
-runner 的工作目錄在兩個容器內都掛載到 `/home/runner/_work`，讓 Dependabot 內層容器的 bind mount 可讀寫相同暫存檔。註冊資訊、工作目錄、Docker 映像快取與 socket 分別保存在 `health-passbook-dependabot` 專用的四個 named volume；**不要執行 `docker compose down --volumes`**，否則會刪除註冊資訊與快取。`manage.sh unregister` 僅移除此 runner 的註冊並保留 volume；重新註冊使用 `reregister`。
-
-兩個容器使用 `restart: unless-stopped`，會在 Docker Engine 恢復後自動啟動；手動 stop 後需執行 start。Mac 必須保持喚醒、Docker Desktop 必須持續運作，需開機恢復時請啟用 Docker Desktop 登入自動啟動。容器合計上限為 6 GiB RAM／6 CPU，Docker 快取會逐漸增加，請監控專用 volume 的容量，勿對共用主機執行全域 Docker prune。此 runner 僅限本 repo 使用，勿放入正式環境資料或長效 GitHub token。
 
 ### 設定 GitHub Actions Secrets
 
