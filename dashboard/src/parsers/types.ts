@@ -26,6 +26,7 @@ export interface LabResult {
   value: number;
   refLow: number | null;
   refHigh: number | null;
+  unit?: string;
 }
 
 export interface CheckupReport {
