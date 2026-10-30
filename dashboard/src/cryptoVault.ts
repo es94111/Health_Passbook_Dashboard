@@ -1,6 +1,7 @@
 import type { ClientEncryptedRecords } from './api';
+import { isFhirBundle, readFhirBundleResources } from './parsers/fhir-parser';
 
-export type RecordType = 'r1' | 'r2' | 'r3' | 'r6' | 'r7' | 'r8';
+export type RecordType = 'r1' | 'r2' | 'r3' | 'r6' | 'r7' | 'r8' | 'fhir';
 
 export interface StoredRecords {
   r1: Record<string, object>;
@@ -9,11 +10,12 @@ export interface StoredRecords {
   r6: Record<string, object>;
   r7: Record<string, object>;
   r8: Record<string, object>;
+  fhir: Record<string, object>;
 }
 
-export type MergeStats = Record<RecordType, { added: number; skipped: number }>;
+export type MergeStats = Record<RecordType, { added: number; skipped: number; updated?: number }>;
 
-const RECORD_TYPES: RecordType[] = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8'];
+const RECORD_TYPES: RecordType[] = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8', 'fhir'];
 const KDF_ITERATIONS = 250_000;
 export const VAULT_PASSPHRASE_MIN_LENGTH = 12;
 
@@ -21,7 +23,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 export function emptyRecords(): StoredRecords {
-  return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {} };
+  return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {}, fhir: {} };
 }
 
 export function flattenRecords(stored: StoredRecords): Record<string, object[]> {
@@ -32,6 +34,7 @@ export function flattenRecords(stored: StoredRecords): Record<string, object[]> 
     r6: Object.values(stored.r6),
     r7: Object.values(stored.r7),
     r8: Object.values(stored.r8),
+    fhir: Object.values(stored.fhir ?? {}),
   };
 }
 
@@ -43,8 +46,50 @@ export function mergeNHIJson(existing: StoredRecords, json: object): { records: 
     r6: { ...existing.r6 },
     r7: { ...existing.r7 },
     r8: { ...existing.r8 },
+    fhir: { ...(existing.fhir ?? {}) },
   };
   const stats = Object.fromEntries(RECORD_TYPES.map((type) => [type, { added: 0, skipped: 0 }])) as MergeStats;
+  if ((json as Record<string, unknown>).resourceType === 'Bundle' && !isFhirBundle(json)) {
+    throw new Error('FHIR Bundle 的 entry 格式不正確');
+  }
+  if (isFhirBundle(json)) {
+    const resources = readFhirBundleResources(json);
+    // Refuse to merge different known patients: silent mixed-person timelines are unsafe.
+    const storedPatients = Object.values(records.fhir).filter(r => (r as Record<string, unknown>).resourceType === 'Patient');
+    const incomingPatients = resources.filter(r => r.resourceType === 'Patient');
+    const identity = (r: Record<string, unknown>) => {
+      const identifiers = Array.isArray(r.identifier) ? r.identifier : [];
+      const primary = identifiers.map(x => {
+        const i = x as Record<string, unknown>;
+        return String(i.system ?? '') + ':' + String(i.value ?? '');
+      }).find(x => x !== ':');
+      return primary || String(r.id ?? '');
+    };
+    if (storedPatients.length && incomingPatients.length &&
+        identity(storedPatients[0] as Record<string, unknown>) !== identity(incomingPatients[0])) {
+      throw new Error('偵測到不同的 FHIR 病人識別資訊，已中止匯入以避免混合病歷');
+    }
+    stats.fhir.updated = 0;
+    for (const resource of resources) {
+      const source = String((resource.meta as Record<string, unknown> | undefined)?.source ?? '');
+      const id = String(resource.id ?? '');
+      // Stable content fallback for resources without an ID.
+      const key = id ? `${resource.resourceType}|${source}|${id}` :
+        `${resource.resourceType}|anonymous|${hashResource(JSON.stringify(resource))}`;
+      const previous = records.fhir[key];
+      if (!previous) {
+        records.fhir[key] = resource;
+        stats.fhir.added++;
+      } else if (JSON.stringify(previous) !== JSON.stringify(resource)) {
+        records.fhir[key] = resource;
+        stats.fhir.updated = (stats.fhir.updated ?? 0) + 1;
+      } else {
+        stats.fhir.skipped++;
+      }
+    }
+    return { records, stats };
+  }
+
   const source = extractSource(json);
 
   for (const type of RECORD_TYPES) {
@@ -118,6 +163,14 @@ export function validateVaultPassphrase(passphrase: string): void {
   }
 }
 
+function hashResource(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash = Math.imul(hash ^ input.charCodeAt(i), 16777619);
+  }
+  return (hash >>> 0).toString(16) + ':' + input.length;
+}
+
 function extractSource(json: object): Record<string, unknown> {
   const root = json as Record<string, unknown>;
   const myHealthBank = root.myhealthbank as Record<string, unknown> | undefined;
@@ -156,6 +209,8 @@ function dedupKey(type: RecordType, rec: Record<string, unknown>): string {
       return `${field(rec, 'r7.4')}_${field(rec, 'r7.5')}_${field(rec, 'r7.7')}_${field(rec, 'r7.10')}`;
     case 'r8':
       return `${field(rec, 'r8.4')}_${field(rec, 'r8.5')}_${field(rec, 'r8.8')}`;
+    case 'fhir':
+      return String(rec.id ?? JSON.stringify(rec));
   }
 }
 

@@ -34,6 +34,16 @@ npm run dev
 2. 登入後點選「上傳」，選擇從健保快易通 App 匯出的 JSON 檔案
 3. 資料匯入後即可瀏覽儀表板
 
+### NHI-FHIR Bridge（健康懷爾抓抓）匯入
+
+除了健保署原生 JSON，也可以匯入 **NHI-FHIR Bridge 擴充功能匯出的 FHIR R4 Bundle JSON**。
+使用者在 Chrome 自行登入健康存摺並下載檔案，再到儀表板選擇 JSON；
+匯入資料在瀏覽器內合併與加密，不需提供健保署帳密給伺服器。
+新增「醫療報告」與「用藥」分頁，部分內嵌 JPG／PNG／WebP／PDF 附件可檢視或下載。
+此方式 **不是** 健保署登入或資料的完全自動同步。
+
+詳見 [NHI-FHIR Bridge 匯入說明](docs/NHI-FHIR-BRIDGE.md)。
+
 ---
 
 ## ⚠️ 重要：備份加密金鑰
