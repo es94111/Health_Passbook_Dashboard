@@ -49,6 +49,9 @@ export function mergeNHIJson(existing: StoredRecords, json: object): { records: 
     fhir: { ...(existing.fhir ?? {}) },
   };
   const stats = Object.fromEntries(RECORD_TYPES.map((type) => [type, { added: 0, skipped: 0 }])) as MergeStats;
+  if ((json as Record<string, unknown>).resourceType === 'Bundle' && !isFhirBundle(json)) {
+    throw new Error('FHIR Bundle 的 entry 格式不正確');
+  }
   if (isFhirBundle(json)) {
     const resources = readFhirBundleResources(json);
     // Refuse to merge different known patients: silent mixed-person timelines are unsafe.
