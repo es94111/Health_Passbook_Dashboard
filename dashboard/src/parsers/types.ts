@@ -42,6 +42,29 @@ export interface DentalVisit {
   procedures: { code: string; name: string; qty: number; toothCode: string; toothName: string }[];
 }
 
+export interface MedicalAttachment {
+  title: string;
+  contentType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+  data: string; // FHIR Attachment.data, retained only inside the encrypted vault
+}
+
+export interface MedicalReport {
+  date: Date;
+  hospital: string;
+  title: string;
+  text: string;
+  attachments: MedicalAttachment[];
+}
+
+export interface MedicationRecord {
+  date: Date;
+  hospital: string;
+  name: string;
+  dosage: string;
+  status: string;
+  source: string;
+}
+
 export interface NHIData {
   visits: Visit[];
   hospitalizations: Hospitalization[];
@@ -49,4 +72,6 @@ export interface NHIData {
   labResults: LabResult[];
   checkupReports: CheckupReport[];
   dentalVisits: DentalVisit[];
+  medicalReports: MedicalReport[];
+  medications: MedicationRecord[];
 }
