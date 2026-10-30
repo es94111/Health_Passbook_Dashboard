@@ -115,7 +115,7 @@ export function me(): Promise<UserProfile> {
 
 export interface UploadResult {
   message: string;
-  stats: Record<string, { added: number; skipped: number }>;
+  stats: Record<string, { added: number; skipped: number; updated?: number }>;
 }
 
 export interface ClientEncryptedRecords {
