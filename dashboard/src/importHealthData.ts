@@ -1,13 +1,12 @@
-import { ApiError, fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
+import { fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
 import {
-  decryptRecords, deriveVaultKey, encryptRecordsWithKey, encryptWithVaultKey, prepareVaultKey, validateVaultPassphrase, type VaultKey,
+  decryptRecords, deriveVaultKey, encryptRecordsWithKey, encryptWithVaultKey, prepareVaultKey, validateVaultPassphrase,
 } from './cryptoVault';
 import { base64ToBytes } from './medicalAttachments';
 import { emptyRecords, normalizeStoredRecords, RECORD_TYPES, type StoredRecords } from './recordStore';
 import { PatientConfirmationRequired, inspectImportIdentity, mergeNHIJson, mergePreparedImport } from './recordImport';
 import { extractImportFile, scanImportFile, type LargeImportSink } from './streamImport';
-import { createVaultSession } from './vaultSession';
-import type { RecordShardUpload } from './recordShards';
+import { createVaultSession, uploadShardWith } from './vaultSession';
 
 async function currentRecords(passphrase: string, signal?: AbortSignal, onProgress?: (ratio: number) => void) {
   validateVaultPassphrase(passphrase);
@@ -23,19 +22,6 @@ export async function unlockHealthData(passphrase: string, signal?: AbortSignal,
   if (!previous) throw new Error('尚未建立瀏覽器端加密資料，請先匯入或遷移既有資料');
   const key = await deriveVaultKey(passphrase, base64ToBytes(previous.salt), previous.iterations);
   return { data: createVaultSession(records, previous, key), envelope: previous };
-}
-
-/** Shards are content-addressed, so a 409 means the identical ciphertext is already stored. */
-function uploadShardWith(prepared: VaultKey, signal?: AbortSignal) {
-  return async ({ id, bytes }: RecordShardUpload) => {
-    const envelope = await encryptWithVaultKey(bytes, prepared.key, prepared);
-    signal?.throwIfAborted();
-    try {
-      await uploadEncryptedAttachment(id, envelope, signal);
-    } catch (error) {
-      if (!(error instanceof ApiError && error.status === 409)) throw error;
-    }
-  };
 }
 
 export async function importHealthData(json: object, passphrase: string, confirmPatient = false, signal?: AbortSignal) {

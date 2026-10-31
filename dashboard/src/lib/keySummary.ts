@@ -19,9 +19,10 @@ export interface LabSummary {
   trend: Trend | null;
   worsening: boolean;        // abnormal AND moving further from the healthy range
   readingsCount: number;
+  targetApplied?: boolean;   // refLow/refHigh come from a personal target, not the lab's range
 }
 
-function statusFor(value: number, refLow: number | null, refHigh: number | null): LabStatus {
+export function statusFor(value: number, refLow: number | null, refHigh: number | null): LabStatus {
   if (refHigh !== null && value > refHigh) return 'high';
   if (refLow !== null && value < refLow) return 'low';
   if (refLow !== null || refHigh !== null) return 'normal';
@@ -88,27 +89,31 @@ export interface MedicationSummary {
   recentCount: number;  // appearances within 90 days of the latest visit in the dataset
 }
 
-const RECENT_WINDOW_DAYS = 90;
+export const RECENT_WINDOW_DAYS = 90;
 
 export function isDrugCode(code: string): boolean {
   return /^[A-Z]{2}/.test(code);
 }
 
-export function computeMedicationSummaries(visits: Visit[], pinned: string[]): MedicationSummary[] {
-  const pinnedSet = new Set(pinned);
+interface MedicationAcc {
+  name: string;
+  nameFreq: Map<string, number>;
+  lastDate: Date;
+  count: number;
+  recentCount: number;
+}
 
+function accumulateMedications(visits: Visit[], accept: (code: string) => boolean): Map<string, MedicationAcc> {
   // Latest visit date in the dataset — "recent" is measured relative to this,
   // since NHI exports are historical and may not reach today's date.
   let datasetLatest = 0;
   for (const v of visits) datasetLatest = Math.max(datasetLatest, v.date.getTime());
   const recentCutoff = datasetLatest - RECENT_WINDOW_DAYS * 86_400_000;
 
-  interface Acc { name: string; nameFreq: Map<string, number>; lastDate: Date; count: number; recentCount: number; }
-  const acc = new Map<string, Acc>();
-
+  const acc = new Map<string, MedicationAcc>();
   for (const visit of visits) {
     for (const proc of visit.procedures) {
-      if (!proc.code || !pinnedSet.has(proc.code)) continue;
+      if (!proc.code || !accept(proc.code)) continue;
       const entry = acc.get(proc.code) ?? {
         name: proc.name, nameFreq: new Map(), lastDate: visit.date, count: 0, recentCount: 0,
       };
@@ -119,18 +124,34 @@ export function computeMedicationSummaries(visits: Visit[], pinned: string[]): M
       acc.set(proc.code, entry);
     }
   }
+  return acc;
+}
 
+function toMedicationSummary(code: string, entry: MedicationAcc): MedicationSummary {
+  // Use the most frequently seen name for this code
+  let name = entry.name;
+  let best = 0;
+  for (const [n, f] of entry.nameFreq) if (f > best) { best = f; name = n; }
+  return { code, name: name || code, lastDate: entry.lastDate, count: entry.count, recentCount: entry.recentCount };
+}
+
+export function computeMedicationSummaries(visits: Visit[], pinned: string[]): MedicationSummary[] {
+  const pinnedSet = new Set(pinned);
+  const acc = accumulateMedications(visits, code => pinnedSet.has(code));
   const summaries: MedicationSummary[] = [];
   for (const code of pinned) {
     const entry = acc.get(code);
-    if (!entry) continue;
-    // Use the most frequently seen name for this code
-    let name = entry.name;
-    let best = 0;
-    for (const [n, f] of entry.nameFreq) if (f > best) { best = f; name = n; }
-    summaries.push({ code, name: name || code, lastDate: entry.lastDate, count: entry.count, recentCount: entry.recentCount });
+    if (entry) summaries.push(toMedicationSummary(code, entry));
   }
   return summaries;
+}
+
+/** Every drug order found in visits (not just pinned ones), most recently prescribed first. */
+export function computeAllMedicationSummaries(visits: Visit[]): MedicationSummary[] {
+  const acc = accumulateMedications(visits, isDrugCode);
+  return [...acc]
+    .map(([code, entry]) => toMedicationSummary(code, entry))
+    .sort((a, b) => b.lastDate.getTime() - a.lastDate.getTime() || b.count - a.count || a.code.localeCompare(b.code));
 }
 
 // ── Alerts ──────────────────────────────────────────────────────────────────────
@@ -153,10 +174,11 @@ export function buildAlerts(labSummaries: LabSummary[]): Alert[] {
   for (const s of labSummaries) {
     if (s.status !== 'high' && s.status !== 'low') continue;
     const dir = s.status === 'high' ? '偏高' : '偏低';
+    const basis = s.targetApplied ? '個人目標' : '參考';
     const refText =
-      s.refLow !== null && s.refHigh !== null ? `參考 ${s.refLow}–${s.refHigh}`
-      : s.refHigh !== null ? `參考上限 ${s.refHigh}`
-      : s.refLow !== null ? `參考下限 ${s.refLow}` : '';
+      s.refLow !== null && s.refHigh !== null ? `${basis} ${s.refLow}–${s.refHigh}`
+      : s.refHigh !== null ? `${basis}上限 ${s.refHigh}`
+      : s.refLow !== null ? `${basis}下限 ${s.refLow}` : '';
     const worse = s.worsening ? '，且較上次惡化' : '';
     alerts.push({
       id: `lab:${s.subItem}:${isoDay(s.latestDate)}`,
@@ -238,4 +260,9 @@ export function presetToStartDate(preset: DateRangePreset, anchor: Date): Date |
 
 export function formatDay(d: Date): string {
   return isoDay(d);
+}
+
+/** Whole numbers stay as they are; everything else is shown with two decimals. */
+export function formatLabValue(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(2);
 }

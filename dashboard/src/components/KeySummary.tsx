@@ -1,19 +1,28 @@
 import { useMemo, useState } from 'react';
 import type { NHIData } from '../parsers/types';
 import { useUserStore } from '../UserStore';
+import { usePersonal } from '../personalContext';
+import { useNow } from '../lib/clock';
 import {
   computeMedicationSummaries,
   listMedications,
   formatDay,
+  formatLabValue,
   type MedicationSummary,
 } from '../lib/keySummary';
 import {
-  buildLabSeries, buildLabSeriesAlerts, computeLabSeriesSummaries, isLabSeriesPinned,
-  labReference, labSeriesDescription, labSeriesPinTarget, type LabSeriesSummary,
+  abnormalLabSeriesSummaries, buildLabSeries, buildLabSeriesAlerts, computeAllLabSeriesSummaries,
+  isLabSeriesPinned, labReference, labSeriesDescription, labSeriesPinTarget, type LabSeriesSummary,
 } from '../lib/clinicalLabSeries';
+import { computeFreshness, latestRecordDate, recheckCandidates } from '../lib/freshness';
+import { refillReminders } from '../lib/refills';
+import AbnormalOverview from './AbnormalOverview';
+import DataFreshness from './DataFreshness';
+import KeyReminders from './KeyReminders';
 
 interface Props {
   data: NHIData;
+  now?: Date;
 }
 
 // ── Small presentational helpers ────────────────────────────────────────────────
@@ -62,10 +71,6 @@ const STATUS_META: Record<LabSeriesSummary['status'], { label: string; badge: st
   },
 };
 
-function fmtValue(v: number): string {
-  return Number.isInteger(v) ? String(v) : v.toFixed(2);
-}
-
 function LabCard({ s, onUnpin }: { s: LabSeriesSummary; onUnpin: () => void }) {
   const meta = STATUS_META[s.status];
   const description = labSeriesDescription(s);
@@ -89,14 +94,14 @@ function LabCard({ s, onUnpin }: { s: LabSeriesSummary; onUnpin: () => void }) {
         </div>
       </div>
       <div className="mt-2 flex flex-wrap items-baseline gap-2">
-        <span className={`text-2xl font-bold tabular-nums ${meta.value}`}>{fmtValue(s.latestValue)}</span>
+        <span className={`text-2xl font-bold tabular-nums ${meta.value}`}>{formatLabValue(s.latestValue)}</span>
         {s.unit && <span className="text-xs font-mono text-gray-500 dark:text-gray-400">{s.unit}</span>}
         <span className={`badge ${meta.badge}`}>{meta.label}</span>
       </div>
       <div className="mt-1"><TrendMark s={s} /></div>
       {s.referenceChanged && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">參考區間已變更；僅比較同序列數值。</p>}
       <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-gray-500 dark:text-gray-400 font-mono">
-        <span className="break-words">本次參考 {labReference(s)}</span>
+        <span className="break-words">{s.targetApplied ? '個人目標' : '本次參考'} {labReference(s)}</span>
         <span>{formatDay(s.latestDate)} · {s.readingsCount} 筆</span>
       </div>
     </article>
@@ -258,16 +263,32 @@ function PinPicker({ data, onClose }: { data: NHIData; onClose: () => void }) {
 
 // ── Main component ──────────────────────────────────────────────────────────────
 
-export default function KeySummary({ data }: Props) {
+export default function KeySummary({ data, now: nowProp }: Props) {
   const store = useUserStore();
+  const { personal } = usePersonal();
+  const now = useNow(nowProp);
   const [editing, setEditing] = useState(false);
 
   const { pinnedLabItems, pinnedMedications } = store.preferences;
 
-  const labSummaries = useMemo(
-    () => computeLabSeriesSummaries(data.labResults, pinnedLabItems),
-    [data.labResults, pinnedLabItems],
+  const allLabSummaries = useMemo(
+    () => computeAllLabSeriesSummaries(data.labResults, personal.targets),
+    [data.labResults, personal.targets],
   );
+  const labSummaries = useMemo(
+    () => allLabSummaries.filter((s) => isLabSeriesPinned(s, pinnedLabItems)),
+    [allLabSummaries, pinnedLabItems],
+  );
+  const unpinnedAbnormal = useMemo(
+    () => abnormalLabSeriesSummaries(allLabSummaries).filter((s) => !isLabSeriesPinned(s, pinnedLabItems)),
+    [allLabSummaries, pinnedLabItems],
+  );
+  const recheck = useMemo(
+    () => recheckCandidates(allLabSummaries, (s) => isLabSeriesPinned(s, pinnedLabItems), now),
+    [allLabSummaries, pinnedLabItems, now],
+  );
+  const reminders = useMemo(() => refillReminders(personal.refills, now), [personal.refills, now]);
+  const freshness = useMemo(() => computeFreshness(latestRecordDate(data), now), [data, now]);
   const medSummaries = useMemo(
     () => computeMedicationSummaries(data.visits, pinnedMedications),
     [data.visits, pinnedMedications],
@@ -276,13 +297,17 @@ export default function KeySummary({ data }: Props) {
   const visibleAlerts = alerts.filter((a) => !store.isAlertAcknowledged(a.id));
 
   const hasPins = pinnedLabItems.length > 0 || pinnedMedications.length > 0;
+  const showInsights = unpinnedAbnormal.length > 0 || recheck.length > 0 || reminders.length > 0;
 
   return (
     <section aria-labelledby="key-summary-title">
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 id="key-summary-title" className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-          我的重點摘要
-        </h2>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 mb-3">
+        <div className="min-w-0">
+          <h2 id="key-summary-title" className="text-lg font-semibold text-gray-800 dark:text-gray-100">
+            我的重點摘要
+          </h2>
+          <DataFreshness freshness={freshness} />
+        </div>
         <button
           onClick={() => setEditing(true)}
           className="text-sm text-teal-600 dark:text-teal-400 hover:underline cursor-pointer"
@@ -313,6 +338,13 @@ export default function KeySummary({ data }: Props) {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {showInsights && (
+        <div className="space-y-3 mb-4">
+          <AbnormalOverview summaries={unpinnedAbnormal} />
+          <KeyReminders refills={reminders} recheck={recheck} />
         </div>
       )}
 

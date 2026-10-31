@@ -1,3 +1,6 @@
+import type { ClientEncryptedRecords } from '../api';
+import type { PersonalData } from '../personalData';
+
 export interface RecordOrigin {
   format: 'NHI' | 'FHIR';
   resourceType?: string;
@@ -145,4 +148,8 @@ export interface NHIData {
   duplicateCandidateCount: number;
   loadAttachment?: (attachment: MedicalAttachment) => Promise<Blob>;
   downloadSource?: (sourceId: string) => Promise<void>;
+  /** 使用者自行輸入的加密資料；只存在已解鎖的病歷庫中。 */
+  personal?: PersonalData;
+  /** 加密並寫回個人資料；成功後回傳新的畫面資料與信封，失敗時原資料不變。 */
+  savePersonal?: (next: PersonalData, signal?: AbortSignal) => Promise<{ data: NHIData; envelope: ClientEncryptedRecords }>;
 }

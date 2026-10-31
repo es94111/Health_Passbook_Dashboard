@@ -1,9 +1,12 @@
-import { fetchEncryptedAttachment, type ClientEncryptedRecords } from './api';
-import { decryptVaultBytes } from './cryptoVault';
+import { ApiError, fetchEncryptedAttachment, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
+import { decryptVaultBytes, encryptRecordsWithKey, encryptWithVaultKey, type VaultKey } from './cryptoVault';
 import { base64ToBytes, bytesToBase64, restoreAttachmentData, validateAttachmentBytes } from './medicalAttachments';
 import { parseNHIJson } from './parsers/nhi-parser';
 import { canonicalJson, sha256 } from './parsers/fhir-common';
+import type { NHIData } from './parsers/types';
+import { normalizePersonalData } from './personalData';
 import { flattenRecords, type SourceChunk, type StoredRecords } from './recordStore';
+import type { RecordShardUpload } from './recordShards';
 
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -16,8 +19,22 @@ export function downloadBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function createVaultSession(records: StoredRecords, envelope: ClientEncryptedRecords, key: CryptoKey) {
-  const data = parseNHIJson(flattenRecords(records));
+/** Shards are content-addressed, so a 409 means the identical ciphertext is already stored. */
+export function uploadShardWith(prepared: VaultKey, signal?: AbortSignal) {
+  return async ({ id, bytes }: RecordShardUpload) => {
+    const envelope = await encryptWithVaultKey(bytes, prepared.key, prepared);
+    signal?.throwIfAborted();
+    try {
+      await uploadEncryptedAttachment(id, envelope, signal);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 409)) throw error;
+    }
+  };
+}
+
+/** `parsed` lets a personal-data save reuse the already parsed record arrays so memoized views keep their identity. */
+export function createVaultSession(records: StoredRecords, envelope: ClientEncryptedRecords, key: CryptoKey, parsed?: NHIData): NHIData {
+  const data: NHIData = parsed ? { ...parsed } : parseNHIJson(flattenRecords(records));
   const read = async (id: string): Promise<Uint8Array<ArrayBuffer>> => {
     const metadata = records.attachments[id];
     if (!metadata) throw new Error('附件不在此病歷的加密索引中');
@@ -68,6 +85,18 @@ export function createVaultSession(records: StoredRecords, envelope: ClientEncry
     });
     if (await sha256(canonicalJson(restored)) !== sourceId) throw new Error('來源檔完整性檢查失敗，已停止下載');
     downloadBlob(new Blob([JSON.stringify(restored, null, 2)], { type: 'application/json' }), filename);
+  };
+  data.personal = records.personal;
+  data.savePersonal = async (next, signal) => {
+    const nextRecords: StoredRecords = { ...records, personal: normalizePersonalData(next) };
+    const prepared: VaultKey = { key, salt: envelope.salt, iterations: envelope.iterations };
+    const nextEnvelope = await encryptRecordsWithKey(nextRecords, prepared, {
+      previous: envelope, signal, uploadShard: uploadShardWith(prepared, signal),
+    });
+    const nextData = createVaultSession(nextRecords, nextEnvelope, key, data);
+    signal?.throwIfAborted();
+    await uploadEncryptedHealthData(nextEnvelope, {}, envelope.revision ?? null, signal);
+    return { data: nextData, envelope: nextEnvelope };
   };
   return data;
 }

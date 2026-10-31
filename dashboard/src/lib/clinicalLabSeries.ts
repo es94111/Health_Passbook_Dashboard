@@ -1,5 +1,6 @@
 import type { LabResult, TextLabResult } from '../parsers/types';
-import { buildAlerts, type LabSummary } from './keySummary';
+import type { LabTarget } from '../personalData';
+import { buildAlerts, statusFor, type LabSummary } from './keySummary';
 import { clinicalDateTime, originLabel } from './clinicalRecords';
 
 export interface LabSeries {
@@ -93,27 +94,54 @@ export function labSeriesPinTarget(series: Pick<LabSeries, 'key' | 'subItems'>, 
   return pinned.includes(series.key) ? series.key : series.subItems.find(name => pinned.includes(name)) ?? series.key;
 }
 
-export function computeLabSeriesSummaries(records: LabResult[], pinned: string[]): LabSeriesSummary[] {
-  return buildLabSeries(records).filter(series => isLabSeriesPinned(series, pinned)).map(series => {
-    const latest = series.records[series.records.length - 1];
-    const previous = series.records[series.records.length - 2];
-    const { refLow, refHigh } = latest;
-    const status = refHigh !== null && latest.value > refHigh ? 'high'
-      : refLow !== null && latest.value < refLow ? 'low'
-      : refLow !== null || refHigh !== null ? 'normal' : 'unknown';
-    const delta = previous ? latest.value - previous.value : null;
-    const referenceChanged = Boolean(previous && referenceKey(latest) !== referenceKey(previous));
-    return {
-      key: series.key, subItem: series.subItem, subItems: series.subItems, testGroup: series.testGroup,
-      code: series.code, unit: series.unit, source: series.source, hospital: series.hospital,
-      latestValue: latest.value, latestDate: latest.date, previousValue: previous?.value ?? null,
-      refLow, refHigh, refText: latest.refText, referenceChanged, status, delta,
-      trend: delta === null ? null : delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat',
-      worsening: !referenceChanged && ((status === 'high' && delta !== null && delta > 0)
-        || (status === 'low' && delta !== null && delta < 0)),
-      readingsCount: series.records.length,
-    };
-  });
+/** A personal target replaces the lab's printed range for status; it never changes the stored readings. */
+export function summarizeSeries(series: LabSeries, target?: LabTarget): LabSeriesSummary {
+  const latest = series.records[series.records.length - 1];
+  const previous = series.records[series.records.length - 2];
+  const refLow = target ? target.low ?? null : latest.refLow;
+  const refHigh = target ? target.high ?? null : latest.refHigh;
+  const status = statusFor(latest.value, refLow, refHigh);
+  const delta = previous ? latest.value - previous.value : null;
+  // A personal target is constant, so a change in the lab's printed range does not affect comparability.
+  const referenceChanged = !target && Boolean(previous && referenceKey(latest) !== referenceKey(previous));
+  return {
+    key: series.key, subItem: series.subItem, subItems: series.subItems, testGroup: series.testGroup,
+    code: series.code, unit: series.unit, source: series.source, hospital: series.hospital,
+    latestValue: latest.value, latestDate: latest.date, previousValue: previous?.value ?? null,
+    refLow, refHigh, refText: target ? undefined : latest.refText, referenceChanged, status, delta,
+    trend: delta === null ? null : delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat',
+    worsening: !referenceChanged && ((status === 'high' && delta !== null && delta > 0)
+      || (status === 'low' && delta !== null && delta < 0)),
+    readingsCount: series.records.length,
+    ...(target ? { targetApplied: true } : {}),
+  };
+}
+
+export function computeLabSeriesSummaries(
+  records: LabResult[], pinned: string[], targets: Record<string, LabTarget> = {},
+): LabSeriesSummary[] {
+  return buildLabSeries(records)
+    .filter(series => isLabSeriesPinned(series, pinned))
+    .map(series => summarizeSeries(series, targets[series.key]));
+}
+
+export function computeAllLabSeriesSummaries(
+  records: LabResult[], targets: Record<string, LabTarget> = {},
+): LabSeriesSummary[] {
+  return buildLabSeries(records).map(series => summarizeSeries(series, targets[series.key]));
+}
+
+export function isAbnormalSummary(summary: Pick<LabSummary, 'status'>): boolean {
+  return summary.status === 'high' || summary.status === 'low';
+}
+
+/** Out-of-range series, worsening first, then newest reading, then a stable name/key order. */
+export function abnormalLabSeriesSummaries(summaries: LabSeriesSummary[]): LabSeriesSummary[] {
+  return summaries.filter(isAbnormalSummary).sort((a, b) =>
+    Number(b.worsening) - Number(a.worsening)
+    || b.latestDate.getTime() - a.latestDate.getTime()
+    || a.subItem.localeCompare(b.subItem)
+    || a.key.localeCompare(b.key));
 }
 
 export function buildLabSeriesAlerts(summaries: LabSeriesSummary[]) {

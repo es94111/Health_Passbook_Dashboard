@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchEncryptedAttachment, type ClientEncryptedRecords } from './api';
-import { deriveVaultKey, encryptRecords, encryptWithVaultKey } from './cryptoVault';
+import { ApiError, fetchEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
+import { decryptRecords, deriveVaultKey, encryptRecords, encryptWithVaultKey } from './cryptoVault';
 import { base64ToBytes } from './medicalAttachments';
+import { emptyPersonal, newPersonalId, type PersonalData } from './personalData';
 import { mergeNHIJson } from './recordImport';
 import { emptyRecords } from './recordStore';
 import { canonicalJson, sha256 } from './parsers/fhir-common';
 import { SYNTHETIC_PNG, syntheticBundle } from './test/fixtures';
 import { createVaultSession } from './vaultSession';
 
-vi.mock('./api', () => ({ fetchEncryptedAttachment: vi.fn() }));
+vi.mock('./api', async importOriginal => ({
+  ...(await importOriginal<typeof import('./api')>()),
+  fetchEncryptedAttachment: vi.fn(),
+  uploadEncryptedAttachment: vi.fn(),
+  uploadEncryptedHealthData: vi.fn(),
+}));
 const originalURL = globalThis.URL;
 const createObjectURL = vi.fn<(blob: Blob | MediaSource) => string>(() => 'blob:synthetic-download');
 const revokeObjectURL = vi.fn();
@@ -18,6 +24,7 @@ class DownloadURL extends originalURL {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(uploadEncryptedHealthData).mockResolvedValue({ message: 'ok', stats: {} });
   vi.stubGlobal('URL', DownloadURL);
   vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
 });
@@ -141,5 +148,89 @@ describe('vault source reconstruction and integrity', () => {
     const { session } = await fixture();
     await expect(session.loadAttachment!({ ...session.medicalReports[0].attachments[0], contentType: 'application/pdf' })).rejects.toThrow('類型');
     expect(fetchEncryptedAttachment).not.toHaveBeenCalled();
+  });
+});
+
+const personalPassphrase = 'synthetic-vault-passphrase';
+
+async function personalFixture() {
+  const records = emptyRecords();
+  const envelope = await encryptRecords(records, personalPassphrase);
+  const key = await deriveVaultKey(personalPassphrase, base64ToBytes(envelope.salt), envelope.iterations);
+  return { records, envelope, key, session: createVaultSession(records, envelope, key) };
+}
+
+function noteOn(date: string, text: string): PersonalData['notes'][number] {
+  return { id: newPersonalId(), date, kind: 'note', text };
+}
+
+describe('saving encrypted personal data', () => {
+  it('exposes the stored personal data and a save function', async () => {
+    const { session } = await personalFixture();
+    expect(session.personal).toEqual(emptyPersonal());
+    expect(session.savePersonal).toBeTypeOf('function');
+  });
+  it('encrypts the new data and uploads it against the current revision', async () => {
+    const { records, envelope, session } = await personalFixture();
+    const next = { ...emptyPersonal(), notes: [noteOn('2026-10-01', '下次看診要問的問題')] };
+    const controller = new AbortController();
+    const saved = await session.savePersonal!(next, controller.signal);
+    expect(uploadEncryptedHealthData).toHaveBeenCalledOnce();
+    expect(uploadEncryptedHealthData).toHaveBeenCalledWith(saved.envelope, {}, envelope.revision, controller.signal);
+    expect(saved.envelope.revision).not.toBe(envelope.revision);
+    expect(saved.data.personal).toEqual(next);
+    expect(JSON.stringify(saved.envelope)).not.toContain('下次看診要問的問題');
+    expect((await decryptRecords(saved.envelope, personalPassphrase)).personal).toEqual(next);
+    expect(records.personal).toEqual(emptyPersonal());
+  });
+  it('normalizes what it stores', async () => {
+    const { session } = await personalFixture();
+    const saved = await session.savePersonal!({
+      ...emptyPersonal(),
+      notes: [noteOn('2026-10-02', '後'), noteOn('2026-10-01', '先')],
+    });
+    expect(saved.data.personal!.notes.map(note => note.text)).toEqual(['先', '後']);
+  });
+  it('chains a second save onto the revision of the first', async () => {
+    const { session } = await personalFixture();
+    const first = await session.savePersonal!({ ...emptyPersonal(), notes: [noteOn('2026-10-01', '第一筆')] });
+    const second = await first.data.savePersonal!({
+      ...first.data.personal!,
+      notes: [...first.data.personal!.notes, noteOn('2026-10-02', '第二筆')],
+    });
+    expect(uploadEncryptedHealthData).toHaveBeenCalledTimes(2);
+    expect(uploadEncryptedHealthData).toHaveBeenLastCalledWith(second.envelope, {}, first.envelope.revision, undefined);
+    expect(second.data.personal!.notes.map(note => note.text)).toEqual(['第一筆', '第二筆']);
+    expect(second.envelope.revision).not.toBe(first.envelope.revision);
+  });
+  it('leaves the unlocked session untouched when the upload is rejected', async () => {
+    const { envelope, session } = await personalFixture();
+    vi.mocked(uploadEncryptedHealthData).mockRejectedValue(new ApiError('conflict', 409));
+    await expect(session.savePersonal!({ ...emptyPersonal(), notes: [noteOn('2026-10-01', '不應保存')] })).rejects.toMatchObject({ status: 409 });
+    expect(session.personal).toEqual(emptyPersonal());
+    vi.mocked(uploadEncryptedHealthData).mockResolvedValue({ message: 'ok', stats: {} });
+    await session.savePersonal!({ ...emptyPersonal(), notes: [noteOn('2026-10-01', '重試')] });
+    expect(uploadEncryptedHealthData).toHaveBeenLastCalledWith(expect.anything(), {}, envelope.revision, undefined);
+  });
+  it('rejects invalid personal data before any network call', async () => {
+    const { session } = await personalFixture();
+    const invalid = { ...emptyPersonal(), notes: [{ id: 'bad', date: '2026-02-30', kind: 'note', text: '無效日期' }] } as unknown as PersonalData;
+    await expect(session.savePersonal!(invalid)).rejects.toThrow('加密個人資料已損壞');
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
+  });
+  it('keeps the parsed medical records and attachment access of the session', async () => {
+    const { envelope, session } = await fixture();
+    const saved = await session.savePersonal!({ ...emptyPersonal(), notes: [noteOn('2026-10-01', '保留診療資料')] });
+    expect(saved.data.visits).toBe(session.visits);
+    expect(saved.data.labResults).toBe(session.labResults);
+    expect(saved.data.medicalReports).toBe(session.medicalReports);
+    expect(saved.data.loadAttachment).toBeTypeOf('function');
+    expect(saved.data.downloadSource).toBeTypeOf('function');
+    const before = await decryptRecords(envelope, personalPassphrase);
+    const after = await decryptRecords(saved.envelope, personalPassphrase);
+    expect(after.fhir).toEqual(before.fhir);
+    expect(after.fhirAliases).toEqual(before.fhirAliases);
+    expect(after.attachments).toEqual(before.attachments);
+    expect(after.personal.notes).toHaveLength(1);
   });
 });
