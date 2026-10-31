@@ -3,14 +3,19 @@ import { array, object, sha256, string } from './parsers/fhir-common';
 
 export const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 export const MAX_ATTACHMENTS = 512;
-/** Largest manifest / decrypted record index the browser and API accept. */
+/** Largest record index stored inline in one manifest envelope; larger indexes are sharded. */
 export const MAX_IMPORT_BYTES = 32 * 1024 * 1024;
 /** Largest single file accepted by the two-pass streaming import. */
 export const MAX_IMPORT_FILE_BYTES = 4 * 1024 * 1024 * 1024;
 /** Raw source is uploaded as independently encrypted 8 MiB chunks. */
 export const SOURCE_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_SOURCE_CHUNKS = 2048;
-/** Attachments (512) plus source chunks share one manifest reference list. */
+/** The merged record index is stored as independently encrypted shards of this size. */
+export const RECORD_SHARD_BYTES = 8 * 1024 * 1024;
+export const MAX_RECORD_SHARDS = 1024;
+/** 8 GiB of normalized record text; the practical ceiling is the browser's memory. */
+export const MAX_RECORD_BYTES = MAX_RECORD_SHARDS * RECORD_SHARD_BYTES;
+/** Attachments (512) + source chunks (2048) + record shards (1024) share one reference list. */
 export const MAX_ENVELOPE_ATTACHMENT_IDS = 4096;
 export const SUPPORTED_ATTACHMENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -33,9 +38,12 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 export function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
-  if (!value || value.length % 4 !== 0 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  // Keep this linear: a nested-quantifier pattern overflows the stack on multi-megabyte payloads.
+  if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
     throw new Error('附件 Base64 格式不正確，未儲存任何病歷變更');
   }
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  if ((padding ? value.slice(0, -padding) : value).includes('=')) throw new Error('附件 Base64 格式不正確，未儲存任何病歷變更');
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

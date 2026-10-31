@@ -4,6 +4,17 @@ import type { StoredRecords } from './cryptoVault';
 
 const BASE = '/api';
 
+/** Carries the HTTP status so callers can treat specific responses (e.g. 409) as recoverable. */
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -35,7 +46,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (res.status === 502 || res.status === 503 || res.status === 504) {
       throw new Error('無法連線至伺服器，請先啟動後端（npm run server）');
     }
-    throw new Error((data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`);
+    throw new ApiError((data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText}`, res.status);
   }
   return data as T;
 }

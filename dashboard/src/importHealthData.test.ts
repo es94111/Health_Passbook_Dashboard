@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchEncryptedAttachment, fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
+import { ApiError, fetchEncryptedAttachment, fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
 import { decryptRecords, decryptVaultBytes, deriveVaultKey, encryptRecords } from './cryptoVault';
 import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData } from './importHealthData';
-import { base64ToBytes } from './medicalAttachments';
+import { base64ToBytes, SOURCE_CHUNK_BYTES } from './medicalAttachments';
 import type { SourceChunk } from './recordStore';
 import { sha256 } from './parsers/fhir-common';
 import { emptyRecords } from './recordStore';
 import { SYNTHETIC_PNG, syntheticBundle, syntheticNhi } from './test/fixtures';
 
-vi.mock('./api', () => ({ fetchHealthData: vi.fn(), fetchLegacyHealthData: vi.fn(), uploadEncryptedAttachment: vi.fn(), uploadEncryptedHealthData: vi.fn(), fetchEncryptedAttachment: vi.fn() }));
+vi.mock('./api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./api')>()),
+  fetchHealthData: vi.fn(), fetchLegacyHealthData: vi.fn(), uploadEncryptedAttachment: vi.fn(), uploadEncryptedHealthData: vi.fn(), fetchEncryptedAttachment: vi.fn(),
+}));
 const passphrase = 'synthetic-vault-passphrase';
 const withImage = () => syntheticBundle([{ resourceType: 'DiagnosticReport', id: 'report', presentedForm: [{ contentType: 'image/png', data: SYNTHETIC_PNG }] }]);
 beforeEach(() => {
@@ -137,4 +140,29 @@ describe('streaming import of oversized source files', () => {
     await expect(commitLargeImport(preview, passphrase, false, controller.signal)).rejects.toThrow();
     expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
   });
+  it('stores a record index beyond 32 MiB as encrypted shards behind a tiny manifest', async () => {
+    const valueString = 'x'.repeat(33 * 1024 * 1024);
+    const preview = await prepareLargeImport(jsonFile(syntheticBundle([{ resourceType: 'Observation', id: 'huge', valueString }])), passphrase);
+    const staged = new Map<string, ClientEncryptedRecords>();
+    // Raw source chunks upload first, then the index shards; retried content-addressed shards
+    // surface as 409 and must not abort the import.
+    const chunkUploads = Math.ceil(preview.file.size / SOURCE_CHUNK_BYTES);
+    vi.mocked(uploadEncryptedAttachment).mockImplementation(async (id, envelope) => {
+      staged.set(id, envelope);
+      if (staged.size > chunkUploads && staged.size % 2 === 0) throw new ApiError('伺服器已有相同內容的加密附件', 409);
+      return { ok: true };
+    });
+    const imported = await commitLargeImport(preview, passphrase);
+    expect(imported.envelope.data.length).toBeLessThan(64 * 1024);
+    const ids = imported.envelope.attachmentIds ?? [];
+    expect(ids.length).toBeGreaterThan(5);
+    expect([...staged.keys()].sort()).toEqual(ids);
+    expect(uploadEncryptedHealthData).toHaveBeenCalledWith(imported.envelope, expect.any(Object), null, undefined);
+    vi.mocked(fetchHealthData).mockResolvedValue({ envelope: imported.envelope, needsClientEncryptionMigration: false });
+    vi.mocked(fetchEncryptedAttachment).mockImplementation(async id => ({ envelope: staged.get(id)! }));
+    const stored = await decryptRecords(imported.envelope, passphrase);
+    expect(JSON.stringify(stored).length).toBeGreaterThan(valueString.length);
+    const unlocked = await unlockHealthData(passphrase);
+    expect(unlocked.envelope.revision).toBe(imported.envelope.revision);
+  }, 180_000);
 });

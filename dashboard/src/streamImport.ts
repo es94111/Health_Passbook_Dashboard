@@ -2,7 +2,7 @@ import { JSONParser } from '@streamparser/json';
 import { canonicalJson, object, sha256, string, type FhirObject } from './parsers/fhir-common';
 import { patientIdentifiers } from './parsers/fhir-parser';
 import {
-  createAttachmentSeparator, MAX_IMPORT_BYTES, MAX_IMPORT_FILE_BYTES, SOURCE_CHUNK_BYTES,
+  createAttachmentSeparator, MAX_IMPORT_FILE_BYTES, MAX_RECORD_BYTES, SOURCE_CHUNK_BYTES,
   type AttachmentMetadata, type PendingAttachment,
 } from './medicalAttachments';
 import { patientIdentityDecision } from './recordImport';
@@ -172,8 +172,8 @@ export async function extractImportFile(
   let textBytes = 0;
   const account = (value: unknown) => {
     textBytes += encoder.encode(JSON.stringify(value)).length;
-    if (textBytes > MAX_IMPORT_BYTES) {
-      throw new Error('病歷文字內容超過 32 MiB 上限；請在 Bridge 縮小日期範圍後分次匯入，或關閉影像再匯出');
+    if (textBytes > MAX_RECORD_BYTES) {
+      throw new Error('病歷文字內容超過 8 GiB 上限；請在 Bridge 縮小日期範圍後分次匯入，或關閉影像再匯出');
     }
   };
 

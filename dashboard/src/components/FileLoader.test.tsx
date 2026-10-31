@@ -115,11 +115,11 @@ describe('streaming import of oversized files', () => {
   });
   it('shows a streaming error without saving anything', async () => {
     const callbacks = props();
-    vi.mocked(prepareLargeImport).mockRejectedValue(new Error('病歷文字內容超過 32 MiB 上限'));
+    vi.mocked(prepareLargeImport).mockRejectedValue(new Error('病歷文字內容超過 8 GiB 上限'));
     const { container } = render(<FileLoader {...callbacks} />);
     enterPassword();
     selectOversizedFile(container);
-    await screen.findByText('病歷文字內容超過 32 MiB 上限');
+    await screen.findByText('病歷文字內容超過 8 GiB 上限');
     expect(commitLargeImport).not.toHaveBeenCalled();
     expect(callbacks.onLoad).not.toHaveBeenCalled();
   });

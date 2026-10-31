@@ -3,7 +3,7 @@ import type { ClientEncryptedRecords, UploadResult } from '../api';
 import type { NHIData } from '../parsers/types';
 import { PatientConfirmationRequired, validateVaultPassphrase, VAULT_PASSPHRASE_MIN_LENGTH } from '../cryptoVault';
 import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData, type LargeImportPreview } from '../importHealthData';
-import { MAX_IMPORT_BYTES } from '../medicalAttachments';
+import { MAX_IMPORT_BYTES, MAX_IMPORT_FILE_BYTES, MAX_RECORD_BYTES } from '../medicalAttachments';
 
 interface Props {
   onLoad: (data: NHIData) => void;
@@ -67,15 +67,22 @@ export default function FileLoader({
     setStatus(migrate ? 'migrating' : 'loading');
     setError(null);
     setPendingJson(null);
+    setProgress(null);
+    const trackShards = (ratio: number) => setProgress(ratio);
     try {
-      const loaded = migrate ? await migrateHealthData(passphrase, controller.signal) : await unlockHealthData(passphrase, controller.signal);
+      const loaded = migrate
+        ? await migrateHealthData(passphrase, controller.signal, trackShards)
+        : await unlockHealthData(passphrase, controller.signal, trackShards);
       if (controller.signal.aborted) return;
+      setProgress(null);
       onEnvelopeSaved(loaded.envelope);
       onLoad(loaded.data);
     } catch (err) {
       if (controller.signal.aborted) return;
       setError(importError(err));
       setStatus('error');
+    } finally {
+      if (!controller.signal.aborted) setProgress(null);
     }
   }, [onEnvelopeSaved, onLoad, passphrase]);
   const unlockStoredData = () => loadStored(false);
@@ -245,7 +252,9 @@ export default function FileLoader({
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
             這組密碼只在瀏覽器中用來加密/解密健康資料，不會送到伺服器。遺失後既有資料無法復原。
           </p>
-          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">每個帳號僅能匯入同一人的病歷，請勿混入眷屬資料。單檔上限 4 GiB（超過 32 MiB 會以串流分塊加密保存）；單一附件上限 12 MiB。</p>
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+            {`每個帳號僅能匯入同一人的病歷，請勿混入眷屬資料。單檔上限 ${MAX_IMPORT_FILE_BYTES / 1024 ** 3} GiB；病歷文字索引上限 ${MAX_RECORD_BYTES / 1024 ** 3} GiB（超過 ${MAX_IMPORT_BYTES / 1024 ** 2} MiB 會自動切分加密保存）；單一附件上限 12 MiB。資料量越大，瀏覽器需要越多記憶體。`}
+          </p>
           {needsClientEncryptionMigration && !storedEnvelope && (
             <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
               偵測到既有資料。送出後會以這組密碼重新加密並保存。
@@ -308,9 +317,11 @@ export default function FileLoader({
               <p className="text-gray-500 dark:text-gray-400 text-sm">
                 {status === 'uploading'
                   ? progress === null || progress <= 0 ? '加密並儲存資料中...' : `加密並儲存資料中... ${Math.round(progress * 100)}%`
-                  : status === 'migrating'
-                    ? '加密既有資料中...'
-                    : '載入儀表板...'}
+                  : progress !== null && progress > 0 && progress < 1
+                    ? `解密病歷索引分片... ${Math.round(progress * 100)}%`
+                    : status === 'migrating'
+                      ? '加密既有資料中...'
+                      : '載入儀表板...'}
               </p>
             </div>
           ) : (
