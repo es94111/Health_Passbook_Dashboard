@@ -74,7 +74,7 @@ export interface DentalVisit extends SourcedRecord {
 export interface MedicalAttachment {
   id?: string;
   title: string;
-  contentType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+  contentType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' | 'image/bmp' | 'application/pdf';
   data?: string;
   size?: number;
 }
@@ -105,6 +105,8 @@ export interface MedicalReport extends SourcedRecord {
   attachments: MedicalAttachment[];
   relatedResources: string[];
   externalAttachmentCount: number;
+  /** Content types of attachments that exist but cannot be previewed in the browser. */
+  unsupportedAttachmentTypes?: string[];
   kind: 'imaging' | 'general';
   imaging?: ImagingDetails;
   rawResource: Record<string, unknown>;

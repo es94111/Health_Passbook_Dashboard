@@ -132,3 +132,39 @@ describe('NHI-FHIR Bridge Bundle import', () => {
     expect(localDay(document?.date)).toBe('2026-10-07');
   });
 });
+
+describe('imaging attachment discovery', () => {
+  it('reads attachments from any imaging resource field, including ImagingStudy presentedForm', () => {
+    const parsed = parseFhirResources([
+      { resourceType: 'ImagingStudy', id: 'study-2', status: 'available', started: '2026-10-08', description: '膝部X光',
+        presentedForm: [{ contentType: 'image/jpeg', title: '影像', data: '/9j/4AAQ' }] },
+    ]);
+    const study = parsed.medicalReports[0];
+    expect(study.kind).toBe('imaging');
+    expect(study.attachments).toMatchObject([{ contentType: 'image/jpeg', title: '影像', data: '/9j/4AAQ' }]);
+    expect(study.unsupportedAttachmentTypes).toEqual([]);
+  });
+
+  it('resolves Media and Binary references used as DiagnosticReport images', () => {
+    const parsed = parseFhirResources([
+      { resourceType: 'Binary', id: 'bin-1', contentType: 'image/jpeg', data: btoa(String.fromCharCode(0xff, 0xd8, 0xff, 0, 0)) },
+      { resourceType: 'Media', id: 'media-2', status: 'completed', content: { contentType: 'image/png', title: '系列影像', data: SAMPLE_PNG } },
+      { resourceType: 'DiagnosticReport', id: 'report-2', status: 'final', code: { text: '關節報告' }, effectiveDateTime: '2026-10-09',
+        image: [{ reference: 'Media/media-2' }, { reference: 'Binary/bin-1' }] },
+    ]);
+    const report = parsed.medicalReports.find(item => item.title === '關節報告');
+    expect(report?.attachments.map(item => item.title)).toEqual(['系列影像', '醫療附件']);
+    expect(report?.unsupportedAttachmentTypes).toEqual([]);
+  });
+
+  it('reports attachment formats that cannot be previewed instead of hiding them', () => {
+    const parsed = parseFhirResources([
+      { resourceType: 'DocumentReference', id: 'doc-dicom', status: 'current', type: { text: '影像報告' }, date: '2026-10-10',
+        content: [{ attachment: { contentType: 'Application/DICOM; charset=binary', title: 'DICOM', data: 'RE9D' } }] },
+    ]);
+    const report = parsed.medicalReports[0];
+    expect(report.attachments).toHaveLength(0);
+    expect(report.externalAttachmentCount).toBe(0);
+    expect(report.unsupportedAttachmentTypes).toEqual(['application/dicom']);
+  });
+});

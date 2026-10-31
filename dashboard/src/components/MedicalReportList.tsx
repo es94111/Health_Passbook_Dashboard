@@ -38,6 +38,9 @@ export default function MedicalReportList({ reports, loadAttachment }: Props) {
               </div>
               {report.text && <p className="text-sm whitespace-pre-wrap break-words text-gray-700 dark:text-gray-300">{report.text}</p>}
               {report.externalAttachmentCount > 0 && <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">另有 {report.externalAttachmentCount} 個外部附件，未取得且不會自動下載。</p>}
+              {report.unsupportedAttachmentTypes && report.unsupportedAttachmentTypes.length > 0 && (
+                <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">附件格式無法在瀏覽器預覽：{[...new Set(report.unsupportedAttachmentTypes)].join('、')}；原始內容仍保留於加密紀錄與匯入來源檔。</p>
+              )}
               {report.attachments.length > 0 && (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   {keyedRecords(report.attachments, attachment => JSON.stringify([attachment.id, attachment.contentType, attachment.title, attachment.data])).map(({ key: attachmentKey, record: attachment }) => (

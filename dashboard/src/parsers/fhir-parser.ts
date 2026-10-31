@@ -275,11 +275,26 @@ export function parseFhirResources(resources: FhirObject[], entries: FhirObject[
     const binary = resolve(raw.url, owner);
     return binary?.resourceType === 'Binary' ? normalizeMedicalAttachment({ ...binary, title: raw.title }) : null;
   };
+  const list = (value: unknown): unknown[] => Array.isArray(value) ? value : value === null || value === undefined ? [] : [value];
+  const mediaContent = (value: unknown, owner: FhirObject): unknown => {
+    const raw = object(value);
+    if (raw.contentType || raw.data || raw.__vaultAttachment) return raw;
+    const target = resolve(value, owner);
+    if (!target) return null;
+    return target.resourceType === 'Media' ? target.content : target.resourceType === 'Binary' ? target : null;
+  };
   const addReport = (resource: FhirObject, title: string, text: string, rawAttachments: unknown[] = [], related: unknown[] = [], imaging: ImagingDetails | null = null) => {
-    const attachments = rawAttachments.map(value => attachment(value, resource)).filter(item => item !== null);
+    const parsedAttachments = rawAttachments.map(value => attachment(value, resource));
+    const attachments = parsedAttachments.filter(item => item !== null);
     medicalReports.push({ id: id(resource), date: fhirDate(resource.effectiveDateTime, object(resource.effectivePeriod).start, resource.issued, resource.date, resource.created, resource.createdDateTime, resource.started, object(resource.period).start),
       hospital: getFacility(resource), title, text, attachments, relatedResources: related.map(ref => string(object(ref).reference)).filter(Boolean),
-      externalAttachmentCount: rawAttachments.filter(value => string(object(value).url) && !attachment(value, resource)).length,
+      externalAttachmentCount: rawAttachments.filter((value, index) => string(object(value).url) && !parsedAttachments[index]).length,
+      unsupportedAttachmentTypes: [...new Set(rawAttachments.flatMap((value, index) => {
+        if (parsedAttachments[index]) return [];
+        const raw = object(value);
+        if (string(raw.url)) return [];
+        return [string(raw.contentType).toLowerCase().split(';')[0].trim() || '未知格式'];
+      }))],
       kind: imaging ? 'imaging' : 'general', ...(imaging ? { imaging } : {}),
       rawResource: resource, origins: origins(resource) });
   };
@@ -349,9 +364,12 @@ export function parseFhirResources(resources: FhirObject[], entries: FhirObject[
         const text = observationText(item);
         return text ? `${concept(item.code) || concept(result.code)}：${text}` : '';
       })).filter(Boolean);
-      const attachments = type === 'DiagnosticReport' ? [...array(resource.presentedForm), ...array(resource.media).map(item => resolve(object(item).link, resource)?.content), ...array(resource.image).map(ref => resolve(ref, resource)?.content)]
-        : type === 'DocumentReference' ? array(resource.content).map(item => object(item).attachment)
-          : type === 'Media' ? [resource.content] : [];
+      const attachments = [
+        ...array(resource.presentedForm),
+        ...list(resource.content).map(item => object(item).attachment ?? item),
+        ...array(resource.media).map(item => mediaContent(object(item).link ?? item, resource)),
+        ...array(resource.image).map(ref => mediaContent(ref, resource)),
+      ].filter(item => item !== null && item !== undefined);
       const seriesText = imaging?.series.map(item => [item.description, item.modality, item.bodySite].filter(Boolean).join(' · ')).filter(Boolean) ?? [];
       const studyText = imaging?.studyDescription && imaging.studyDescription !== string(resource.description) ? [imaging.studyDescription] : [];
       const notes = array(resource.note).map(item => string(object(item).text)).filter(Boolean);
