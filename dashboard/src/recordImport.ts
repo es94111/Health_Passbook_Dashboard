@@ -38,7 +38,8 @@ export function inspectImportIdentity(existing: StoredRecords, input: object): {
   return { format: 'NHI', needsConfirmation: true };
 }
 
-const legacyDateFields: Partial<Record<RecordType, string[]>> = {
+/** 原生 NHI 紀錄的日期欄位；匯入前預覽與合併驗證共用。 */
+export const LEGACY_DATE_FIELDS: Partial<Record<RecordType, string[]>> = {
   r1: ['r1.5'], r2: ['r2.5', 'r2.6'], r3: ['r3.5'], r6: ['r6.1'], r7: ['r7.5'], r8: ['r8.5'],
 };
 
@@ -133,7 +134,7 @@ export async function mergePreparedImport(
       if (type === 'fhir') continue;
       for (const item of array(source[type])) {
         const record = object(item);
-        for (const field of legacyDateFields[type] ?? []) {
+        for (const field of LEGACY_DATE_FIELDS[type] ?? []) {
           try { parseNHIDate(String(record[field] ?? '')); }
           catch { warnings.add('部分 NHI 紀錄日期不完整或無效，原始內容已保留，但不納入日期趨勢'); }
         }
