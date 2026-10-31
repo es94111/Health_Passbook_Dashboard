@@ -1,8 +1,9 @@
 import { fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
-import { decryptRecords, deriveVaultKey, encryptRecords, encryptWithVaultKey, validateVaultPassphrase } from './cryptoVault';
+import { decryptRecords, deriveVaultKey, encryptRecords, encryptRecordsWithKey, encryptWithVaultKey, prepareVaultKey, validateVaultPassphrase } from './cryptoVault';
 import { base64ToBytes } from './medicalAttachments';
-import { emptyRecords, normalizeStoredRecords, RECORD_TYPES } from './recordStore';
-import { mergeNHIJson } from './recordImport';
+import { emptyRecords, normalizeStoredRecords, RECORD_TYPES, type StoredRecords } from './recordStore';
+import { PatientConfirmationRequired, inspectImportIdentity, mergeNHIJson, mergePreparedImport } from './recordImport';
+import { extractImportFile, scanImportFile, type LargeImportSink } from './streamImport';
 import { createVaultSession } from './vaultSession';
 
 async function currentRecords(passphrase: string, signal?: AbortSignal) {
@@ -33,6 +34,72 @@ export async function importHealthData(json: object, passphrase: string, confirm
     signal?.throwIfAborted();
     await uploadEncryptedAttachment(attachment.id, encrypted, signal);
   }
+  signal?.throwIfAborted();
+  const result = await uploadEncryptedHealthData(envelope, stats, previous?.revision ?? null, signal);
+  return { data, envelope, result };
+}
+
+export interface LargeImportPreview {
+  file: File;
+  existing: StoredRecords;
+  previous: ClientEncryptedRecords | null;
+  format: 'NHI' | 'FHIR';
+  needsConfirmation: boolean;
+}
+
+/** First pass over a multi-gigabyte file: validate its shape without storing anything. */
+export async function prepareLargeImport(
+  file: File,
+  passphrase: string,
+  signal?: AbortSignal,
+  onProgress?: (ratio: number) => void,
+): Promise<LargeImportPreview> {
+  const { records: existing, previous } = await currentRecords(passphrase, signal);
+  const { format, needsConfirmation } = await scanImportFile(file, existing, signal, onProgress);
+  return { file, existing, previous, format, needsConfirmation };
+}
+
+/** Second pass: stream, encrypt and upload the raw source plus every attachment, then commit the index. */
+export async function commitLargeImport(
+  preview: LargeImportPreview,
+  passphrase: string,
+  confirmPatient = false,
+  signal?: AbortSignal,
+  onProgress?: (ratio: number) => void,
+) {
+  const { file, existing, previous, format } = preview;
+  // Refuse before spending a full streaming pass and orphaning encrypted chunks.
+  if (preview.needsConfirmation && !confirmPatient) throw new PatientConfirmationRequired();
+  const prepared = await prepareVaultKey(passphrase, previous);
+  signal?.throwIfAborted();
+  const sink: LargeImportSink = {
+    async uploadSourceChunk({ id, bytes }) {
+      const envelope = await encryptWithVaultKey(bytes, prepared.key, prepared);
+      signal?.throwIfAborted();
+      await uploadEncryptedAttachment(id, envelope, signal);
+    },
+    async uploadAttachment(attachment) {
+      const envelope = await encryptWithVaultKey(base64ToBytes(attachment.data), prepared.key, prepared);
+      signal?.throwIfAborted();
+      await uploadEncryptedAttachment(attachment.id, envelope, signal);
+    },
+  };
+  const extracted = await extractImportFile(file, format, existing, sink, signal, onProgress);
+  signal?.throwIfAborted();
+  const identity = inspectImportIdentity(existing, extracted.json);
+  if (identity.needsConfirmation && !confirmPatient) throw new PatientConfirmationRequired();
+  const { records, stats } = await mergePreparedImport(existing, {
+    json: extracted.json,
+    format: identity.format,
+    needsConfirmation: identity.needsConfirmation,
+    attachments: extracted.attachments,
+    warnings: extracted.warnings,
+    sourceId: extracted.sourceId,
+    chunks: extracted.chunks,
+  }, { confirmPatient });
+  // Everything that can fail has run before the vault is replaced.
+  const envelope = await encryptRecordsWithKey(records, prepared);
+  const data = createVaultSession(records, envelope, prepared.key);
   signal?.throwIfAborted();
   const result = await uploadEncryptedHealthData(envelope, stats, previous?.revision ?? null, signal);
   return { data, envelope, result };

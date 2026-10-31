@@ -1,13 +1,20 @@
 import type { ImportSummary } from './parsers/types';
 import { object, type FhirObject } from './parsers/fhir-common';
-import { attachmentType, UUID_PATTERN, type AttachmentMetadata } from './medicalAttachments';
+import { attachmentType, MAX_SOURCE_CHUNKS, SOURCE_CHUNK_BYTES, UUID_PATTERN, type AttachmentMetadata } from './medicalAttachments';
 
 export const RECORD_TYPES = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8', 'fhir'] as const;
 export type RecordType = typeof RECORD_TYPES[number];
 export type MergeStats = Record<RecordType, { added: number; skipped: number; updated: number }>;
+export interface SourceChunk {
+  id: string;
+  digest: string;
+  size: number;
+}
 export interface SourceArchive {
   format: 'NHI' | 'FHIR';
-  data: FhirObject;
+  /** Present for imports up to 32 MiB; larger imports keep independently encrypted raw chunks instead. */
+  data?: FhirObject;
+  chunks?: SourceChunk[];
 }
 export interface StoredRecords {
   r1: Record<string, object>;
@@ -64,8 +71,29 @@ export function normalizeStoredRecords(value: unknown): StoredRecords {
   }
   for (const [id, value] of Object.entries(object(root.sources))) {
     const archive = object(value);
-    if (!/^[0-9a-f]{64}$/.test(id) || !['NHI', 'FHIR'].includes(String(archive.format)) || !Object.keys(object(archive.data)).length) throw new Error('加密來源索引已損壞');
-    normalized.sources[id] = archive as unknown as SourceArchive;
+    if (!/^[0-9a-f]{64}$/.test(id) || !['NHI', 'FHIR'].includes(String(archive.format))) throw new Error('加密來源索引已損壞');
+    const format = archive.format as SourceArchive['format'];
+    const hasData = archive.data !== undefined && archive.data !== null;
+    const hasChunks = archive.chunks !== undefined && archive.chunks !== null;
+    if (hasData === hasChunks) throw new Error('加密來源索引已損壞');
+    if (hasData) {
+      if (!Object.keys(object(archive.data)).length) throw new Error('加密來源索引已損壞');
+      normalized.sources[id] = { format, data: archive.data as FhirObject };
+      continue;
+    }
+    if (!Array.isArray(archive.chunks) || !archive.chunks.length || archive.chunks.length > MAX_SOURCE_CHUNKS) throw new Error('加密來源索引已損壞');
+    const seen = new Set<string>();
+    const chunks = archive.chunks.map(value => {
+      const chunk = object(value);
+      const chunkId = String(chunk.id);
+      if (!UUID_PATTERN.test(chunkId) || !/^[0-9a-f]{64}$/.test(String(chunk.digest)) || seen.has(chunkId) ||
+          !Number.isSafeInteger(chunk.size) || Number(chunk.size) < 1 || Number(chunk.size) > SOURCE_CHUNK_BYTES) {
+        throw new Error('加密來源索引已損壞');
+      }
+      seen.add(chunkId);
+      return { id: chunkId, digest: String(chunk.digest), size: Number(chunk.size) };
+    });
+    normalized.sources[id] = { format, chunks };
   }
   if (root.importHistory !== undefined && !Array.isArray(root.importHistory)) throw new Error('匯入歷程格式不正確');
   normalized.importHistory = ((root.importHistory as unknown[] | undefined) ?? []).map(value => {
@@ -77,6 +105,10 @@ export function normalizeStoredRecords(value: unknown): StoredRecords {
     return entry as unknown as ImportSummary;
   });
   return normalized;
+}
+
+export function sourceChunkIds(records: StoredRecords): string[] {
+  return Object.values(records.sources).flatMap(archive => archive.chunks?.map(chunk => chunk.id) ?? []);
 }
 
 export function flattenRecords(stored: StoredRecords): Record<string, unknown[]> {

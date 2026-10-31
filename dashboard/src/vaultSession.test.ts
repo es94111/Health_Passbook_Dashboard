@@ -4,6 +4,7 @@ import { deriveVaultKey, encryptRecords, encryptWithVaultKey } from './cryptoVau
 import { base64ToBytes } from './medicalAttachments';
 import { mergeNHIJson } from './recordImport';
 import { emptyRecords } from './recordStore';
+import { canonicalJson, sha256 } from './parsers/fhir-common';
 import { SYNTHETIC_PNG, syntheticBundle } from './test/fixtures';
 import { createVaultSession } from './vaultSession';
 
@@ -53,7 +54,53 @@ function blobText(blob: Blob): Promise<string> {
   });
 }
 
+async function chunkedFixture() {
+  const passphrase = 'synthetic-vault-passphrase';
+  const base = emptyRecords();
+  const envelope = await encryptRecords(base, passphrase);
+  const key = await deriveVaultKey(passphrase, base64ToBytes(envelope.salt), envelope.iterations);
+  const bytes = new TextEncoder().encode(JSON.stringify(syntheticBundle()));
+  const parts = [bytes.subarray(0, 40), bytes.subarray(40)];
+  const encrypted = new Map<string, ClientEncryptedRecords>();
+  const chunks = [];
+  for (const part of parts) {
+    const id = crypto.randomUUID();
+    chunks.push({ id, digest: await sha256(part), size: part.length });
+    encrypted.set(id, await encryptWithVaultKey(part, key, envelope));
+  }
+  const sourceId = await sha256(canonicalJson({ format: 'FHIR', chunks }));
+  const records = { ...base, sources: { [sourceId]: { format: 'FHIR' as const, chunks } } };
+  vi.mocked(fetchEncryptedAttachment).mockImplementation(async id => {
+    const attachment = encrypted.get(id);
+    if (!attachment) throw new Error('synthetic chunk missing');
+    return { envelope: attachment };
+  });
+  return { bytes, chunks, sourceId, envelope, key, records, session: createVaultSession(records, envelope, key) };
+}
+
 describe('vault source reconstruction and integrity', () => {
+  it('reassembles an oversized source from independently encrypted chunks', async () => {
+    const { bytes, sourceId, session } = await chunkedFixture();
+    vi.useFakeTimers();
+    await session.downloadSource!(sourceId);
+    expect(fetchEncryptedAttachment).toHaveBeenCalledTimes(2);
+    const blob = createObjectURL.mock.calls[0][0] as unknown as Blob;
+    expect(blob.size).toBe(bytes.length);
+    const result = blobText(blob);
+    await vi.runAllTimersAsync();
+    expect(JSON.parse(await result)).toEqual(syntheticBundle());
+    expect(createObjectURL).toHaveBeenCalledOnce();
+  });
+  it('refuses a chunked source whose index or chunk bytes were altered', async () => {
+    const { chunks, sourceId, envelope, key, records, session } = await chunkedFixture();
+    chunks[1].digest = '0'.repeat(64);
+    await expect(createVaultSession(records, envelope, key).downloadSource!(sourceId)).rejects.toThrow('來源檔完整性');
+    expect(createObjectURL).not.toHaveBeenCalled();
+    chunks[1].digest = (await sha256('synthetic')).slice(0, 64);
+    const tampered = await sha256(canonicalJson({ format: 'FHIR', chunks }));
+    expect(tampered).not.toBe(sourceId);
+    await expect(session.downloadSource!(tampered)).rejects.toThrow('找不到此加密來源檔');
+  });
   it('reconstructs original attachment data and size fields, reads duplicate bytes once, and revokes its download URL', async () => {
     const { input, records, session } = await fixture();
     vi.useFakeTimers();
@@ -69,7 +116,7 @@ describe('vault source reconstruction and integrity', () => {
   it('refuses a modified archived source instead of downloading unverifiable content', async () => {
     const { records, envelope, key } = await fixture();
     const sourceId = Object.keys(records.sources)[0];
-    records.sources[sourceId].data.timestamp = '2026-10-31T08:00:00Z';
+    records.sources[sourceId].data!.timestamp = '2026-10-31T08:00:00Z';
     await expect(createVaultSession(records, envelope, key).downloadSource!(sourceId)).rejects.toThrow('來源檔完整性');
     expect(createObjectURL).not.toHaveBeenCalled();
   });

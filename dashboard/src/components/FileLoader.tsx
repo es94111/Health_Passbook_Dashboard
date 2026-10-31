@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ClientEncryptedRecords, UploadResult } from '../api';
 import type { NHIData } from '../parsers/types';
 import { PatientConfirmationRequired, validateVaultPassphrase, VAULT_PASSPHRASE_MIN_LENGTH } from '../cryptoVault';
-import { importHealthData, migrateHealthData, unlockHealthData } from '../importHealthData';
+import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData, type LargeImportPreview } from '../importHealthData';
 import { MAX_IMPORT_BYTES } from '../medicalAttachments';
 
 interface Props {
@@ -54,6 +54,8 @@ export default function FileLoader({
   const [error, setError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState('');
   const [pendingJson, setPendingJson] = useState<object | null>(null);
+  const [pendingLarge, setPendingLarge] = useState<LargeImportPreview | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
   const [identityConfirmed, setIdentityConfirmed] = useState(false);
   const operation = useRef<AbortController | null>(null);
   useEffect(() => () => operation.current?.abort(), []);
@@ -107,17 +109,62 @@ export default function FileLoader({
     }
   }, [onEnvelopeSaved, onLoad, passphrase]);
 
+  const processLarge = useCallback(async (preview: LargeImportPreview, confirmed = false) => {
+    operation.current?.abort();
+    const controller = new AbortController();
+    operation.current = controller;
+    setStatus('uploading');
+    setError(null);
+    setUploadResult(null);
+    setPendingLarge(null);
+    setProgress(0);
+    try {
+      const imported = await commitLargeImport(preview, passphrase, confirmed, controller.signal, ratio => setProgress(ratio));
+      if (controller.signal.aborted) return;
+      setUploadResult(imported.result);
+      onEnvelopeSaved(imported.envelope);
+      setStatus('loading');
+      onLoad(imported.data);
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      if (err instanceof PatientConfirmationRequired) {
+        setPendingLarge(preview);
+        setIdentityConfirmed(false);
+        setStatus('confirming');
+      } else {
+        setError(importError(err));
+        setStatus('error');
+      }
+    } finally {
+      if (!controller.signal.aborted) setProgress(null);
+    }
+  }, [onEnvelopeSaved, onLoad, passphrase]);
+
   const processFile = useCallback(async (file: File) => {
     operation.current?.abort();
     const controller = new AbortController();
     operation.current = controller;
     setPendingJson(null);
+    setPendingLarge(null);
     setIdentityConfirmed(false);
     setStatus('uploading');
     setError(null);
     try {
       validateVaultPassphrase(passphrase);
-      if (file.size > MAX_IMPORT_BYTES) throw new Error('檔案超過 32 MiB 上限；請在 Bridge 縮小日期範圍或關閉影像後分次匯入');
+      if (file.size > MAX_IMPORT_BYTES) {
+        setProgress(0);
+        const preview = await prepareLargeImport(file, passphrase, controller.signal, ratio => setProgress(ratio));
+        if (controller.signal.aborted) return;
+        setProgress(null);
+        if (preview.needsConfirmation) {
+          setPendingLarge(preview);
+          setIdentityConfirmed(false);
+          setStatus('confirming');
+          return;
+        }
+        await processLarge(preview);
+        return;
+      }
       const text = await file.text();
       if (controller.signal.aborted) return;
       const json: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
@@ -128,7 +175,7 @@ export default function FileLoader({
       setError(importError(err));
       setStatus('error');
     }
-  }, [passphrase, processJson]);
+  }, [passphrase, processJson, processLarge]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -144,6 +191,16 @@ export default function FileLoader({
     if (file) { void processFile(file); }
   }
 
+  const confirmImport = () => {
+    if (pendingJson) void processJson(pendingJson, true);
+    else if (pendingLarge) void processLarge(pendingLarge, true);
+  };
+  const cancelImport = () => {
+    setPendingJson(null);
+    setPendingLarge(null);
+    setIdentityConfirmed(false);
+    setStatus('idle');
+  };
   const busy = status === 'uploading' || status === 'migrating' || status === 'loading';
 
   return (
@@ -188,7 +245,7 @@ export default function FileLoader({
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
             這組密碼只在瀏覽器中用來加密/解密健康資料，不會送到伺服器。遺失後既有資料無法復原。
           </p>
-          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">每個帳號僅能匯入同一人的病歷，請勿混入眷屬資料。單檔上限 32 MiB；單一附件上限 12 MiB。</p>
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">每個帳號僅能匯入同一人的病歷，請勿混入眷屬資料。單檔上限 4 GiB（超過 32 MiB 會以串流分塊加密保存）；單一附件上限 12 MiB。</p>
           {needsClientEncryptionMigration && !storedEnvelope && (
             <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
               偵測到既有資料。送出後會以這組密碼重新加密並保存。
@@ -215,7 +272,7 @@ export default function FileLoader({
           ) : null}
         </div>
 
-        {pendingJson && status === 'confirming' && (
+        {(pendingJson || pendingLarge) && status === 'confirming' && (
           <section aria-label="確認病人身分" className="mb-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm">
             <h2 className="font-medium text-gray-900 dark:text-gray-100">無法自動確認為同一位病人</h2>
             <p className="mt-2 text-gray-700 dark:text-gray-300">原生 NHI JSON、去識別化資料或缺少共同識別碼的匯出檔，必須由你確認。請核對檔案與目前帳號的病人，這不代表網站已驗證身分。</p>
@@ -224,8 +281,8 @@ export default function FileLoader({
               我已核對，確定此檔案與本帳號既有資料屬於同一人，並同意合併
             </label>
             <div className="mt-3 flex gap-2">
-              <button type="button" disabled={!identityConfirmed || passphrase.length < VAULT_PASSPHRASE_MIN_LENGTH} onClick={() => void processJson(pendingJson, true)} className="btn-primary">確認並匯入</button>
-              <button type="button" onClick={() => { setPendingJson(null); setIdentityConfirmed(false); setStatus('idle'); }} className="btn-secondary">取消匯入</button>
+              <button type="button" disabled={!identityConfirmed || passphrase.length < VAULT_PASSPHRASE_MIN_LENGTH} onClick={confirmImport} className="btn-primary">確認並匯入</button>
+              <button type="button" onClick={cancelImport} className="btn-secondary">取消匯入</button>
             </div>
           </section>
         )}
@@ -250,7 +307,7 @@ export default function FileLoader({
               />
               <p className="text-gray-500 dark:text-gray-400 text-sm">
                 {status === 'uploading'
-                  ? '加密並儲存資料中...'
+                  ? progress === null || progress <= 0 ? '加密並儲存資料中...' : `加密並儲存資料中... ${Math.round(progress * 100)}%`
                   : status === 'migrating'
                     ? '加密既有資料中...'
                     : '載入儀表板...'}

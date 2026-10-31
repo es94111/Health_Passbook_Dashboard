@@ -1,26 +1,55 @@
 import type { ClientEncryptedRecords } from './api';
-import { normalizeStoredRecords, type StoredRecords } from './recordStore';
-import { base64ToBytes, bytesToBase64, MAX_IMPORT_BYTES, UUID_PATTERN } from './medicalAttachments';
+import { normalizeStoredRecords, sourceChunkIds, type StoredRecords } from './recordStore';
+import { base64ToBytes, bytesToBase64, MAX_ENVELOPE_ATTACHMENT_IDS, MAX_IMPORT_BYTES, UUID_PATTERN } from './medicalAttachments';
 
-export { emptyRecords, flattenRecords, normalizeStoredRecords } from './recordStore';
-export type { StoredRecords, RecordType, MergeStats } from './recordStore';
-export { mergeNHIJson, inspectImportIdentity, PatientConfirmationRequired } from './recordImport';
+export { emptyRecords, flattenRecords, normalizeStoredRecords, sourceChunkIds } from './recordStore';
+export type { StoredRecords, RecordType, MergeStats, SourceArchive, SourceChunk } from './recordStore';
+export { mergeNHIJson, mergePreparedImport, inspectImportIdentity, patientIdentityDecision, PatientConfirmationRequired } from './recordImport';
+export type { PreparedMergeInput } from './recordImport';
 
 const KDF_ITERATIONS = 250_000;
 export const VAULT_PASSPHRASE_MIN_LENGTH = 12;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 
+export interface VaultKey {
+  key: CryptoKey;
+  salt: string;
+  iterations: number;
+}
+
+/** Derive the vault key once so the manifest and every uploaded chunk can reuse it. */
+export async function prepareVaultKey(passphrase: string, previous?: ClientEncryptedRecords | null): Promise<VaultKey> {
+  validateVaultPassphrase(passphrase);
+  if (previous) validateEnvelope(previous);
+  const salt = previous ? base64ToBytes(previous.salt) : randomBytes(16);
+  const iterations = previous?.iterations ?? KDF_ITERATIONS;
+  const key = await deriveVaultKey(passphrase, salt, iterations);
+  return { key, salt: bytesToBase64(salt), iterations };
+}
+
 export async function encryptRecords(
   records: StoredRecords,
   passphrase: string,
   previous?: ClientEncryptedRecords | null,
 ): Promise<ClientEncryptedRecords> {
+  return encryptRecordsWithKey(records, await prepareVaultKey(passphrase, previous));
+}
+
+export function recordAttachmentIds(records: StoredRecords): string[] {
+  return attachmentIdsOf(normalizeStoredRecords(records));
+}
+
+function attachmentIdsOf(records: StoredRecords): string[] {
+  return [...new Set([...Object.keys(records.attachments), ...sourceChunkIds(records)])].sort();
+}
+
+export async function encryptRecordsWithKey(records: StoredRecords, prepared: VaultKey): Promise<ClientEncryptedRecords> {
   const normalized = normalizeStoredRecords(records);
   const bytes = encoder.encode(JSON.stringify(normalized));
   if (bytes.length > MAX_IMPORT_BYTES) throw new Error('加密病歷索引超過 32 MiB 上限，未覆寫既有資料；請先備份並縮小匯出範圍');
-  const envelope = await encryptVaultBytes(bytes, passphrase, previous);
-  return { ...envelope, attachmentIds: Object.keys(normalized.attachments).sort(), revision: crypto.randomUUID() };
+  const envelope = await encryptWithVaultKey(bytes, prepared.key, prepared);
+  return { ...envelope, attachmentIds: attachmentIdsOf(normalized), revision: crypto.randomUUID() };
 }
 
 export async function decryptRecords(
@@ -33,7 +62,7 @@ export async function decryptRecords(
   const plaintext = await decryptVaultBytes(envelope, key);
   if (plaintext.byteLength > MAX_IMPORT_BYTES) throw new Error('加密病歷內容超過允許大小');
   const records = normalizeStoredRecords(JSON.parse(decoder.decode(plaintext)));
-  const ids = Object.keys(records.attachments).sort();
+  const ids = recordAttachmentIds(records);
   if (JSON.stringify(ids) !== JSON.stringify([...(envelope.attachmentIds ?? [])].sort())) throw new Error('附件清單與加密病歷不一致，已停止載入');
   return records;
 }
@@ -53,17 +82,13 @@ export function validateEnvelope(envelope: ClientEncryptedRecords): void {
   }
   const salt = base64ToBytes(envelope.salt);
   if (salt.length < 16 || salt.length > 64 || base64ToBytes(envelope.iv).length !== 12 || base64ToBytes(envelope.data).length < 16) throw new Error('加密封裝參數不正確');
-  if (envelope.attachmentIds !== undefined && (!Array.isArray(envelope.attachmentIds) || envelope.attachmentIds.length > 512 ||
+  if (envelope.attachmentIds !== undefined && (!Array.isArray(envelope.attachmentIds) || envelope.attachmentIds.length > MAX_ENVELOPE_ATTACHMENT_IDS ||
       new Set(envelope.attachmentIds).size !== envelope.attachmentIds.length || envelope.attachmentIds.some(id => typeof id !== 'string' || !UUID_PATTERN.test(id)))) throw new Error('附件清單格式不正確');
 }
 
 export async function encryptVaultBytes(bytes: Uint8Array, passphrase: string, previous?: ClientEncryptedRecords | null): Promise<ClientEncryptedRecords> {
-  validateVaultPassphrase(passphrase);
-  if (previous) validateEnvelope(previous);
-  const salt = previous ? base64ToBytes(previous.salt) : randomBytes(16);
-  const iterations = previous?.iterations ?? KDF_ITERATIONS;
-  const key = await deriveVaultKey(passphrase, salt, iterations);
-  return encryptWithVaultKey(bytes, key, { salt: bytesToBase64(salt), iterations });
+  const prepared = await prepareVaultKey(passphrase, previous);
+  return encryptWithVaultKey(bytes, prepared.key, prepared);
 }
 
 export async function encryptWithVaultKey(bytes: Uint8Array, key: CryptoKey, parameters: Pick<ClientEncryptedRecords, 'salt' | 'iterations'>): Promise<ClientEncryptedRecords> {
