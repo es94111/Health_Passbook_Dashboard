@@ -3,15 +3,24 @@ import {
   ReferenceLine, ResponsiveContainer, ReferenceArea,
 } from 'recharts';
 import { useUserStore } from '../UserStore';
+import { usePersonal } from '../personalContext';
 import { clinicalDate, keyedRecords } from '../lib/clinicalRecords';
 import {
   isLabSeriesPinned, labReadingKey, labReference, labSeriesDescription, labSeriesPinTarget,
   type LabSeries,
 } from '../lib/clinicalLabSeries';
+import { describeTarget, isOutsideTarget } from '../lib/labTargets';
+import { describeMedicationOverlay, placeMedicationMarkers, type MedicationOverlay } from '../lib/medicationMarkers';
 import { RecordOrigins } from './ClinicalRecordDetails';
+import TargetEditor from './TargetEditor';
 
-export default function LabSeriesCard({ series }: { series: LabSeries }) {
+const TARGET_LINE_COLOR = '#d97706';
+const MARKER_LINE_COLOR = '#3b82f6';
+
+export default function LabSeriesCard({ series, overlay }: { series: LabSeries; overlay?: MedicationOverlay }) {
   const store = useUserStore();
+  const { personal } = usePersonal();
+  const target = Object.hasOwn(personal.targets, series.key) ? personal.targets[series.key] : undefined;
   const pinned = isLabSeriesPinned(series, store.preferences.pinnedLabItems);
   const description = labSeriesDescription(series);
   const points = keyedRecords(series.records, labReadingKey).map(({ key, record }) => ({
@@ -20,7 +29,11 @@ export default function LabSeriesCard({ series }: { series: LabSeries }) {
       || (record.refHigh !== null && record.value > record.refHigh),
   }));
   const outOfRangeCount = points.filter(point => point.outOfRange).length;
+  const targetOutsideCount = target ? points.filter(point => isOutsideTarget(point.value, target)).length : 0;
   const { refLow, refHigh } = series.records[0];
+  const placement = overlay
+    ? placeMedicationMarkers(overlay.days, points.map(point => ({ date: point.record.date, x: point.date })))
+    : null;
 
   return (
     <article aria-label={`${series.subItem}（${description}${series.code ? ` · ${series.code}` : ''}）`}
@@ -53,6 +66,13 @@ export default function LabSeriesCard({ series }: { series: LabSeries }) {
             )}
             {series.consistentReference && refLow !== null && <ReferenceLine y={refLow} stroke="#059669" strokeDasharray="3 3" />}
             {series.consistentReference && refHigh !== null && <ReferenceLine y={refHigh} stroke="#059669" strokeDasharray="3 3" />}
+            {target?.low !== undefined && (
+              <ReferenceLine y={target.low} stroke={TARGET_LINE_COLOR} strokeDasharray="6 3" ifOverflow="extendDomain" />
+            )}
+            {target?.high !== undefined && (
+              <ReferenceLine y={target.high} stroke={TARGET_LINE_COLOR} strokeDasharray="6 3" ifOverflow="extendDomain" />
+            )}
+            {placement?.lines.map(x => <ReferenceLine key={x} x={x} stroke={MARKER_LINE_COLOR} strokeDasharray="2 2" />)}
             <Line type="linear" dataKey="value" stroke="currentColor" strokeWidth={1.5} isAnimationActive={false}
               dot={props => <circle key={props.payload.key} cx={props.cx} cy={props.cy} r={3}
                 fill={props.payload.outOfRange ? '#f87171' : 'currentColor'} stroke="none" />} />
@@ -62,7 +82,15 @@ export default function LabSeriesCard({ series }: { series: LabSeries }) {
       <div className="flex justify-between gap-2 text-xs text-gray-500 dark:text-gray-400 mt-1">
         <span>{points[0]?.date}</span><span>{points[points.length - 1]?.date}</span>
       </div>
+      {target && (
+        <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+          個人目標：<span className="font-mono">{describeTarget(target)}</span>{series.unit ? ` ${series.unit}` : ''} · {targetOutsideCount} / {points.length} 筆超出
+        </p>
+      )}
       {!series.consistentReference && <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">參考區間曾變更，不顯示共用參考帶；請查看逐筆紀錄。</p>}
+      {overlay && placement && (
+        <p className="mt-2 text-xs text-blue-700 dark:text-blue-400 break-words">{describeMedicationOverlay(overlay.name, placement)}</p>
+      )}
       <details className="mt-3 text-xs text-gray-600 dark:text-gray-300" open={points.length === 1}>
         <summary className="cursor-pointer text-teal-700 dark:text-teal-400">逐筆檢驗數值（{points.length} 筆）</summary>
         <div className="overflow-x-auto mt-2">
@@ -88,6 +116,7 @@ export default function LabSeriesCard({ series }: { series: LabSeries }) {
           </table>
         </div>
       </details>
+      <TargetEditor seriesKey={series.key} subItem={series.subItem} unit={series.unit} />
     </article>
   );
 }

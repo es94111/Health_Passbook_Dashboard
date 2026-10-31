@@ -94,3 +94,13 @@ body {
   from { opacity: 0; transform: translateY(-2px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+@media print {
+  html.dark { color-scheme: light; }
+  .print-sheet, .print-sheet * {
+    color: #111827 !important;
+    background: #fff !important;
+    border-color: #d1d5db !important;
+    box-shadow: none !important;
+  }
+}

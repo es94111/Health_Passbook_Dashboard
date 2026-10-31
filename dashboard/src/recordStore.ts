@@ -1,5 +1,6 @@
 import type { ImportSummary } from './parsers/types';
 import { object, type FhirObject } from './parsers/fhir-common';
+import { emptyPersonal, normalizePersonalData, type PersonalData } from './personalData';
 import { attachmentType, MAX_SOURCE_CHUNKS, SOURCE_CHUNK_BYTES, UUID_PATTERN, type AttachmentMetadata } from './medicalAttachments';
 
 export const RECORD_TYPES = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8', 'fhir'] as const;
@@ -28,10 +29,12 @@ export interface StoredRecords {
   attachments: Record<string, AttachmentMetadata>;
   sources: Record<string, SourceArchive>;
   importHistory: ImportSummary[];
+  /** 使用者自行輸入的資料；與病歷一同加密，缺少時視為空白。 */
+  personal: PersonalData;
 }
 
 export function emptyRecords(): StoredRecords {
-  return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {}, fhir: {}, fhirAliases: {}, attachments: {}, sources: {}, importHistory: [] };
+  return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {}, fhir: {}, fhirAliases: {}, attachments: {}, sources: {}, importHistory: [], personal: emptyPersonal() };
 }
 
 export function normalizeStoredRecords(value: unknown): StoredRecords {
@@ -104,6 +107,7 @@ export function normalizeStoredRecords(value: unknown): StoredRecords {
         !Array.isArray(entry.warnings) || entry.warnings.some(warning => typeof warning !== 'string')) throw new Error('加密匯入歷程已損壞');
     return entry as unknown as ImportSummary;
   });
+  normalized.personal = normalizePersonalData(root.personal);
   return normalized;
 }
 

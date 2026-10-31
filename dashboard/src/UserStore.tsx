@@ -31,6 +31,9 @@ export const HIDEABLE_SECTIONS: HideableSection[] = [
   { key: tabSectionKey('醫療報告'), label: '醫療報告分頁' },
   { key: tabSectionKey('影像報告'), label: '影像報告分頁' },
   { key: tabSectionKey('用藥'), label: '用藥分頁' },
+  { key: tabSectionKey('自我量測'), label: '自我量測分頁' },
+  { key: tabSectionKey('健康檔案'), label: '健康檔案分頁' },
+  { key: tabSectionKey('看診摘要'), label: '看診摘要分頁' },
   { key: tabSectionKey('同步紀錄'), label: '同步紀錄分頁' },
 ];
 

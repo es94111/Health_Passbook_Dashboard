@@ -4,7 +4,7 @@ import type { SourceChunk, StoredRecords } from './recordStore';
 const encoder = new TextEncoder();
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 const RECORD_MAPS = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8', 'fhir'] as const;
-const RECORD_META = ['fhirAliases', 'attachments', 'sources', 'importHistory'] as const;
+const RECORD_META = ['fhirAliases', 'attachments', 'sources', 'importHistory', 'personal'] as const;
 
 export const RECORD_SHARD_KIND = 'records-shards';
 

@@ -1,24 +1,35 @@
-import { useMemo, useState } from 'react';
-import type { LabResult, TextLabResult } from '../parsers/types';
+import { useId, useMemo, useState } from 'react';
+import type { LabResult, TextLabResult, Visit } from '../parsers/types';
 import { buildLabSeries, labSource } from '../lib/clinicalLabSeries';
 import { originLabel } from '../lib/clinicalRecords';
+import { listMedications } from '../lib/keySummary';
+import { prescriptionDays, type MedicationOverlay } from '../lib/medicationMarkers';
 import LabSeriesCard from './LabSeriesCard';
 import TextLabResultsTable from './TextLabResultsTable';
 
 interface Props {
   labResults: LabResult[];
   textLabResults?: TextLabResult[];
+  visits?: Visit[];
 }
 
 const MIN_READINGS = 3;
+const NO_VISITS: Visit[] = [];
 
-export default function LabTrendCharts({ labResults, textLabResults = [] }: Props) {
+export default function LabTrendCharts({ labResults, textLabResults = [], visits = NO_VISITS }: Props) {
+  const overlayId = useId();
+  const [overlayCode, setOverlayCode] = useState('');
   const [search, setSearch] = useState('');
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [showFewReadings, setShowFewReadings] = useState(true);
   const allGroups = useMemo(() => [...new Set([...labResults, ...textLabResults].map(record => record.testGroup))]
     .filter(Boolean).sort((a, b) => a.localeCompare(b)), [labResults, textLabResults]);
   const allSubItemGroups = useMemo(() => buildLabSeries(labResults), [labResults]);
+  const medications = useMemo(() => listMedications(visits), [visits]);
+  const overlay = useMemo<MedicationOverlay | undefined>(() => {
+    const option = medications.find(medication => medication.code === overlayCode);
+    return option ? { name: option.name, days: prescriptionDays(visits, option.code) } : undefined;
+  }, [medications, overlayCode, visits]);
   const query = search.trim().toLocaleLowerCase();
   const matches = (values: string[]) => values.some(value => value.toLocaleLowerCase().includes(query));
   const groups = allSubItemGroups.filter(series => (showFewReadings || series.records.length >= MIN_READINGS)
@@ -94,6 +105,24 @@ export default function LabTrendCharts({ labResults, textLabResults = [] }: Prop
           </div>
         )}
 
+        {/* Medication overlay */}
+        {medications.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={overlayId} className="text-xs text-gray-500 dark:text-gray-400">疊加用藥時間點</label>
+            <select
+              id={overlayId}
+              value={overlay ? overlayCode : ''}
+              onChange={(e) => setOverlayCode(e.target.value)}
+              className="input w-auto max-w-full"
+            >
+              <option value="">不疊加</option>
+              {medications.map(medication => (
+                <option key={medication.code} value={medication.code}>{`${medication.name}（${medication.count} 次）`}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {/* Sparse readings toggle */}
         <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
           <span className="relative flex items-center">
@@ -118,7 +147,7 @@ export default function LabTrendCharts({ labResults, textLabResults = [] }: Prop
       ) : (
         <>
           {groups.length > 0 && <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {groups.map(series => <LabSeriesCard key={series.key} series={series} />)}
+            {groups.map(series => <LabSeriesCard key={series.key} series={series} overlay={overlay} />)}
           </div>}
           {textResults.length > 0 && <TextLabResultsTable records={textResults} />}
         </>

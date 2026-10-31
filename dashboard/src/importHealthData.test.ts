@@ -3,6 +3,7 @@ import { ApiError, fetchEncryptedAttachment, fetchHealthData, fetchLegacyHealthD
 import { decryptRecords, decryptVaultBytes, deriveVaultKey, encryptRecords } from './cryptoVault';
 import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData } from './importHealthData';
 import { base64ToBytes, SOURCE_CHUNK_BYTES } from './medicalAttachments';
+import { emptyPersonal, newPersonalId, type PersonalData } from './personalData';
 import type { SourceChunk } from './recordStore';
 import { sha256 } from './parsers/fhir-common';
 import { emptyRecords } from './recordStore';
@@ -83,6 +84,21 @@ describe('encrypted import transaction orchestration', () => {
     expect(await decryptRecords(migrated.envelope, passphrase)).toEqual(records);
     expect(migrated.data.importHistory).toEqual([]);
     expect(uploadEncryptedHealthData).toHaveBeenCalledOnce();
+    expect(migrated.data.personal).toEqual(emptyPersonal());
+  });
+  it('keeps encrypted personal data through save, unlock and a later import', async () => {
+    const imported = await importHealthData(syntheticBundle(), passphrase);
+    const personal: PersonalData = { ...emptyPersonal(), notes: [{ id: newPersonalId(), date: '2026-10-01', kind: 'question', text: '下次回診詢問血壓目標' }] };
+    const saved = await imported.data.savePersonal!(personal);
+    expect(uploadEncryptedHealthData).toHaveBeenLastCalledWith(saved.envelope, {}, imported.envelope.revision, undefined);
+    expect(JSON.stringify(saved.envelope)).not.toContain('血壓目標');
+    vi.mocked(fetchHealthData).mockResolvedValue({ envelope: saved.envelope, needsClientEncryptionMigration: false });
+    const unlocked = await unlockHealthData(passphrase);
+    expect(unlocked.data.personal).toEqual(saved.data.personal);
+    expect(unlocked.data.personal?.notes).toHaveLength(1);
+    const reimported = await importHealthData(syntheticBundle(), passphrase);
+    expect(reimported.data.personal).toEqual(saved.data.personal);
+    expect(uploadEncryptedHealthData).toHaveBeenLastCalledWith(reimported.envelope, expect.any(Object), saved.envelope.revision, undefined);
   });
 });
 
@@ -126,6 +142,16 @@ describe('streaming import of oversized source files', () => {
     const confirmed = await commitLargeImport(preview, passphrase, true);
     expect(uploadEncryptedHealthData).toHaveBeenCalledWith(confirmed.envelope, expect.any(Object), null, undefined);
     expect(Object.keys((await decryptRecords(confirmed.envelope, passphrase)).r1)).toHaveLength(1);
+  });
+  it('keeps encrypted personal data when a streamed import merges into an existing vault', async () => {
+    const first = await importHealthData(syntheticBundle(), passphrase);
+    const saved = await first.data.savePersonal!({ ...emptyPersonal(), profile: { allergies: [{ id: newPersonalId(), name: '青黴素' }], conditions: [] } });
+    vi.mocked(fetchHealthData).mockResolvedValue({ envelope: saved.envelope, needsClientEncryptionMigration: false });
+    const preview = await prepareLargeImport(jsonFile(withImage()), passphrase);
+    const merged = await commitLargeImport(preview, passphrase);
+    expect(merged.data.personal).toEqual(saved.data.personal);
+    expect((await decryptRecords(merged.envelope, passphrase)).personal.profile.allergies).toHaveLength(1);
+    expect(uploadEncryptedHealthData).toHaveBeenLastCalledWith(merged.envelope, expect.any(Object), saved.envelope.revision, undefined);
   });
   it('does not commit the manifest when a chunk upload fails', async () => {
     const preview = await prepareLargeImport(jsonFile(withImage()), passphrase);
