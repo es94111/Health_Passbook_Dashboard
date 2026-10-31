@@ -2,7 +2,7 @@
 
 台灣健保健康存摺（NHI）個人健康資料視覺化儀表板。
 
-**開發版本：2.1.0 — NHI-FHIR Bridge 整合與 20 GB 串流備份；待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
+**開發版本：2.2.0 — Docker image 發版自動化；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
 
 ## 快速開始（本機開發）
 
@@ -142,10 +142,9 @@ openssl rand -hex 32
 ```bash
 # server/.env
 GOOGLE_CLIENT_ID=你的用戶端ID
-
-# dashboard/.env.local
-VITE_GOOGLE_CLIENT_ID=你的用戶端ID
 ```
+
+前端在 runtime 向 `GET /api/auth/config` 取得 Client ID，因此不需要在 `dashboard/` 設定建置期變數，也不必為此重新建置 image。
 
 ### Docker / 正式環境
 
@@ -221,13 +220,43 @@ docker run --rm -v nhi-data:/data -v $(pwd):/backup alpine \
 
 ## CI/CD（GitHub Actions）
 
-推送到 `main` 分支或建立 `v*` 標籤時，自動建置並推送至 Docker Hub 與 GitHub Container Registry。
+Docker image 由 `.github/workflows/docker-publish.yml` 自動建置、推送並發佈 GitHub Release。
+
+### Docker image 發版流程
+
+| 觸發條件 | 行為 |
+|---|---|
+| Pull request → `main` | 建置 `linux/amd64` image（不推送），實際啟動容器檢查 `/api/ping` 與 SPA 首頁後才回報成功 |
+| Push → `main` | 建置 `linux/amd64` + `linux/arm64` 並推送，標籤 `latest`、`main`、`sha-<完整 commit>` |
+| Push tag `v*` | 先比對標籤、`changelog.json` 與 `SRS.md` 版號，再推送 `X.Y.Z`、`X.Y`、`X`、`latest`（預先版不含 `latest`）與 `sha-<完整 commit>`，最後建立或更新 GitHub Release |
+| 手動 `workflow_dispatch` | 同 push `main` |
+
+映像同時發佈到：
+
+- Docker Hub：`<DOCKERHUB_USERNAME>/nhi-dashboard`（未設定帳號時自動跳過，只發佈 GHCR）
+- GHCR：`ghcr.io/es94111/nhi-dashboard`
+
+推送時附帶 OCI labels、SBOM 與 `mode=max` provenance attestation。GitHub Release 內文由 `changelog.json` 自動產生，包含分類變更、pull 指令、平台、可用標籤與 image digest。
+
+### 發版步驟
+
+1. 依 `.claude/commands/update-docs.md` 更新 `changelog.json`（`currentVersion` + 新版本紀錄）、`SRS.md` 版本歷程與 `README.md` 版本標示
+2. 合併到 `main`
+3. 建立並推送標籤：
+
+```bash
+npm run release:tag            # 預覽：檢查工作目錄、版號與遠端標籤，並輸出 release 內文
+npm run release:tag -- --yes   # 建立 vX.Y.Z 並推送，觸發 image 發佈與 GitHub Release
+```
+
+`scripts/release/check-version.mjs` 會在 CI 再次檢查標籤與文件是否同步，不一致時直接失敗，不會發佈半套版本。
+`scripts/release/release-notes.mjs` 由 `changelog.json` 產生 GitHub Release 內文；版本紀錄若有 `"prerelease": true` 或版號帶 `-rc` 後綴，Release 會標記為預先版。
 
 ### GitHub-hosted runner
 
 本專案為公開 repo，所有 workflow 都使用 GitHub 提供的 runner（`ubuntu-latest`），不需要自架 runner，也不必在 Settings → Actions → Runners 註冊機器：
 
-- **Build & Push Docker Image**：`ubuntu-latest` 搭配 `docker/setup-qemu-action` 與 Buildx，建置並推送 `linux/amd64` 與 `linux/arm64` 多架構映像。
+- **Build & Publish Docker Image**：`ubuntu-latest` 搭配 `docker/setup-qemu-action` 與 Buildx，建置並推送 `linux/amd64` 與 `linux/arm64` 多架構映像。
 - **Security Checks**：`npm audit` 與 Gitleaks 都在 `ubuntu-latest` 上執行；Node.js 22 由 `actions/setup-node` 安裝。
 - **Dependabot Updates**：公開 repo 由 GitHub 直接提供 runner，不需要額外設定。
 
@@ -257,8 +286,10 @@ docker run --rm -v nhi-data:/data -v $(pwd):/backup alpine \
 
 | Secret 名稱 | 說明 |
 |---|---|
-| `DOCKERHUB_USERNAME` | Docker Hub 帳號 |
+| `DOCKERHUB_USERNAME` | Docker Hub 帳號（選填；未設定時只發佈 GHCR） |
 | `DOCKERHUB_TOKEN` | Docker Hub Access Token（非密碼） |
+
+GHCR 使用 workflow 內建的 `GITHUB_TOKEN`，不需要額外 secret。映像的 Google Client ID 於執行期由 `GOOGLE_CLIENT_ID` 環境變數提供，發版時不需要任何建置期 secret。
 
 ### 取得 Docker Hub Token
 
@@ -309,7 +340,12 @@ Docker Hub → Account Settings → Personal access tokens → Generate new toke
 ├── Dockerfile                多階段建置
 ├── .dockerignore
 ├── .github/workflows/
-│   └── docker-publish.yml    自動建置推送 Docker image
+│   ├── docker-publish.yml    PR 驗證、image 發佈與 GitHub Release
+│   └── security.yml          npm audit 與 Gitleaks
+├── scripts/release/
+│   ├── tag-release.sh        建立並推送 vX.Y.Z 標籤
+│   ├── check-version.mjs     檢查標籤與 changelog／SRS 版號一致
+│   └── release-notes.mjs     由 changelog.json 產生 Release 內文
 └── package.json              根目錄：npm run dev 同時啟動前後端
 ```
 

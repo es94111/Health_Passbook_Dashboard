@@ -44,6 +44,17 @@
 
 若 README.md 中有版本徽章或變更日誌區塊，同步更新版本號。
 
+## 步驟 5：發版（可選）
+
+文件與版號都合併到 `main` 後，建立並推送標籤即可觸發 CI 發佈 Docker image 與 GitHub Release：
+
+```bash
+npm run release:tag            # 預覽檢查
+npm run release:tag -- --yes   # 建立並推送 vX.Y.Z
+```
+
+CI 會以 `scripts/release/check-version.mjs` 再次確認 `changelog.json`、`SRS.md` 與標籤一致；不一致會直接失敗，不會發佈映像。
+
 ---
 
 完成後回報：「已更新版號至 X.Y.Z，changelog.json、SRS.md 已同步。」
