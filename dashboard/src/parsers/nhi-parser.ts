@@ -1,13 +1,24 @@
-import type { Visit, Hospitalization, Vaccination, LabResult, CheckupReport, DentalVisit, NHIData } from './types';
+import { isFhirBundle, parseFhirResources, readFhirBundleResources } from './fhir-parser';
+import { array, canonicalJson, fhirDate, object } from './fhir-common';
+import type { Visit, Hospitalization, Vaccination, LabResult, TextLabResult, CheckupReport, DentalVisit, NHIData, SourcedRecord, ImportSummary } from './types';
 
 // ICD-10 codes start with an uppercase letter followed by 2-3 digits
 const ICD_PATTERN = /^[A-Z]\d{2,3}/;
 
 // Reference range format: [low][high] — both are optional
-const REF_RANGE_PATTERN = /\[(\d+(?:\.\d+)?)\]/g;
+const REF_RANGE_PATTERN = /\[([^\]]*)\]/g;
+const NUMBER_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 
 export function parseNHIDate(s: string): Date {
-  return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8));
+  const date = fhirDate(s.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'));
+  if (!date) throw new Error('NHI 日期格式不正確');
+  return date;
+}
+
+function numericLabValue(value: unknown): { value: number; unit?: string } | null {
+  const text = String(value ?? '').trim();
+  const match = /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)\s*(?:\(([A-Za-z0-9µμ%/.*^·⁰¹²³⁴⁵⁶⁷⁸⁹ -]+)\)|([A-Za-zµμ%][A-Za-z0-9µμ%/.*^·⁰¹²³⁴⁵⁶⁷⁸⁹ -]*))?$/i.exec(text);
+  return match && Number.isFinite(Number(match[1])) ? { value: Number(match[1]), unit: (match[2] || match[3])?.trim() || undefined } : null;
 }
 
 /** Given a key like "r1.8" or "r2.10", return the key for the next field ("r1.9", "r2.11"). */
@@ -105,15 +116,14 @@ export function parseLabResults(records: Record<string, unknown>[]): LabResult[]
   if (!Array.isArray(records)) return [];
   return records.flatMap((r) => {
     try {
-      const valueStr = String(r['r7.11'] ?? '');
-      if (!valueStr) return [];
-      const value = parseFloat(valueStr);
-      if (isNaN(value)) return [];
-
+      const numeric = numericLabValue(r['r7.11']);
+      if (!numeric) return [];
+      const { value, unit } = numeric;
       const refRange = String(r['r7.12'] ?? '');
       const matches = [...refRange.matchAll(REF_RANGE_PATTERN)];
-      const refLow = matches[0] ? parseFloat(matches[0][1]) : null;
-      const refHigh = matches[1] ? parseFloat(matches[1][1]) : null;
+      const bound = (index: number) => matches[index] && NUMBER_PATTERN.test(matches[index][1].trim()) ? Number(matches[index][1]) : null;
+      const refLow = bound(0);
+      const refHigh = bound(1);
 
       return [{
         date: parseNHIDate(String(r['r7.5'] ?? '')),
@@ -123,6 +133,9 @@ export function parseLabResults(records: Record<string, unknown>[]): LabResult[]
         value,
         refLow,
         refHigh,
+        unit,
+        refText: refRange || undefined,
+        source: '健保署原生 JSON',
       }];
     } catch {
       return [];
@@ -196,20 +209,50 @@ function extractBdata(obj: Record<string, unknown>): Record<string, unknown> {
   return obj;
 }
 
-export function parseNHIJson(raw: string | Record<string, unknown[]>): NHIData {
-  const parsed: Record<string, unknown> =
-    typeof raw === 'string'
-      ? (JSON.parse(raw.replace(/^\uFEFF/, '')) as Record<string, unknown>)
-      : (raw as Record<string, unknown>);
+export function parseTextLabResults(records: Record<string, unknown>[]): TextLabResult[] {
+  return records.flatMap(record => {
+    const text = String(record['r7.11'] ?? '').trim();
+    if (!text) return [];
+    let date: Date | null = null;
+    try { date = parseNHIDate(String(record['r7.5'] ?? '')); } catch { /* Preserve undated values outside the trend chart. */ }
+    if (numericLabValue(text) && date) return [];
+    return [{ date, hospital: String(record['r7.4'] ?? ''), testGroup: String(record['r7.9'] ?? ''),
+      subItem: String(record['r7.10'] ?? ''), text, refText: String(record['r7.12'] ?? '') || undefined, source: '健保署原生 JSON' }];
+  });
+}
 
-  const data = extractBdata(parsed) as Record<string, Record<string, unknown>[]>;
+function legacy<T extends object>(items: T[]): (T & SourcedRecord)[] {
+  return items.map(item => ({ ...item, origins: [{ format: 'NHI', source: '健保署原生 JSON' }] }));
+}
 
+function duplicateCandidates(legacyItems: unknown[], fhirItems: unknown[], fields: string[]): number {
+  const key = (value: unknown) => {
+    const item = object(value);
+    return canonicalJson(Object.fromEntries(fields.map(field => [field, item[field] instanceof Date ? (item[field] as Date).getTime() : item[field] ?? null])));
+  };
+  const seen = new Set(legacyItems.map(key));
+  return fhirItems.filter(item => seen.has(key(item))).length;
+}
+
+export function parseNHIJson(raw: string | Record<string, unknown>): NHIData {
+  const parsed = object(typeof raw === 'string' ? JSON.parse(raw.replace(/^\uFEFF/, '')) : raw);
+  const directBundle = isFhirBundle(parsed);
+  const data = extractBdata(parsed);
+  const resources = directBundle ? readFhirBundleResources(parsed) : array(data.fhir).map(object);
+  const entries = directBundle ? array(parsed.entry).map(object) : array(data.fhirEntries).map(object);
+  const fhir = parseFhirResources(resources, entries);
+  const visits = legacy(parseVisits(array(data.r1).map(object)));
+  const hospitalizations = legacy(parseHospitalizations(array(data.r2).map(object)));
+  const vaccinations = legacy(parseVaccinations(array(data.r6).map(object)));
+  const labs = legacy(parseLabResults(array(data.r7).map(object)));
   return {
-    visits: parseVisits(data.r1 ?? []),
-    hospitalizations: parseHospitalizations(data.r2 ?? []),
-    vaccinations: parseVaccinations(data.r6 ?? []),
-    labResults: parseLabResults(data.r7 ?? []),
-    checkupReports: parseCheckupReports(data.r8 ?? []),
-    dentalVisits: parseDentalVisits(data.r3 ?? []),
+    visits: [...visits, ...fhir.visits], hospitalizations: [...hospitalizations, ...fhir.hospitalizations],
+    vaccinations: [...vaccinations, ...fhir.vaccinations], labResults: [...labs, ...fhir.labResults],
+    textLabResults: [...legacy(parseTextLabResults(array(data.r7).map(object))), ...fhir.textLabResults],
+    checkupReports: [...legacy(parseCheckupReports(array(data.r8).map(object))), ...fhir.checkupReports],
+    dentalVisits: legacy(parseDentalVisits(array(data.r3).map(object))), medicalReports: fhir.medicalReports, medications: fhir.medications,
+    importHistory: array(data.importHistory) as ImportSummary[],
+    duplicateCandidateCount: duplicateCandidates(visits, fhir.visits, ['date', 'hospital', 'diagnoses', 'procedures']) +
+      duplicateCandidates(labs, fhir.labResults, ['date', 'hospital', 'subItem', 'value', 'unit']),
   };
 }

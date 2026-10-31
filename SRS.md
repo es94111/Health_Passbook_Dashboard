@@ -6,7 +6,7 @@
 本文件描述「健康存摺儀表板」（Health Passbook Dashboard）之功能與非功能需求，作為開發、版本追蹤與驗收的依據。
 
 ### 1.2 範圍
-系統讓使用者匯入從衛福部「健保快易通」App 匯出的個人健康資料 JSON 檔案，於本機部署的網頁儀表板中瀏覽、篩選與追蹤自己的門診、住院、牙科、檢驗、疫苗接種與健檢資料。系統支援多使用者帳號、Google 登入、管理員後台，並將所有健康資料加密儲存於伺服器端。
+系統讓使用者手動匯入從衛福部「健保快易通」App 匯出的原生 NHI JSON，或本人登入並授權 NHI-FHIR Bridge 匯出的 FHIR R4 Bundle，於網頁儀表板中瀏覽、篩選與追蹤自己的門診、住院、牙科、檢驗、疫苗接種、健檢、醫療報告、用藥及影像附件。系統支援多使用者帳號、Google 登入、管理員後台；新匯入的健康資料先在瀏覽器加密，再交由既有伺服器儲存。網站不接收健保署登入憑證，不提供外掛直接同步或原始 DICOM 取得。2.1.0 為開發中版本，待真實去識別化 Bridge 匯出與瀏覽器端到端驗收。
 
 ### 1.3 名詞定義
 | 名詞 | 說明 |
@@ -41,12 +41,20 @@
 ### 4.2 資料匯入
 - FR-5 使用者可上傳健保快易通匯出的 JSON 檔案
 - FR-6 系統解析並正規化門診、住院、牙科、檢驗、疫苗接種、健檢等資料類型
+- FR-18 支援原生 NHI JSON 與完整、單一 Patient 的 FHIR R4 collection／document／searchset Bundle；格式、資源或病人關聯不正確時整份拒絕
+- FR-19 以具 system／value 的穩定 Patient identifier 比對身分；同一識別系統的已知識別碼矛盾時不得合併。缺少共同可靠識別碼與原生 NHI 匯入需逐次由使用者明確確認同一人，不以 Patient.id 當作身分證明
+- FR-20 保留加密原始來源、資源參照、匯入歷程及新增／更新／略過結果；同資源重匯去重，已知舊版不覆寫新版；跨格式無共同紀錄識別碼時保留兩來源並提示可辨識的疑似重複
+- FR-21 支援內嵌 JPEG／PNG／WebP 預覽及 PDF 下載，驗證 Base64、檔頭、解碼大小及 SHA-256；附件以隨機 ID 分檔加密、同內容去重並關聯報告，外部 URL 不自動存取
+- FR-22 JSON 單檔與累計加密前索引上限各 32 MiB，單一附件 12 MiB，附件索引上限 512；先驗證、上傳附件，再以樂觀版本條件提交索引，失敗不得覆寫既有病歷
+- FR-23 同步紀錄頁可下載在本機重建的原始來源 JSON，下載前明示為未加密資料；系統備份需包含附件並維持用戶端密文。v1 備份向下相容，匯出與還原皆限未壓縮 UTF-8 JSON 20 GB（20,000,000,000 bytes，含所有帳號／附件），超限或缺漏須在下載／寫入前拒絕，現階段不支援自動分卷；匯出以伺服器端暫存檔串流下載並支援續傳與取消，還原以串流上傳落盤、逐段解析驗證後才進入快照與覆寫，全程不得將整份備份載入記憶體
 
 ### 4.3 儀表板瀏覽
-- FR-7 儀表板以分頁（門診／檢驗／住院／牙科／預防保健）呈現各類資料
+- FR-7 儀表板以分頁（門診／檢驗／住院／牙科／預防保健／醫療報告／用藥／同步紀錄）呈現各類資料
 - FR-8 門診分頁提供申報項目（藥品／處置）長條圖，可依日期區間篩選
 - FR-9 檢驗分頁提供各檢驗項目歷史趨勢圖，含正常參考範圍標示與異常次數統計
 - FR-10 使用者可於檢驗趨勢卡片上釘選／取消釘選項目至重點摘要
+- FR-24 檢驗按項目／代碼、單位與來源分組；文字、陰陽性、比較符號、缺失／無效日期與撤銷結果不冒充數值趨勢，不捏造日期或套用不相容的參考範圍
+- FR-25 新增醫療報告、用藥及同步紀錄分頁；用藥區分處方、領藥、用藥紀錄，不暗示歷史記錄仍在服用；報告可對照來源資源與原始內容
 
 ### 4.4 重點摘要
 - FR-11 首頁顯示「重點摘要」區塊，列出使用者釘選之檢驗項目與用藥的最新數值、與前次數值的差異（趨勢箭頭）、以及是否轉差之警示
@@ -67,12 +75,16 @@
 - NFR-2 **可用性**：介面支援深色模式；主要互動元件符合基本無障礙標記（aria-label／aria-pressed／role）
 - NFR-3 **在地化**：介面文字為繁體中文（台灣），資料格式對應台灣健保資料標準
 - NFR-4 **可移植性**：可透過 Docker 部署於任意支援容器的平台
+- NFR-5 **瀏覽器端加密**：原始病歷、來源與匯入歷程先以 PBKDF2-SHA256 派生金鑰、AES-256-GCM 加密才傳送；附件獨立 IV／密文，登入密碼與資料加密密碼分開，不傳送健保署登入資訊
+- NFR-6 **驗收範圍**：結構及關聯檢查不等同完整 FHIR 規範驗證；正式發布須完成去識別化 Bridge 真實匯出、瀏覽器互動、重新登入、含附件備份還原、安全掃描等驗收。直接外掛同步及原始 DICOM 取得不列為已完成功能
 
 ## 6. 資料模型（節錄）
 
 - `User`：帳號、密碼雜湊或 Google ID、顯示名稱、主題模式、`preferences`
 - `UserPreferences`：`pinnedLabItems`、`pinnedMedications`、`hiddenSections`、`defaultDateRange`、`lastActiveTab`、`acknowledgedAlerts`
-- `NHIData`：`visits`、`labResults`、`hospitalizations`、`dentalVisits`、`vaccinations`、`checkupReports`（由前端解析器 `parsers/nhi-parser.ts` 產生）
+- `NHIData`：`visits`、`labResults`、`textLabResults`、`hospitalizations`、`dentalVisits`、`vaccinations`、`checkupReports`、`medicalReports`、`medications`、`importHistory`、`duplicateCandidateCount`（前端解析結果，非伺服器明文儲存格式）
+- `StoredRecords`：原有 r1／r2／r3／r6／r7／r8 索引，加上 FHIR 最新資源、fullUrl 別名、附件 SHA-256／大小／MIME 索引、按原始內容雜湊的來源封存及匯入歷程；全部在主病歷密文內
+- `ClientEncryptedRecords`：既有 v1 AES-GCM／PBKDF2 信封，加上不含病歷內容的 `attachmentIds` 與 `revision`；獨立附件信封只包含隨機 ID 路徑與密文
 
 ## 7. 系統架構
 
@@ -97,6 +109,8 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
+| 2.1.0 | 2026-10-31 | 開發中、待真實 Bridge／瀏覽器端到端驗收：備份上限由 200 MiB 提高至 20 GB，匯出改為伺服器暫存後串流下載（短時效票證、Range 續傳、可取消），還原改為串流上傳落盤並在驗證通過後才快照覆寫；新增解析深度／欄位大小上限與重複鍵、不安全附件 ID 拒絕 |
+| 2.0.0 | 2026-10-30 | 開發中、待真實 Bridge／瀏覽器端到端驗收：新增 FHIR R4 匯入、逐次身分確認、加密原始來源與匯入歷程、單位／來源分組與文字檢驗、報告／用藥頁、獨立加密附件及含附件備份還原；保留原生 NHI 相容性，不提供外掛直接同步或 DICOM 取得 |
 | 1.5.3 | 2026-10-30 | 專案改為公開後，Docker 發佈與安全掃描改回 GitHub-hosted `ubuntu-latest` runner（自架 runner 已無註冊導致 workflow 永久排隊、checkout 出現 bad object 錯誤）；Docker 多架構建置補上 QEMU；npm audit 開放 fork PR 執行並改為只回報不阻擋 PR，弱點修復交由 Dependabot 追蹤 |
 | 1.5.2 | 2026-10-30 | 補齊現存功能、Dependabot 與舊修補分支的所有 CI self-hosted 設定，保留各分支套件及 action 版本；Dashboard PR 測試同步略過外部 fork；各分支 Gitleaks 使用 job 專屬暫存目錄；新增專用 Linux／X64 Docker Dependabot runner 設定與操作說明 |
 | 1.5.1 | 2026-10-30 | GitHub Actions 的 Docker 多架構映像發佈與安全掃描全面改用 macOS／X64 self-hosted runner；外部 fork PR 在 job 排程前略過安全掃描，保留同 repo PR、推送、每週排程與手動執行；Gitleaks 使用 job 專屬暫存目錄避免殘留檔衝突；補充 runner 前置條件 |

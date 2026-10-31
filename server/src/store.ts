@@ -1,6 +1,16 @@
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
+import { withDataAccess } from './dataAccess.js';
+import {
+  EncryptedDataError,
+  isAttachmentId,
+  isSafeUserId,
+  isRevision,
+  isClientEncryptedRecords,
+  type ClientEncryptedRecords,
+} from './clientEncryption.js';
+export { isClientEncryptedRecords, type ClientEncryptedRecords } from './clientEncryption.js';
 import {
   deriveUsersKey,
   deriveRecordsKey,
@@ -14,6 +24,7 @@ const DATA_DIR = path.join(process.cwd(), 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const LOGS_FILE = path.join(DATA_DIR, 'login-logs.json');
+const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 
 // ── Per-file write lock ────────────────────────────────────────────────────────
 // Serializes read-modify-write operations on the same file so concurrent
@@ -23,10 +34,17 @@ const LOGS_FILE = path.join(DATA_DIR, 'login-logs.json');
 const fileLocks = new Map<string, Promise<unknown>>();
 
 function withLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
-  const prev = fileLocks.get(name) ?? Promise.resolve();
-  const run = prev.then(fn, fn);
-  fileLocks.set(name, run.then(() => undefined, () => undefined));
-  return run;
+  return withDataAccess(async () => {
+    const prev = fileLocks.get(name) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const settled = run.then(() => undefined, () => undefined);
+    fileLocks.set(name, settled);
+    try {
+      return await run;
+    } finally {
+      if (fileLocks.get(name) === settled) fileLocks.delete(name);
+    }
+  });
 }
 
 // ── User preferences ──────────────────────────────────────────────────────────
@@ -126,17 +144,6 @@ export interface StoredRecords {
 const RECORD_TYPES = ['r1', 'r2', 'r3', 'r6', 'r7', 'r8'] as const;
 type RecordType = typeof RECORD_TYPES[number];
 
-export interface ClientEncryptedRecords {
-  __clientEnc: true;
-  v: 1;
-  alg: 'AES-GCM';
-  kdf: 'PBKDF2-SHA256';
-  iterations: number;
-  salt: string;
-  iv: string;
-  data: string;
-}
-
 function emptyRecords(): StoredRecords {
   return { r1: {}, r2: {}, r3: {}, r6: {}, r7: {}, r8: {} };
 }
@@ -218,12 +225,16 @@ export const DEFAULT_SETTINGS: AppSettings = {
 // ── File helpers ──────────────────────────────────────────────────────────────
 
 async function ensureDataDir(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(DATA_DIR, { recursive: true, mode: 0o700 });
 }
 
 // ── User store ────────────────────────────────────────────────────────────────
 
 async function readUsers(): Promise<User[]> {
+  return withDataAccess(readUsersUnlocked);
+}
+
+async function readUsersUnlocked(): Promise<User[]> {
   const key = deriveUsersKey();
   const { data, wasMigrated } = await readMaybeEncrypted<User[]>(USERS_FILE, key, []);
   if (wasMigrated && data.length > 0) {
@@ -273,6 +284,7 @@ export async function getUserByGoogleId(googleId: string): Promise<User | undefi
 }
 
 export function createUser(user: Omit<User, 'encryptionSalt'>): Promise<void> {
+  assertUserId(user.id);
   return withLock('users', async () => {
     const users = await readUsers();
     const fullUser: User = {
@@ -358,9 +370,10 @@ export function deleteUser(id: string): Promise<boolean> {
     const filtered = users.filter((u) => u.id !== id);
     if (filtered.length === users.length) return false;
     await writeUsers(filtered);
-    // Also remove their health records
-    const recordFile = recordsFile(id);
-    await fs.unlink(recordFile).catch(() => undefined);
+    await withLock(`records:${id}`, async () => {
+      await deleteRecordsFile(id);
+      await fs.rm(userAttachmentsDir(id), { recursive: true, force: true });
+    });
     return true;
   });
 }
@@ -377,39 +390,37 @@ export async function adminCount(): Promise<number> {
 
 // ── Health records store ──────────────────────────────────────────────────────
 
+function assertUserId(userId: string): void {
+  if (!isSafeUserId(userId)) throw new EncryptedDataError('Invalid user ID');
+}
+
 function recordsFile(userId: string): string {
+  assertUserId(userId);
   return path.join(DATA_DIR, `records-${userId}.json`);
 }
 
-export function isClientEncryptedRecords(value: unknown): value is ClientEncryptedRecords {
-  if (typeof value !== 'object' || value === null) return false;
-  const envelope = value as Partial<ClientEncryptedRecords>;
-  return (
-    envelope.__clientEnc === true &&
-    envelope.v === 1 &&
-    envelope.alg === 'AES-GCM' &&
-    envelope.kdf === 'PBKDF2-SHA256' &&
-    typeof envelope.iterations === 'number' &&
-    Number.isInteger(envelope.iterations) &&
-    envelope.iterations >= 100_000 &&
-    typeof envelope.salt === 'string' &&
-    typeof envelope.iv === 'string' &&
-    typeof envelope.data === 'string'
-  );
+function userAttachmentsDir(userId: string): string {
+  assertUserId(userId);
+  return path.join(ATTACHMENTS_DIR, userId);
+}
+
+function attachmentFile(userId: string, id: string): string {
+  if (!isAttachmentId(id)) throw new EncryptedDataError('Invalid attachment ID');
+  return path.join(userAttachmentsDir(userId), `${id}.json`);
 }
 
 async function recordsKey(userId: string): Promise<{ key: ReturnType<typeof deriveRecordsKey>; user: User }> {
+  assertUserId(userId);
   const user = await getUserById(userId);
-  if (!user) throw new Error(`使用者 ${userId} 不存在`);
+  if (!user) throw new EncryptedDataError('User no longer exists', 404);
   return { key: deriveRecordsKey(user.encryptionSalt), user };
 }
 
-export async function getClientEncryptedRecords(userId: string): Promise<ClientEncryptedRecords | null> {
-  const data = await getHealthDataForClient(userId);
-  return data.envelope;
+function envelopeRevision(envelope: ClientEncryptedRecords): string {
+  return envelope.revision ?? crypto.createHash('sha256').update(envelope.data).digest('hex');
 }
 
-export async function getHealthDataForClient(userId: string): Promise<{
+async function readHealthData(userId: string): Promise<{
   envelope: ClientEncryptedRecords | null;
   needsClientEncryptionMigration: boolean;
 }> {
@@ -420,7 +431,11 @@ export async function getHealthDataForClient(userId: string): Promise<{
     return { envelope: null, needsClientEncryptionMigration: false };
   }
   if (isClientEncryptedRecords(data)) {
-    return { envelope: data, needsClientEncryptionMigration: false };
+    if (wasMigrated) await writeEncrypted(file, key, data);
+    return { envelope: { ...data, revision: envelopeRevision(data) }, needsClientEncryptionMigration: false };
+  }
+  if (typeof data === 'object' && '__clientEnc' in data) {
+    throw new EncryptedDataError('Stored encrypted health records are invalid', 500);
   }
   if (wasMigrated) {
     await ensureDataDir();
@@ -429,36 +444,103 @@ export async function getHealthDataForClient(userId: string): Promise<{
   return { envelope: null, needsClientEncryptionMigration: true };
 }
 
-export async function getLegacyRecordsForClientEncryption(userId: string): Promise<StoredRecords> {
-  const { key } = await recordsKey(userId);
-  const file = recordsFile(userId);
-  const { data, wasMigrated } = await readMaybeEncrypted<ClientEncryptedRecords | StoredRecords | null>(file, key, null);
-  if (data === null) return emptyRecords();
-  if (isClientEncryptedRecords(data)) {
-    throw new Error('Health records are already client-side encrypted.');
-  }
-
-  const records = normalizeStoredRecords(data);
-  if (wasMigrated) {
-    await ensureDataDir();
-    await writeEncrypted(file, key, records);
-  }
-  return records;
+export async function getClientEncryptedRecords(userId: string): Promise<ClientEncryptedRecords | null> {
+  const data = await getHealthDataForClient(userId);
+  return data.envelope;
 }
 
-export async function saveClientEncryptedRecords(
+export function getHealthDataForClient(userId: string): ReturnType<typeof readHealthData> {
+  return withLock(`records:${userId}`, () => readHealthData(userId));
+}
+
+export function getLegacyRecordsForClientEncryption(userId: string): Promise<StoredRecords> {
+  return withLock(`records:${userId}`, async () => {
+    const { key } = await recordsKey(userId);
+    const file = recordsFile(userId);
+    const { data, wasMigrated } = await readMaybeEncrypted<ClientEncryptedRecords | StoredRecords | null>(file, key, null);
+    if (data === null) return emptyRecords();
+    if (typeof data === 'object' && '__clientEnc' in data) {
+      throw new EncryptedDataError('Health records are already client-side encrypted.');
+    }
+
+    const records = normalizeStoredRecords(data);
+    if (wasMigrated) {
+      await ensureDataDir();
+      await writeEncrypted(file, key, records);
+    }
+    return records;
+  });
+}
+
+async function readAttachmentEnvelope(userId: string, id: string, key: Buffer): Promise<ClientEncryptedRecords | null> {
+  const { data, wasMigrated } = await readMaybeEncrypted<unknown>(attachmentFile(userId, id), key, null);
+  if (data === null) return null;
+  if (wasMigrated || !isClientEncryptedRecords(data, true)) {
+    throw new EncryptedDataError('Stored encrypted attachment is invalid', 500);
+  }
+  return data;
+}
+
+export function getEncryptedAttachment(userId: string, id: string): Promise<ClientEncryptedRecords | null> {
+  attachmentFile(userId, id);
+  return withLock(`records:${userId}`, async () => {
+    const { key } = await recordsKey(userId);
+    return readAttachmentEnvelope(userId, id, key);
+  });
+}
+
+export function saveEncryptedAttachment(userId: string, id: string, envelope: ClientEncryptedRecords): Promise<void> {
+  const file = attachmentFile(userId, id);
+  if (!isClientEncryptedRecords(envelope, true)) throw new EncryptedDataError('Invalid encrypted attachment envelope');
+  return withLock(`records:${userId}`, async () => {
+    const { key } = await recordsKey(userId);
+    const existing = await readAttachmentEnvelope(userId, id, key);
+    if (existing) {
+      if (
+        existing.iterations !== envelope.iterations || existing.salt !== envelope.salt ||
+        existing.iv !== envelope.iv || existing.data !== envelope.data || existing.revision !== envelope.revision
+      ) throw new EncryptedDataError('Attachment ID already exists with different encrypted content', 409);
+      return;
+    }
+    await fs.mkdir(userAttachmentsDir(userId), { recursive: true, mode: 0o700 });
+    await writeEncrypted(file, key, envelope);
+  });
+}
+
+export function saveClientEncryptedRecords(
   userId: string,
   envelope: ClientEncryptedRecords,
+  expectedRevision?: string | null,
 ): Promise<void> {
-  if (!isClientEncryptedRecords(envelope)) {
-    throw new Error('Invalid client encrypted health records envelope');
+  if (!isClientEncryptedRecords(envelope)) throw new EncryptedDataError('Invalid client encrypted health records envelope');
+  if (expectedRevision !== undefined && expectedRevision !== null && !isRevision(expectedRevision)) {
+    throw new EncryptedDataError('Invalid expected revision');
   }
-  const { key } = await recordsKey(userId);
-  await ensureDataDir();
-  await writeEncrypted(recordsFile(userId), key, envelope);
+  return withLock(`records:${userId}`, async () => {
+    const { key } = await recordsKey(userId);
+    if (expectedRevision !== undefined) {
+      const current = await readHealthData(userId);
+      if ((current.envelope?.revision ?? null) !== expectedRevision) {
+        throw new EncryptedDataError('Health records changed; reload before importing again', 409);
+      }
+    }
+    for (const id of envelope.attachmentIds ?? []) {
+      try {
+        if (!await readAttachmentEnvelope(userId, id, key)) throw new Error('Missing attachment');
+      } catch {
+        throw new EncryptedDataError('Missing or invalid encrypted attachment reference');
+      }
+    }
+    await ensureDataDir();
+    await writeEncrypted(recordsFile(userId), key, envelope);
+  });
 }
 
-export async function getRecords(userId: string): Promise<StoredRecords> {
+export function getRecords(userId: string): Promise<StoredRecords> {
+  return withDataAccess(() => readRecords(userId));
+}
+
+async function readRecords(userId: string): Promise<StoredRecords> {
   const { key } = await recordsKey(userId);
   const file = recordsFile(userId);
   const { data, wasMigrated } = await readMaybeEncrypted<StoredRecords>(file, key, emptyRecords());
@@ -515,11 +597,12 @@ export function flattenRecords(stored: StoredRecords): Record<string, object[]> 
 
 // ── Backup primitives (used by admin backup import / export) ──────────────────
 // These are low-level helpers for the admin backup feature (server/src/backup.ts).
-// They deliberately bypass withLock — the import flow serialises writes itself
-// and users.json is written last as the commit point.
+// Callers hold withDataMaintenance for a consistent export or an exclusive
+// restore, including snapshot rollback. These helpers deliberately bypass locks.
 
 /** Replace the entire users file (no read-modify-write, no lock). */
 export async function replaceUsers(users: User[]): Promise<void> {
+  for (const user of users) assertUserId(user.id);
   await ensureDataDir();
   await writeEncrypted(USERS_FILE, deriveUsersKey(), users);
 }
@@ -560,6 +643,44 @@ export async function writeRecordsEnvelope(
   await writeEncrypted(recordsFile(userId), key, envelope);
 }
 
+/** Restore an attachment using the backup user's salt, before its manifest. */
+export async function writeAttachmentEnvelope(
+  userId: string,
+  saltHex: string,
+  id: string,
+  envelope: ClientEncryptedRecords,
+): Promise<void> {
+  const file = attachmentFile(userId, id);
+  if (!isClientEncryptedRecords(envelope, true)) throw new EncryptedDataError('Invalid encrypted attachment envelope');
+  await fs.mkdir(userAttachmentsDir(userId), { recursive: true, mode: 0o700 });
+  await writeEncrypted(file, deriveRecordsKey(saltHex), envelope);
+}
+
+/** Remove attachments absent from a fully restored set of manifests. */
+export async function pruneAttachments(
+  references: Map<string, Set<string>> | ((userId: string) => Promise<Set<string> | undefined>),
+): Promise<void> {
+  let entries;
+  try {
+    entries = await fs.readdir(ATTACHMENTS_DIR, { withFileTypes: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw err;
+  }
+  for (const entry of entries) {
+    const dir = path.join(ATTACHMENTS_DIR, entry.name);
+    const ids = typeof references === 'function' ? await references(entry.name) : references.get(entry.name);
+    if (!entry.isDirectory() || !ids?.size) {
+      await fs.rm(dir, { recursive: true, force: true });
+      continue;
+    }
+    const keep = new Set([...ids].map((id) => `${id}.json`));
+    for (const name of await fs.readdir(dir)) {
+      if (!keep.has(name)) await fs.rm(path.join(dir, name), { recursive: true, force: true });
+    }
+  }
+}
+
 /** Write legacy (not yet client-encrypted) records using the given salt. */
 export async function writeLegacyRecords(
   userId: string,
@@ -577,7 +698,7 @@ export async function listRecordFileIds(): Promise<string[]> {
     const entries = await fs.readdir(DATA_DIR);
     return entries
       .map((name) => /^records-(.+)\.json$/.exec(name)?.[1])
-      .filter((id): id is string => typeof id === 'string');
+      .filter((id): id is string => isSafeUserId(id));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
@@ -591,38 +712,87 @@ export async function deleteRecordsFile(userId: string): Promise<void> {
   });
 }
 
-/**
- * Copy every current data file (users / settings / login-logs + all records-*.json)
- * into DATA_DIR/<dirName>/ as an import safety net. Files are copied raw (still
- * encrypted) — restoring means copying them back into DATA_DIR.
- */
+/** Copy encrypted files, including all attachments, as an import safety net. */
 export async function snapshotDataFiles(dirName: string): Promise<string> {
+  if (!/^[A-Za-z0-9_-]+$/.test(dirName)) throw new Error('Invalid snapshot directory');
   const snapshotDir = path.join(DATA_DIR, dirName);
   await ensureDataDir();
-  await fs.mkdir(snapshotDir, { recursive: true });
+  await fs.mkdir(snapshotDir, { mode: 0o700 });
 
   const names = ['users.json', 'settings.json', 'login-logs.json'];
-  for (const id of await listRecordFileIds()) {
-    names.push(`records-${id}.json`);
-  }
-
+  for (const id of await listRecordFileIds()) names.push(`records-${id}.json`);
   for (const name of names) {
-    const src = path.join(DATA_DIR, name);
     try {
-      await fs.copyFile(src, path.join(snapshotDir, name));
+      await fs.copyFile(path.join(DATA_DIR, name), path.join(snapshotDir, name));
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
   }
+  try {
+    await fs.cp(ATTACHMENTS_DIR, path.join(snapshotDir, 'attachments'), { recursive: true });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
   return snapshotDir;
+}
+
+/** Restore the exact encrypted snapshot after a failed import, while exclusive. */
+export async function restoreDataSnapshot(snapshotDir: string): Promise<void> {
+  const snapshotNames = new Set((await fs.readdir(snapshotDir)).filter((name) =>
+    ['users.json', 'settings.json', 'login-logs.json'].includes(name) || /^records-[A-Za-z0-9_-]+\.json$/.test(name),
+  ));
+  for (const name of snapshotNames) {
+    const file = path.join(DATA_DIR, name);
+    const staging = `${file}.${crypto.randomUUID()}.restore`;
+    try {
+      await fs.copyFile(path.join(snapshotDir, name), staging);
+      await fs.rename(staging, file);
+    } finally {
+      await fs.rm(staging, { force: true });
+    }
+  }
+  const currentNames = ['users.json', 'settings.json', 'login-logs.json',
+    ...(await listRecordFileIds()).map((id) => `records-${id}.json`)];
+  for (const name of currentNames) {
+    if (!snapshotNames.has(name)) await fs.rm(path.join(DATA_DIR, name), { force: true });
+  }
+
+  const staging = path.join(DATA_DIR, `.attachments-restore-${crypto.randomUUID()}`);
+  const displaced = path.join(DATA_DIR, `.attachments-failed-${crypto.randomUUID()}`);
+  let hadAttachments = false;
+  try {
+    try {
+      await fs.cp(path.join(snapshotDir, 'attachments'), staging, { recursive: true });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      await fs.mkdir(staging, { mode: 0o700 });
+    }
+    try {
+      await fs.rename(ATTACHMENTS_DIR, displaced);
+      hadAttachments = true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    try {
+      await fs.rename(staging, ATTACHMENTS_DIR);
+    } catch (err) {
+      if (hadAttachments) await fs.rename(displaced, ATTACHMENTS_DIR);
+      throw err;
+    }
+  } finally {
+    await fs.rm(staging, { recursive: true, force: true });
+  }
+  await fs.rm(displaced, { recursive: true, force: true });
 }
 
 // ── Login logs store ──────────────────────────────────────────────────────────
 
 async function readLogs(): Promise<LoginLog[]> {
-  const key = deriveLogsKey();
-  const { data } = await readMaybeEncrypted<LoginLog[]>(LOGS_FILE, key, []);
-  return data;
+  return withDataAccess(async () => {
+    const key = deriveLogsKey();
+    const { data } = await readMaybeEncrypted<LoginLog[]>(LOGS_FILE, key, []);
+    return data;
+  });
 }
 
 async function writeLogs(logs: LoginLog[]): Promise<void> {
@@ -679,6 +849,10 @@ export function deleteLoginLogs(ids: string[]): Promise<number> {
 // ── App settings store ────────────────────────────────────────────────────────
 
 async function readSettings(): Promise<AppSettings> {
+  return withDataAccess(readSettingsUnlocked);
+}
+
+async function readSettingsUnlocked(): Promise<AppSettings> {
   const key = deriveSettingsKey();
   const { data } = await readMaybeEncrypted<AppSettings>(SETTINGS_FILE, key, DEFAULT_SETTINGS);
   // Merge with defaults to handle missing fields on upgrade

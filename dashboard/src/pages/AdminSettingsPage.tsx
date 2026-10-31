@@ -9,8 +9,11 @@ import {
   deleteUser,
   fetchAdminLoginLogs,
   deleteAdminLoginLogs,
-  exportBackup,
+  prepareBackup,
+  startBackupDownload,
   importBackup,
+  readBackupHeader,
+  MAX_BACKUP_BYTES,
 } from '../api';
 
 const PASSWORD_MIN_LENGTH = 12;
@@ -455,107 +458,132 @@ function AdminLoginLogsSection() {
 
 // ── Backup section ────────────────────────────────────────────────────────────
 
-interface BackupSummary {
-  exportedAt: string;
-  users: number;
-  withRecords: number;
-  loginLogs: number;
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  const exponent = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** exponent;
+  return `${value.toFixed(exponent === 0 ? 0 : 1)} ${units[exponent]}（${bytes.toLocaleString('en-US')} bytes）`;
 }
 
 function BackupSection() {
   // ── Export state ──
   const [showExportConfirm, setShowExportConfirm] = useState(false);
   const [exportPassword, setExportPassword] = useState('');
-  const [exporting, setExporting] = useState(false);
+  const [preparing, setPreparing] = useState(false);
   const [exportError, setExportError] = useState('');
   const [exportSuccess, setExportSuccess] = useState('');
+  const exportAbortRef = useRef<AbortController | null>(null);
 
   // ── Import state ──
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [fileText, setFileText] = useState<string | null>(null);
-  const [fileSummary, setFileSummary] = useState<BackupSummary | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [fileExportedAt, setFileExportedAt] = useState<string | null>(null);
   const [fileError, setFileError] = useState('');
   const [confirmText, setConfirmText] = useState('');
   const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null);
   const [importError, setImportError] = useState('');
   const [importResult, setImportResult] = useState<{ message: string; stats: ImportStats } | null>(null);
+  const uploadRef = useRef<{ cancel(): void } | null>(null);
 
   async function handleExport() {
     setExportError('');
     setExportSuccess('');
-    setExporting(true);
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
+    setPreparing(true);
     try {
-      const { blob, filename } = await exportBackup(exportPassword);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-      setExportSuccess('備份檔已下載，請妥善保管（內含密碼雜湊等敏感資料）');
+      const result = await prepareBackup(exportPassword, controller.signal);
+      startBackupDownload(result);
+      setExportSuccess(
+        `已開始下載 ${result.filename}（${formatBytes(result.bytes)}）。20 GB 備份需要一段時間，完成前請勿關閉瀏覽器的下載管理員。`,
+      );
       setExportPassword('');
       setShowExportConfirm(false);
     } catch (e) {
       setExportError((e as Error).message);
     } finally {
-      setExporting(false);
+      exportAbortRef.current = null;
+      setPreparing(false);
     }
   }
 
+  function cancelExport() {
+    exportAbortRef.current?.abort();
+  }
+
+  function resetImport() {
+    setFile(null);
+    setFileExportedAt(null);
+    setConfirmText('');
+    setProgress(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const selected = e.target.files?.[0];
+    if (!selected) return;
     setFileError('');
     setImportError('');
     setImportResult(null);
+    setProgress(null);
     setConfirmText('');
-    setFileSummary(null);
-    setFileText(null);
-    void (async () => {
-      try {
-        const text = (await file.text()).replace(/^\uFEFF/, '');
-        const json: unknown = JSON.parse(text);
-        if (
-          typeof json !== 'object' || json === null ||
-          (json as Record<string, unknown>).format !== 'nhi-dashboard-backup'
-        ) {
-          throw new Error('not-backup');
-        }
-        const obj = json as Record<string, unknown>;
-        const counts = obj.counts as { users?: unknown; withRecords?: unknown; loginLogs?: unknown } | undefined;
-        setFileSummary({
-          exportedAt: typeof obj.exportedAt === 'string' ? obj.exportedAt : '',
-          users: typeof counts?.users === 'number' ? counts.users : 0,
-          withRecords: typeof counts?.withRecords === 'number' ? counts.withRecords : 0,
-          loginLogs: typeof counts?.loginLogs === 'number' ? counts.loginLogs : 0,
-        });
-        setFileText(text);
-      } catch {
-        setFileError('無法讀取備份檔：不是本系統匯出的備份 JSON');
+    setFile(null);
+    setFileExportedAt(null);
+
+    if (selected.size > MAX_BACKUP_BYTES) {
+      setFileError(`備份檔為 ${formatBytes(selected.size)}，超過 20 GB（20,000,000,000 bytes）上限；伺服器不會讀取或變更現有資料。`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    if (selected.size === 0) {
+      setFileError('備份檔是空的');
+      return;
+    }
+
+    // Preview only; the server validates every record and attachment before writing.
+    void readBackupHeader(selected).then((header) => {
+      if (header.format !== null && header.format !== 'nhi-dashboard-backup') {
+        setFileError('這不是本系統匯出的備份檔');
+        return;
       }
-    })();
+      if (header.version !== null && header.version !== 1) {
+        setFileError(`備份檔版本不支援（version ${header.version}）`);
+        return;
+      }
+      setFile(selected);
+      setFileExportedAt(header.exportedAt);
+    }).catch(() => {
+      // The head is only a convenience preview — the server still validates the whole file.
+      setFile(selected);
+    });
   }
 
   async function handleImport() {
-    if (!fileText || confirmText !== '還原') return;
+    if (!file || confirmText !== '還原' || importing) return;
     if (!window.confirm('最後確認：還原將完全取代現有所有資料，且無法復原。確定執行？')) return;
     setImportError('');
+    setImportResult(null);
+    setProgress({ loaded: 0, total: file.size });
     setImporting(true);
+    const upload = importBackup(file, (loaded, total) => setProgress({ loaded, total }));
+    uploadRef.current = upload;
     try {
-      const result = await importBackup(fileText);
+      const result = await upload.promise;
       setImportResult(result);
-      setFileText(null);
-      setFileSummary(null);
-      setConfirmText('');
-      if (fileInputRef.current) fileInputRef.current.value = '';
+      resetImport();
     } catch (e) {
       setImportError((e as Error).message);
     } finally {
+      uploadRef.current = null;
       setImporting(false);
     }
   }
 
-  const importingEnabled = Boolean(fileText) && confirmText === '還原' && !importing;
+  const importingEnabled = Boolean(file) && confirmText === '還原' && !importing;
+  const percent = progress && progress.total > 0 ? Math.min(100, Math.floor((progress.loaded / progress.total) * 100)) : 0;
+  const uploadFinished = Boolean(progress) && progress!.loaded >= progress!.total;
 
   return (
     <section className="card">
@@ -563,6 +591,11 @@ function BackupSection() {
       <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
         匯出完整資料備份（帳號、設定、登入記錄與健康紀錄），或從備份檔還原。
         健康紀錄在備份中保持原有加密狀態，還原後使用者仍可用原「資料加密密碼」解鎖。
+      </p>
+      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+        單一備份上限 20 GB（20,000,000,000 bytes 的 UTF-8 JSON，含所有帳號、Base64 加密附件與中繼資料）。
+        匯出與還原都以串流處理：伺服器只在中繼資料、每筆紀錄與每個附件都驗證通過後才開始還原，
+        因此大檔不會被整份載入記憶體，但需要足夠的暫存磁碟空間。
       </p>
 
       {/* Export */}
@@ -593,19 +626,26 @@ function BackupSection() {
               placeholder="管理員密碼"
               autoComplete="new-password"
               aria-label="管理員密碼確認"
-              onKeyDown={(e) => { if (e.key === 'Enter' && exportPassword) void handleExport(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' && exportPassword && !preparing) void handleExport(); }}
             />
             <div className="flex gap-2">
-              <button onClick={() => void handleExport()} disabled={exporting || !exportPassword} className="btn-primary">
-                {exporting ? '匯出中…' : '確認匯出'}
+              <button onClick={() => void handleExport()} disabled={preparing || !exportPassword} className="btn-primary">
+                {preparing ? '準備備份中…' : '確認匯出'}
               </button>
               <button
                 onClick={() => { setShowExportConfirm(false); setExportPassword(''); setExportError(''); }}
                 className="btn-secondary"
+                disabled={preparing}
               >
                 取消
               </button>
             </div>
+            {preparing && (
+              <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400" aria-live="polite">
+                <span>伺服器正在暫存並驗證完整備份，20 GB 可能需要數十分鐘。</span>
+                <button onClick={cancelExport} className="btn-secondary">中止匯出</button>
+              </div>
+            )}
           </div>
         )}
         {exportError && <p className="text-red-500 text-xs mt-2 msg-fade" role="alert">{exportError}</p>}
@@ -622,7 +662,7 @@ function BackupSection() {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".json,.JSON"
+            accept=".json,.JSON,application/json"
             className="hidden"
             onChange={handleFileChange}
             aria-label="選擇備份檔"
@@ -631,13 +671,17 @@ function BackupSection() {
 
         {fileError && <p className="text-red-500 text-xs mt-2 msg-fade" role="alert">{fileError}</p>}
 
-        {fileSummary && (
+        {file && (
           <div className="mt-3 rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm">
-            <p className="text-gray-700 dark:text-gray-300">
-              備份時間：{fileSummary.exportedAt ? new Date(fileSummary.exportedAt).toLocaleString('zh-TW') : '—'}
-            </p>
+            <p className="text-gray-700 dark:text-gray-300 break-all">{file.name}</p>
+            <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">{formatBytes(file.size)}</p>
+            {fileExportedAt && (
+              <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">
+                備份時間：{new Date(fileExportedAt).toLocaleString('zh-TW')}
+              </p>
+            )}
             <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">
-              {fileSummary.users} 位使用者、{fileSummary.withRecords} 份健康紀錄、{fileSummary.loginLogs} 筆登入記錄
+              使用者、紀錄與附件數量由伺服器在還原前完整驗證；驗證失敗時現有資料不會被變更。
             </p>
 
             <div className="mt-3 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3">
@@ -655,10 +699,28 @@ function BackupSection() {
                 placeholder='請輸入「還原」以啟用按鈕'
                 aria-label="還原確認文字"
                 maxLength={2}
+                disabled={importing}
               />
-              <button onClick={() => void handleImport()} disabled={!importingEnabled} className="mt-2 btn-danger">
-                {importing ? '還原中…' : '開始還原'}
-              </button>
+              <div className="flex items-center gap-2 mt-2">
+                <button onClick={() => void handleImport()} disabled={!importingEnabled} className="btn-danger">
+                  {importing ? (uploadFinished ? '驗證與還原中…' : '上傳中…') : '開始還原'}
+                </button>
+                {importing && (
+                  <button onClick={() => uploadRef.current?.cancel()} className="btn-secondary">取消還原</button>
+                )}
+              </div>
+              {progress && (
+                <div className="mt-2" aria-live="polite">
+                  <div className="h-1.5 w-full rounded-full bg-red-200 dark:bg-red-900 overflow-hidden">
+                    <div className="h-full bg-red-600 dark:bg-red-400 transition-all" style={{ width: `${percent}%` }} />
+                  </div>
+                  <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                    {uploadFinished
+                      ? '上傳完成，伺服器正在驗證並還原，請勿關閉此頁面。'
+                      : `已上傳 ${formatBytes(progress.loaded)} / ${formatBytes(progress.total)}（${percent}%）`}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}

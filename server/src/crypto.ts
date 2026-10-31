@@ -252,7 +252,14 @@ export async function writeEncrypted(file: string, key: Buffer, obj: unknown): P
   const envelope = encryptJson(key, obj);
   // Write to a temp file then atomically rename over the target. A concurrent
   // reader never sees a partially-written file.
-  const tmp = `${file}.tmp`;
-  await writePrivateFile(tmp, JSON.stringify(envelope));
-  await fs.rename(tmp, file);
+  const tmp = `${file}.${crypto.randomUUID()}.tmp`;
+  try {
+    await writePrivateFile(tmp, JSON.stringify(envelope));
+    await fs.rename(tmp, file);
+  } catch (err) {
+    await fs.unlink(tmp).catch((cleanupError: unknown) => {
+      if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') throw cleanupError;
+    });
+    throw err;
+  }
 }

@@ -28,6 +28,9 @@ export const HIDEABLE_SECTIONS: HideableSection[] = [
   { key: tabSectionKey('檢驗'), label: '檢驗分頁' },
   { key: tabSectionKey('牙科'), label: '牙科分頁' },
   { key: tabSectionKey('預防保健'), label: '預防保健分頁' },
+  { key: tabSectionKey('醫療報告'), label: '醫療報告分頁' },
+  { key: tabSectionKey('用藥'), label: '用藥分頁' },
+  { key: tabSectionKey('同步紀錄'), label: '同步紀錄分頁' },
 ];
 
 // ── Store shape ─────────────────────────────────────────────────────────────────

@@ -115,7 +115,7 @@ export function me(): Promise<UserProfile> {
 
 export interface UploadResult {
   message: string;
-  stats: Record<string, { added: number; skipped: number }>;
+  stats: Record<string, { added: number; skipped: number; updated?: number }>;
 }
 
 export interface ClientEncryptedRecords {
@@ -127,6 +127,8 @@ export interface ClientEncryptedRecords {
   salt: string;
   iv: string;
   data: string;
+  attachmentIds?: string[];
+  revision?: string;
 }
 
 export interface HealthDataResponse {
@@ -134,22 +136,33 @@ export interface HealthDataResponse {
   needsClientEncryptionMigration: boolean;
 }
 
-export function fetchHealthData(): Promise<HealthDataResponse> {
-  return request('/data');
+export function fetchHealthData(signal?: AbortSignal): Promise<HealthDataResponse> {
+  return request('/data', { signal });
 }
 
-export function fetchLegacyHealthData(): Promise<{ records: StoredRecords }> {
-  return request('/data/legacy');
+export function fetchLegacyHealthData(signal?: AbortSignal): Promise<{ records: StoredRecords }> {
+  return request('/data/legacy', { signal });
 }
 
 export function uploadEncryptedHealthData(
   envelope: ClientEncryptedRecords,
-  stats: Record<string, { added: number; skipped: number }>,
+  stats: Record<string, { added: number; skipped: number; updated?: number }>,
+  expectedRevision?: string | null,
+  signal?: AbortSignal,
 ): Promise<UploadResult> {
   return request('/data/upload', {
     method: 'POST',
-    body: JSON.stringify({ envelope, stats }),
+    signal,
+    body: JSON.stringify({ envelope, stats, expectedRevision }),
   });
+}
+
+export function uploadEncryptedAttachment(id: string, envelope: ClientEncryptedRecords, signal?: AbortSignal): Promise<{ ok: boolean }> {
+  return request(`/data/attachments/${encodeURIComponent(id)}`, { method: 'PUT', signal, body: JSON.stringify({ envelope }) });
+}
+
+export function fetchEncryptedAttachment(id: string): Promise<{ envelope: ClientEncryptedRecords }> {
+  return request(`/data/attachments/${encodeURIComponent(id)}`);
 }
 
 // ── Account settings ──────────────────────────────────────────────────────────
@@ -303,44 +316,102 @@ export interface ImportStats {
   warnings: string[];
 }
 
-export interface BackupDownload {
-  blob: Blob;
+export const MAX_BACKUP_BYTES = 20_000_000_000;
+
+export interface BackupPrepareResult {
+  downloadUrl: string;
   filename: string;
+  bytes: number;
 }
 
-/** POST /admin/backup/export — verify password, return the backup as a downloadable Blob. */
-export async function exportBackup(password: string): Promise<BackupDownload> {
+export interface BackupHeader {
+  exportedAt: string | null;
+  version: number | null;
+  format: string | null;
+}
+
+/** Read only the first few KiB so previewing a 20 GB file never loads it into memory. */
+export async function readBackupHeader(file: Blob): Promise<BackupHeader> {
+  const head = (await file.slice(0, 8192).text()).replace(/^\uFEFF/, '');
+  const pick = (name: string) => new RegExp(`"${name}"\\s*:\\s*"([^"]*)"`).exec(head)?.[1] ?? null;
+  const version = /"version"\s*:\s*(\d+)/.exec(head)?.[1];
+  return {
+    exportedAt: pick('exportedAt'),
+    version: version === undefined ? null : Number(version),
+    format: pick('format'),
+  };
+}
+
+/** POST /admin/backup/export?prepare=true — stage the file server-side, get a native download URL. */
+export async function prepareBackup(password: string, signal?: AbortSignal): Promise<BackupPrepareResult> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/admin/backup/export`, {
+    res = await fetch(`${BASE}/admin/backup/export?prepare=true`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
+      signal,
     });
-  } catch {
-    throw new Error('無法連線至伺服器，請確認後端是否已啟動（npm run server）');
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') throw new Error('已取消匯出', { cause: error });
+    throw new Error('無法連線至伺服器，請確認後端是否已啟動（npm run server）', { cause: error });
   }
 
   const text = await res.text();
-  if (!res.ok) {
-    let error = `伺服器錯誤 (${res.status})`;
-    try {
-      const parsed = JSON.parse(text) as { error?: string };
-      if (parsed.error) error = parsed.error;
-    } catch { /* non-JSON error body */ }
-    throw new Error(error);
-  }
-
-  const filename =
-    res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] ?? 'nhi-backup.json';
-  return { blob: new Blob([text], { type: 'application/json' }), filename };
+  let data: unknown = null;
+  try { data = JSON.parse(text); } catch { /* handled below */ }
+  if (!res.ok) throw new Error((data as { error?: string } | null)?.error ?? `伺服器錯誤 (${res.status})`);
+  const result = data as BackupPrepareResult | null;
+  if (!result?.downloadUrl) throw new Error('伺服器未回傳下載連結');
+  return result;
 }
 
-/** POST /admin/backup/import — upload the raw backup file text for a full restore. */
-export function importBackup(rawJson: string): Promise<{ message: string; stats: ImportStats }> {
-  return request('/admin/backup/import?confirm=true', {
-    method: 'POST',
-    body: rawJson,
+/** Hand the prepared file to the browser so it streams from disk instead of a JS Blob. */
+export function startBackupDownload(result: BackupPrepareResult): void {
+  const anchor = document.createElement('a');
+  anchor.href = result.downloadUrl;
+  anchor.download = result.filename;
+  anchor.rel = 'noopener';
+  anchor.style.display = 'none';
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+export interface BackupUpload {
+  promise: Promise<{ message: string; stats: ImportStats }>;
+  cancel(): void;
+}
+
+/**
+ * POST /admin/backup/import — stream the selected File straight from disk.
+ * XMLHttpRequest keeps upload progress available for multi-GB restores.
+ */
+export function importBackup(
+  file: Blob,
+  onProgress?: (loadedBytes: number, totalBytes: number) => void,
+): BackupUpload {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise<{ message: string; stats: ImportStats }>((resolve, reject) => {
+    xhr.open('POST', `${BASE}/admin/backup/import?confirm=true`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.upload.onprogress = (event) => {
+      if (onProgress) onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
+    };
+    xhr.onerror = () => reject(new Error('無法連線至伺服器，請確認後端是否已啟動（npm run server）'));
+    xhr.onabort = () => reject(new Error('已取消還原，現有資料未被變更'));
+    xhr.onload = () => {
+      let data: unknown = null;
+      try { data = JSON.parse(xhr.responseText) as unknown; } catch { /* handled below */ }
+      if (xhr.status >= 200 && xhr.status < 300 && data) {
+        resolve(data as { message: string; stats: ImportStats });
+        return;
+      }
+      reject(new Error((data as { error?: string } | null)?.error ?? `伺服器錯誤 (${xhr.status})`));
+    };
+    xhr.send(file);
   });
+  return { promise, cancel: () => xhr.abort() };
 }

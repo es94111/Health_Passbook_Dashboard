@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { requireAdmin } from '../auth.js';
@@ -15,9 +15,36 @@ import {
   updateSettings,
   addLoginLog,
 } from '../store.js';
-import { buildBackupBundle, importBackupBundle } from '../backup.js';
+import { importBackupStream, prepareBackupFile } from '../backupTransfer.js';
+import { BackupDownloads } from '../backupDownloads.js';
+import { BackupSizeError } from '../backupLimits.js';
 
 const router = Router();
+const downloads = new BackupDownloads();
+
+function backupOperation(req: Request, res: Response) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.locals.cancelBodyDeadline?.();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('備份操作超過 24 小時，已中止')), 24 * 60 * 60 * 1000);
+  timer.unref();
+  const abort = () => { if (!res.writableFinished) controller.abort(); };
+  res.once('close', abort);
+  req.once('aborted', abort);
+  return {
+    signal: controller.signal,
+    finish: () => {
+      clearTimeout(timer);
+      res.off('close', abort);
+      req.off('aborted', abort);
+    },
+  };
+}
+
+router.use('/backup', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
 
 // ── Backup rate limiter ───────────────────────────────────────────────────────
 // Export verifies the admin's password — keep attempts low to slow brute force.
@@ -165,10 +192,13 @@ router.get('/users/:id/data', async (req, res) => {
   res.status(403).json({ error: 'Health records are client-side encrypted and cannot be decrypted by admins.' });
 });
 
+// Staged backups live under a dot-directory, which `send` refuses by default.
+const DOWNLOAD_OPTIONS = { cacheControl: false, dotfiles: 'allow' } as const;
+
 // ── POST /api/admin/backup/export — decrypt + download full backup ───────────
 // High-sensitivity: response contains plaintext users (incl. password hashes).
 // Requires the admin to re-enter their password, and is audit-logged.
-router.post('/backup/export', backupRateLimit, async (req, res) => {
+router.post('/backup/export', backupRateLimit, async (req, res, next) => {
   const admin = await getUserById(req.user!.userId);
   if (!admin) {
     res.status(401).json({ error: '管理員帳號不存在' });
@@ -189,24 +219,47 @@ router.post('/backup/export', backupRateLimit, async (req, res) => {
     return;
   }
 
-  const bundle = await buildBackupBundle();
+  const operation = backupOperation(req, res);
+  try {
+    const prepared = req.query.prepare === 'true'
+      ? await downloads.prepare(admin.id, () => prepareBackupFile({ signal: operation.signal }))
+      : { backup: await prepareBackupFile({ signal: operation.signal }), token: null };
+    const { backup, token } = prepared;
+    addLoginLog({
+      userId: admin.id, username: admin.username, isAdmin: true, method: 'password', success: true,
+      ip: clientIp(req), timestamp: new Date().toISOString(), action: 'admin-export',
+      note: `users=${backup.counts.users} records=${backup.counts.withRecords} logs=${backup.counts.loginLogs}`,
+    }).catch(() => undefined);
+    if (token) {
+      res.json({ downloadUrl: `/api/admin/backup/download/${token}`, filename: backup.filename, bytes: backup.bytes });
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        res.download(backup.file, backup.filename, DOWNLOAD_OPTIONS, (err) => err ? reject(err) : resolve());
+      }).finally(backup.cleanup);
+    }
+  } catch (err) { next(err); }
+  finally { operation.finish(); }
+});
 
-  addLoginLog({
-    userId: admin.id,
-    username: admin.username,
-    isAdmin: true,
-    method: 'password',
-    success: true,
-    ip: clientIp(req),
-    timestamp: new Date().toISOString(),
-    action: 'admin-export',
-    note: `users=${bundle.counts.users} records=${bundle.counts.withRecords} logs=${bundle.counts.loginLogs}`,
-  }).catch(() => undefined);
-
-  const filename = `nhi-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.json(bundle);
+router.get('/backup/download/:token', async (req, res, next) => {
+  const download = downloads.acquire(req.params.token, req.user!.userId);
+  if (!download) {
+    res.status(404).json({ error: '備份下載不存在或已過期，請重新匯出' });
+    return;
+  }
+  const operation = backupOperation(req, res);
+  const abort = () => res.destroy();
+  operation.signal.addEventListener('abort', abort, { once: true });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      res.download(download.backup.file, download.backup.filename, DOWNLOAD_OPTIONS, (err) => err ? reject(err) : resolve());
+    });
+  } catch (err) { next(err); }
+  finally {
+    operation.signal.removeEventListener('abort', abort);
+    operation.finish();
+    download.release();
+  }
 });
 
 // ── POST /api/admin/backup/import — validate + fully replace current data ────
@@ -218,15 +271,29 @@ router.post('/backup/import', backupRateLimit, async (req, res) => {
     res.status(400).json({ error: '缺少 confirm=true，未經二次確認不得還原' });
     return;
   }
+  if (!req.is('application/json') || (req.headers['content-encoding'] && req.headers['content-encoding'] !== 'identity')) {
+    res.status(415).json({ error: '請直接上傳未壓縮的 JSON 備份檔' });
+    return;
+  }
+  const operation = backupOperation(req, res);
   try {
-    const stats = await importBackupBundle(req.body);
+    const stats = await importBackupStream(req, {
+      signal: operation.signal,
+      ...(req.headers['content-length'] === undefined ? {} : { contentLength: Number(req.headers['content-length']) }),
+    });
     res.json({
       message: `資料已完整還原：${stats.users} 位使用者、${stats.recordsRestored} 份紀錄、${stats.loginLogs} 筆登入記錄`,
       stats,
     });
   } catch (err) {
+    // Close rejected uploads after the response, rather than draining up to 20 GB.
+    if (!req.complete) res.setHeader('Connection', 'close');
+    if (err instanceof BackupSizeError) {
+      res.status(err.status).json({ error: err.message, code: err.code, limitBytes: err.limitBytes });
+      return;
+    }
     res.status(400).json({ error: (err as Error).message });
-  }
+  } finally { operation.finish(); }
 });
 
 // ── GET /api/admin/settings ───────────────────────────────────────────────────
