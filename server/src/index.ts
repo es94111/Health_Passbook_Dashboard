@@ -6,13 +6,11 @@ import authRouter from './routes/auth.js';
 import dataRouter from './routes/data.js';
 import adminRouter from './routes/admin.js';
 import { accountRouter } from './routes/account.js';
+import { createServer } from 'node:http';
+import { BackupSizeError } from './backupLimits.js';
 
-// Load or auto-generate encryption key, then start the HTTP server
-(async () => {
-  await loadMasterKey();
-
+export function createApp() {
   const app = express();
-  const PORT = process.env.PORT ?? 3001;
 
   // In production (Docker) the SPA is served by Express itself — same origin,
   // no CORS needed. CORS_ORIGIN lets you explicitly allowlist external origins
@@ -21,10 +19,31 @@ import { accountRouter } from './routes/account.js';
     ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
     : ['http://localhost:5173', 'http://127.0.0.1:5173'];
   app.use(cors({ origin: corsOrigins, credentials: true }));
-  // Admin backup import can carry every user's full health records — needs a much
-  // larger cap than the general 50mb parser (which skips requests already parsed).
-  app.use('/api/admin/backup/import', express.json({ limit: '200mb' }));
-  app.use(express.json({ limit: '50mb' })); // NHI JSON files can be large
+  app.use((req, res, next) => {
+    // Ordinary request bodies retain a five-minute absolute deadline. Only an
+    // authenticated backup operation may replace it with its 24-hour deadline.
+    const timer = setTimeout(() => {
+      if (req.complete) return;
+      if (res.headersSent) res.destroy();
+      else {
+        res.setHeader('Connection', 'close');
+        res.status(408).json({ error: '上傳逾時' });
+      }
+    }, 5 * 60 * 1000);
+    timer.unref();
+    const cancel = () => clearTimeout(timer);
+    res.locals.cancelBodyDeadline = cancel;
+    req.once('end', cancel);
+    res.once('close', cancel);
+    next();
+  });
+  const parseJson = express.json({ limit: '50mb' });
+  app.use((req, res, next) => {
+    // Authenticate/admin-allowlist first; the import route consumes raw bytes
+    // with backpressure, never a 20 GB express.json/JSON.parse allocation.
+    if (/^\/api\/admin\/backup\/import\/?$/i.test(req.path)) next();
+    else parseJson(req, res, next);
+  });
 
   // Requests without a JSON body (no Content-Type header) leave req.body
   // undefined; a literal `null` body also parses to null. Normalize both to {}
@@ -47,7 +66,7 @@ import { accountRouter } from './routes/account.js';
         "script-src 'self' https://accounts.google.com",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com",
-        "img-src 'self' data: https:",
+        "img-src 'self' data: blob: https:",
         "connect-src 'self' https://accounts.google.com",
         "frame-src https://accounts.google.com",
         "frame-ancestors 'none'",
@@ -83,13 +102,18 @@ import { accountRouter } from './routes/account.js';
   // Global error handler — ensures every error returns JSON, never empty body
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-    console.error(err);
     // Handle Express body-parser errors (e.g. JSON too large, malformed JSON)
     const status = (err as { status?: number; statusCode?: number }).status
       ?? (err as { statusCode?: number }).statusCode
       ?? 500;
-    // Never leak internal error details (file paths, key formats, stack traces)
-    // to clients in production — log them server-side instead.
+    // Body-parser errors can carry the entire submitted body; never log it.
+    console.error('[server] Request failed', { name: err.name, status });
+    if (res.headersSent) { res.destroy(); return; }
+    if (err instanceof BackupSizeError) {
+      res.status(err.status).json({ error: err.message, code: err.code, limitBytes: err.limitBytes });
+      return;
+    }
+    // Never expose internal file paths, key formats, or stack traces to production clients.
     const message =
       process.env.NODE_ENV === 'production'
         ? '伺服器錯誤'
@@ -97,10 +121,24 @@ import { accountRouter } from './routes/account.js';
     res.status(status).json({ error: message });
   });
 
-  app.listen(PORT, () => {
-    console.log(`健康存摺伺服器啟動：http://localhost:${PORT}`);
+  return app;
+}
+
+export function createHttpServer() {
+  // Per-request deadlines above replace Node's global five-minute body timer;
+  // header parsing remains bounded independently of backup upload duration.
+  return createServer({ requestTimeout: 0, headersTimeout: 60_000 }, createApp());
+}
+
+if (require.main === module) {
+  (async () => {
+    await loadMasterKey();
+    const PORT = process.env.PORT ?? 3001;
+    createHttpServer().listen(PORT, () => {
+      console.log(`健康存摺伺服器啟動：http://localhost:${PORT}`);
+    });
+  })().catch((err: Error) => {
+    console.error('[startup] 致命錯誤，伺服器無法啟動：', err);
+    process.exit(1);
   });
-})().catch((err: Error) => {
-  console.error('[startup] 致命錯誤，伺服器無法啟動：', err);
-  process.exit(1);
-});
+}

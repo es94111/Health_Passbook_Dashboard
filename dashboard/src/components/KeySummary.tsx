@@ -2,15 +2,15 @@ import { useMemo, useState } from 'react';
 import type { NHIData } from '../parsers/types';
 import { useUserStore } from '../UserStore';
 import {
-  computeLabSummaries,
   computeMedicationSummaries,
-  buildAlerts,
-  listLabItems,
   listMedications,
   formatDay,
-  type LabSummary,
   type MedicationSummary,
 } from '../lib/keySummary';
+import {
+  buildLabSeries, buildLabSeriesAlerts, computeLabSeriesSummaries, isLabSeriesPinned,
+  labReference, labSeriesDescription, labSeriesPinTarget, type LabSeriesSummary,
+} from '../lib/clinicalLabSeries';
 
 interface Props {
   data: NHIData;
@@ -18,11 +18,11 @@ interface Props {
 
 // ── Small presentational helpers ────────────────────────────────────────────────
 
-function TrendMark({ s }: { s: LabSummary }) {
+function TrendMark({ s }: { s: LabSeriesSummary }) {
   if (s.trend === null || s.delta === null) {
     return <span className="text-xs text-gray-400 dark:text-gray-500">首次紀錄</span>;
   }
-  const improving = (s.status === 'high' || s.status === 'low') && !s.worsening && s.delta !== 0;
+  const improving = !s.referenceChanged && (s.status === 'high' || s.status === 'low') && !s.worsening && s.delta !== 0;
   const color = s.worsening
     ? 'text-red-600 dark:text-red-400'
     : improving
@@ -39,7 +39,7 @@ function TrendMark({ s }: { s: LabSummary }) {
   );
 }
 
-const STATUS_META: Record<LabSummary['status'], { label: string; badge: string; value: string }> = {
+const STATUS_META: Record<LabSeriesSummary['status'], { label: string; badge: string; value: string }> = {
   high: {
     label: '偏高',
     badge: 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300',
@@ -66,38 +66,40 @@ function fmtValue(v: number): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
 }
 
-function LabCard({ s, onUnpin }: { s: LabSummary; onUnpin: () => void }) {
+function LabCard({ s, onUnpin }: { s: LabSeriesSummary; onUnpin: () => void }) {
   const meta = STATUS_META[s.status];
-  const ref =
-    s.refLow !== null && s.refHigh !== null ? `${s.refLow}–${s.refHigh}`
-    : s.refHigh !== null ? `≤ ${s.refHigh}`
-    : s.refLow !== null ? `≥ ${s.refLow}` : '—';
+  const description = labSeriesDescription(s);
   return (
-    <div className="relative rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+    <article aria-label={`${s.subItem}（${description}${s.code ? ` · ${s.code}` : ''}）`} className="relative min-w-0 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
       <button
+        type="button"
         onClick={onUnpin}
         title="取消釘選"
-        aria-label={`取消釘選 ${s.subItem}`}
+        aria-label={`取消釘選 ${s.subItem}（${description}）`}
         className="absolute top-2 right-2 text-amber-500 hover:text-gray-400 text-sm leading-none cursor-pointer"
       >
         ★
       </button>
       <div className="flex items-start justify-between pr-5">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate">{s.subItem}</div>
-          <div className="text-xs text-gray-400 dark:text-gray-500 truncate">{s.testGroup}</div>
+          <h4 className="text-sm font-medium text-gray-800 dark:text-gray-100 break-words">{s.subItem}</h4>
+          <div className="text-xs text-gray-500 dark:text-gray-400 break-words">{s.testGroup}</div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 break-all">{description}</p>
+          {s.code && <p className="text-xs font-mono text-gray-500 dark:text-gray-400 break-all">代碼：{s.code}</p>}
         </div>
       </div>
-      <div className="mt-2 flex items-baseline gap-2">
+      <div className="mt-2 flex flex-wrap items-baseline gap-2">
         <span className={`text-2xl font-bold tabular-nums ${meta.value}`}>{fmtValue(s.latestValue)}</span>
+        {s.unit && <span className="text-xs font-mono text-gray-500 dark:text-gray-400">{s.unit}</span>}
         <span className={`badge ${meta.badge}`}>{meta.label}</span>
       </div>
       <div className="mt-1"><TrendMark s={s} /></div>
-      <div className="mt-2 flex justify-between text-xs text-gray-400 dark:text-gray-500 font-mono">
-        <span>參考 {ref}</span>
-        <span>{formatDay(s.latestDate)}</span>
+      {s.referenceChanged && <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">參考區間已變更；僅比較同序列數值。</p>}
+      <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs text-gray-500 dark:text-gray-400 font-mono">
+        <span className="break-words">本次參考 {labReference(s)}</span>
+        <span>{formatDay(s.latestDate)} · {s.readingsCount} 筆</span>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -137,12 +139,13 @@ function PinPicker({ data, onClose }: { data: NHIData; onClose: () => void }) {
   const [tab, setTab] = useState<'lab' | 'med'>('lab');
   const [q, setQ] = useState('');
 
-  const labItems = useMemo(() => listLabItems(data.labResults), [data.labResults]);
+  const labItems = useMemo(() => buildLabSeries(data.labResults), [data.labResults]);
   const medItems = useMemo(() => listMedications(data.visits), [data.visits]);
 
   const query = q.trim().toLowerCase();
   const filteredLabs = query
-    ? labItems.filter((o) => o.subItem.toLowerCase().includes(query) || o.testGroup.toLowerCase().includes(query))
+    ? labItems.filter(series => [...series.subItems, ...series.testGroups, series.code, labSeriesDescription(series)]
+      .some(value => value.toLowerCase().includes(query)))
     : labItems;
   const filteredMeds = query
     ? medItems.filter((o) => o.name.toLowerCase().includes(query) || o.code.toLowerCase().includes(query))
@@ -196,11 +199,13 @@ function PinPicker({ data, onClose }: { data: NHIData; onClose: () => void }) {
               <p className="text-sm text-gray-400 text-center py-6">沒有符合的檢驗項目</p>
             ) : (
               filteredLabs.map((o) => {
-                const pinned = store.isLabPinned(o.subItem);
+                const pinned = isLabSeriesPinned(o, store.preferences.pinnedLabItems);
                 return (
                   <button
-                    key={o.subItem}
-                    onClick={() => store.toggleLabPin(o.subItem)}
+                    key={o.key}
+                    type="button"
+                    aria-pressed={pinned}
+                    onClick={() => store.toggleLabPin(labSeriesPinTarget(o, store.preferences.pinnedLabItems))}
                     className="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-left hover:bg-gray-50 dark:hover:bg-gray-700/60 cursor-pointer"
                   >
                     <span className={`text-base leading-none ${pinned ? 'text-amber-500' : 'text-gray-300 dark:text-gray-600'}`}>
@@ -208,9 +213,10 @@ function PinPicker({ data, onClose }: { data: NHIData; onClose: () => void }) {
                     </span>
                     <span className="flex-1 min-w-0">
                       <span className="block text-sm text-gray-800 dark:text-gray-100 truncate">{o.subItem}</span>
-                      <span className="block text-xs text-gray-400 dark:text-gray-500 truncate">{o.testGroup} · {o.count} 筆</span>
+                      <span className="block text-xs text-gray-500 dark:text-gray-400 break-words">{o.testGroup} · {o.records.length} 筆</span>
+                      <span className="block text-xs text-gray-500 dark:text-gray-400 break-all">{labSeriesDescription(o)}{o.code ? ` · ${o.code}` : ''}</span>
                     </span>
-                    <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">{formatDay(o.latestDate)}</span>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">{formatDay(o.records[o.records.length - 1].date)}</span>
                   </button>
                 );
               })
@@ -259,14 +265,14 @@ export default function KeySummary({ data }: Props) {
   const { pinnedLabItems, pinnedMedications } = store.preferences;
 
   const labSummaries = useMemo(
-    () => computeLabSummaries(data.labResults, pinnedLabItems),
+    () => computeLabSeriesSummaries(data.labResults, pinnedLabItems),
     [data.labResults, pinnedLabItems],
   );
   const medSummaries = useMemo(
     () => computeMedicationSummaries(data.visits, pinnedMedications),
     [data.visits, pinnedMedications],
   );
-  const alerts = useMemo(() => buildAlerts(labSummaries), [labSummaries]);
+  const alerts = useMemo(() => buildLabSeriesAlerts(labSummaries), [labSummaries]);
   const visibleAlerts = alerts.filter((a) => !store.isAlertAcknowledged(a.id));
 
   const hasPins = pinnedLabItems.length > 0 || pinnedMedications.length > 0;
@@ -328,7 +334,7 @@ export default function KeySummary({ data }: Props) {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   {labSummaries.map((s) => (
-                    <LabCard key={s.subItem} s={s} onUnpin={() => store.toggleLabPin(s.subItem)} />
+                    <LabCard key={s.key} s={s} onUnpin={() => store.toggleLabPin(labSeriesPinTarget(s, pinnedLabItems))} />
                   ))}
                 </div>
               )}

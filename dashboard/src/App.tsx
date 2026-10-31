@@ -14,6 +14,9 @@ import LabTrendCharts from './components/LabTrendCharts';
 import BilledItemsChart from './components/BilledItemsChart';
 import VaccinationCard from './components/VaccinationCard';
 import CheckupReportList from './components/CheckupReportList';
+import MedicalReportList from './components/MedicalReportList';
+import MedicationList from './components/MedicationList';
+import ImportHistory from './components/ImportHistory';
 import DentalVisitList from './components/DentalVisitList';
 import HospitalizationList from './components/HospitalizationList';
 import AccountSettingsPage from './pages/AccountSettingsPage';
@@ -33,8 +36,8 @@ function dataReducer(_state: NHIData | null, action: DataAction): NHIData | null
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
-type Tab = '門診' | '住院' | '檢驗' | '牙科' | '預防保健';
-const TABS: Tab[] = ['門診', '住院', '檢驗', '牙科', '預防保健'];
+type Tab = '門診' | '住院' | '檢驗' | '牙科' | '預防保健' | '醫療報告' | '用藥' | '同步紀錄';
+const TABS: Tab[] = ['門診', '住院', '檢驗', '牙科', '預防保健', '醫療報告', '用藥', '同步紀錄'];
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
 
@@ -140,7 +143,7 @@ function DashboardPage({
           <div
             role="tablist"
             aria-label="資料分類"
-            className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit"
+            className="flex flex-wrap gap-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 w-fit max-w-full"
           >
             {visibleTabs.map((tab) => (
               <button
@@ -168,7 +171,7 @@ function DashboardPage({
           </div>
         )}
         {currentTab === '檢驗' && (
-          <LabTrendCharts labResults={nhiData.labResults} />
+          <LabTrendCharts labResults={nhiData.labResults} textLabResults={nhiData.textLabResults} />
         )}
         {currentTab === '住院' && (
           <HospitalizationList hospitalizations={nhiData.hospitalizations} />
@@ -176,6 +179,13 @@ function DashboardPage({
         {currentTab === '牙科' && (
           <DentalVisitList dentalVisits={nhiData.dentalVisits} />
         )}
+        {currentTab === '醫療報告' && (
+          <MedicalReportList reports={nhiData.medicalReports} loadAttachment={nhiData.loadAttachment} />
+        )}
+        {currentTab === '用藥' && (
+          <MedicationList medications={nhiData.medications} />
+        )}
+        {currentTab === '同步紀錄' && <ImportHistory data={nhiData} onImport={() => dispatch({ type: 'CLEAR' })} />}
         {currentTab === '預防保健' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <VaccinationCard vaccinations={nhiData.vaccinations} />
