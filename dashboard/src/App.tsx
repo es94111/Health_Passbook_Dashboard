@@ -1,4 +1,4 @@
-import { useCallback, useReducer, useEffect, useState } from 'react';
+import { useCallback, useMemo, useReducer, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router';
 import type { NHIData } from './parsers/types';
 import type { ClientEncryptedRecords, UserProfile } from './api';
@@ -15,6 +15,7 @@ import BilledItemsChart from './components/BilledItemsChart';
 import VaccinationCard from './components/VaccinationCard';
 import CheckupReportList from './components/CheckupReportList';
 import MedicalReportList from './components/MedicalReportList';
+import ImagingReportList from './components/ImagingReportList';
 import MedicationList from './components/MedicationList';
 import ImportHistory from './components/ImportHistory';
 import DentalVisitList from './components/DentalVisitList';
@@ -36,8 +37,8 @@ function dataReducer(_state: NHIData | null, action: DataAction): NHIData | null
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
-type Tab = '門診' | '住院' | '檢驗' | '牙科' | '預防保健' | '醫療報告' | '用藥' | '同步紀錄';
-const TABS: Tab[] = ['門診', '住院', '檢驗', '牙科', '預防保健', '醫療報告', '用藥', '同步紀錄'];
+type Tab = '門診' | '住院' | '檢驗' | '牙科' | '預防保健' | '醫療報告' | '影像報告' | '用藥' | '同步紀錄';
+const TABS: Tab[] = ['門診', '住院', '檢驗', '牙科', '預防保健', '醫療報告', '影像報告', '用藥', '同步紀錄'];
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
 
@@ -66,6 +67,13 @@ function DashboardPage({
     const last = store.preferences.lastActiveTab;
     return last && (TABS as string[]).includes(last) ? (last as Tab) : '門診';
   });
+  const reportGroups = useMemo(() => {
+    const reports = nhiData?.medicalReports ?? [];
+    return {
+      imaging: reports.filter((report) => report.kind === 'imaging'),
+      general: reports.filter((report) => report.kind !== 'imaging'),
+    };
+  }, [nhiData]);
 
   if (!nhiData) {
     return (
@@ -180,7 +188,10 @@ function DashboardPage({
           <DentalVisitList dentalVisits={nhiData.dentalVisits} />
         )}
         {currentTab === '醫療報告' && (
-          <MedicalReportList reports={nhiData.medicalReports} loadAttachment={nhiData.loadAttachment} />
+          <MedicalReportList reports={reportGroups.general} loadAttachment={nhiData.loadAttachment} />
+        )}
+        {currentTab === '影像報告' && (
+          <ImagingReportList reports={reportGroups.imaging} loadAttachment={nhiData.loadAttachment} />
         )}
         {currentTab === '用藥' && (
           <MedicationList medications={nhiData.medications} />

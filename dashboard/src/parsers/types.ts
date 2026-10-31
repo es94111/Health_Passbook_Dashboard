@@ -76,6 +76,23 @@ export interface MedicalAttachment {
   size?: number;
 }
 
+export interface ImagingSeries {
+  number: number;
+  modality: string;
+  description: string;
+  bodySite: string;
+  instances: number;
+}
+
+export interface ImagingDetails {
+  modalities: string[];
+  bodySites: string[];
+  series: ImagingSeries[];
+  instanceCount: number;
+  status: string;
+  studyDescription: string;
+}
+
 export interface MedicalReport extends SourcedRecord {
   id: string;
   date: Date | null;
@@ -85,6 +102,8 @@ export interface MedicalReport extends SourcedRecord {
   attachments: MedicalAttachment[];
   relatedResources: string[];
   externalAttachmentCount: number;
+  kind: 'imaging' | 'general';
+  imaging?: ImagingDetails;
   rawResource: Record<string, unknown>;
 }
 

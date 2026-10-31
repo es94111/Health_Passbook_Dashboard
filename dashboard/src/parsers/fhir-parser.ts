@@ -1,4 +1,4 @@
-import type { Hospitalization, LabResult, MedicalReport, MedicationRecord, NHIData, RecordOrigin, TextLabResult, Vaccination, Visit } from './types';
+import type { Hospitalization, ImagingDetails, ImagingSeries, LabResult, MedicalReport, MedicationRecord, NHIData, RecordOrigin, TextLabResult, Vaccination, Visit } from './types';
 import { array, canonicalJson, concept, fhirDate, object, referenceIndex, resourceSource, string, type FhirObject } from './fhir-common';
 import { normalizeMedicalAttachment } from '../medicalAttachments';
 
@@ -138,6 +138,103 @@ function referenceRanges(item: FhirObject, parent: FhirObject, unit: string): { 
     refHigh: incompatible || conditional ? null : quantity(range.high), refText: descriptions.filter(Boolean).join(' / ') || undefined };
 }
 
+const IMAGING_TEXT = /影像|放射|攝影|造影|電腦斷層|磁振|核磁|超音波|x\s*光|radiolog|imaging|tomograph|magnetic resonance|ultrasound|mammogra|fluoroscop|angiogra/i;
+const IMAGING_CODES = new Set(['RAD', 'IMG', 'RX', 'CT', 'MR', 'MRI', 'US', 'CR', 'DX', 'MG', 'PT', 'NM', 'XA', 'RF', 'BMD', 'ES', 'TG', 'OCT', 'IVUS']);
+
+type Resolve = (value: unknown, owner?: FhirObject) => FhirObject | undefined;
+
+function codingLabel(value: unknown): string {
+  const item = object(value);
+  return string(item.display) || string(item.code);
+}
+
+function imagingLabel(value: unknown): string {
+  return concept(value) || codingLabel(value);
+}
+
+function imagingConcepts(value: unknown): string[] {
+  return array(value).map(imagingLabel).filter(Boolean);
+}
+
+function firstImagingLabel(value: unknown): string {
+  return Array.isArray(value) ? imagingConcepts(value)[0] || '' : imagingLabel(value);
+}
+
+function imagingConcept(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(imagingConcept);
+  const label = imagingLabel(value);
+  if (label && IMAGING_TEXT.test(label)) return true;
+  const codes = [...array(object(value).coding).map(item => string(object(item).code).toUpperCase()), string(object(value).code).toUpperCase()];
+  return codes.some(code => !!code && IMAGING_CODES.has(code));
+}
+
+function isImagingReport(resource: FhirObject, type: string): boolean {
+  if (type === 'ImagingStudy' || type === 'Media') return true;
+  if (type === 'DiagnosticReport') {
+    return array(resource.imagingStudy).length > 0 || array(resource.modality).length > 0 ||
+      array(resource.image).length > 0 || array(resource.media).length > 0 ||
+      array(resource.category).some(imagingConcept) || imagingConcept(resource.code);
+  }
+  if (type === 'DocumentReference') {
+    return array(resource.category).some(imagingConcept) || imagingConcept(resource.type) ||
+      IMAGING_TEXT.test(string(resource.description));
+  }
+  return false;
+}
+
+function buildImagingDetails(resource: FhirObject, type: string, resolve: Resolve): ImagingDetails {
+  const modalities = new Set<string>();
+  const bodySites = new Set<string>();
+  const series: ImagingSeries[] = [];
+  let instanceCount = 0;
+  let studyDescription = string(resource.description);
+  const addSeries = (value: unknown) => {
+    const item = object(value);
+    const modality = imagingLabel(item.modality);
+    const bodySite = imagingLabel(item.bodySite);
+    const instances = typeof item.numberOfInstances === 'number' && Number.isFinite(item.numberOfInstances)
+      ? item.numberOfInstances
+      : array(item.instance).length;
+    if (modality) modalities.add(modality);
+    if (bodySite) bodySites.add(bodySite);
+    instanceCount += instances;
+    series.push({ number: series.length + 1, modality, description: string(item.description), bodySite, instances });
+  };
+  if (type === 'ImagingStudy') {
+    array(resource.series).forEach(addSeries);
+    imagingConcepts(resource.modality).forEach(item => modalities.add(item));
+  } else if (type === 'Media') {
+    const modality = imagingLabel(resource.modality);
+    if (modality) modalities.add(modality);
+    const bodySite = imagingLabel(resource.bodySite);
+    if (bodySite) bodySites.add(bodySite);
+    studyDescription = studyDescription || string(object(resource.content).title);
+    const frames = resource.frames;
+    instanceCount = typeof frames === 'number' && Number.isFinite(frames) && frames > 0 ? frames : 1;
+  } else if (type === 'DiagnosticReport') {
+    imagingConcepts(resource.modality).forEach(item => modalities.add(item));
+    imagingConcepts(resource.bodySite).forEach(item => bodySites.add(item));
+    for (const ref of array(resource.imagingStudy)) {
+      const study = resolve(ref, resource);
+      if (study?.resourceType !== 'ImagingStudy') continue;
+      const nested = buildImagingDetails(study, 'ImagingStudy', resolve);
+      nested.modalities.forEach(item => modalities.add(item));
+      nested.bodySites.forEach(item => bodySites.add(item));
+      for (const item of nested.series) series.push({ ...item, number: series.length + 1 });
+      instanceCount += nested.instanceCount;
+      studyDescription = studyDescription || nested.studyDescription;
+    }
+  }
+  return {
+    modalities: [...modalities],
+    bodySites: [...bodySites],
+    series,
+    instanceCount,
+    status: string(resource.status),
+    studyDescription,
+  };
+}
+
 export function parseFhirResources(resources: FhirObject[], entries: FhirObject[] = []): ClinicalData {
   const visits: Visit[] = [];
   const hospitalizations: Hospitalization[] = [];
@@ -178,11 +275,12 @@ export function parseFhirResources(resources: FhirObject[], entries: FhirObject[
     const binary = resolve(raw.url, owner);
     return binary?.resourceType === 'Binary' ? normalizeMedicalAttachment({ ...binary, title: raw.title }) : null;
   };
-  const addReport = (resource: FhirObject, title: string, text: string, rawAttachments: unknown[] = [], related: unknown[] = []) => {
+  const addReport = (resource: FhirObject, title: string, text: string, rawAttachments: unknown[] = [], related: unknown[] = [], imaging: ImagingDetails | null = null) => {
     const attachments = rawAttachments.map(value => attachment(value, resource)).filter(item => item !== null);
-    medicalReports.push({ id: id(resource), date: fhirDate(resource.effectiveDateTime, object(resource.effectivePeriod).start, resource.issued, resource.date, resource.created, resource.started, object(resource.period).start),
+    medicalReports.push({ id: id(resource), date: fhirDate(resource.effectiveDateTime, object(resource.effectivePeriod).start, resource.issued, resource.date, resource.created, resource.createdDateTime, resource.started, object(resource.period).start),
       hospital: getFacility(resource), title, text, attachments, relatedResources: related.map(ref => string(object(ref).reference)).filter(Boolean),
       externalAttachmentCount: rawAttachments.filter(value => string(object(value).url) && !attachment(value, resource)).length,
+      kind: imaging ? 'imaging' : 'general', ...(imaging ? { imaging } : {}),
       rawResource: resource, origins: origins(resource) });
   };
 
@@ -240,19 +338,24 @@ export function parseFhirResources(resources: FhirObject[], entries: FhirObject[
     }
 
     if (['DiagnosticReport', 'DocumentReference', 'ImagingStudy', 'Media'].includes(type)) {
-      const title = concept(resource.code) || concept(resource.type) || string(resource.description) || string(resource.title) || type;
+      const imaging = isImagingReport(resource, type) ? buildImagingDetails(resource, type, resolve) : null;
+      const title = concept(resource.code) || concept(resource.type) || firstImagingLabel(resource.procedureCode) ||
+        string(resource.description) || string(resource.title) || firstImagingLabel(resource.modality) || type;
       const related = [...array(resource.result), ...array(resource.imagingStudy), ...array(resource.basedOn),
-        ...array(resource.derivedFrom), ...array(resource.relatesTo).map(item => object(item).target), ...array(object(resource.context).related)];
+        ...array(resource.derivedFrom), ...array(resource.relatesTo).map(item => object(item).target), ...array(object(resource.context).related),
+        ...array(resource.image), ...array(resource.media).map(item => object(item).link)];
       const observations = array(resource.result).map(ref => resolve(ref, resource)).filter((item): item is FhirObject => item?.resourceType === 'Observation');
       const details = observations.flatMap(result => [result, ...array(result.component).map(object)].map(item => {
         const text = observationText(item);
         return text ? `${concept(item.code) || concept(result.code)}：${text}` : '';
       })).filter(Boolean);
-      const attachments = type === 'DiagnosticReport' ? [...array(resource.presentedForm), ...array(resource.media).map(item => resolve(object(item).link, resource)?.content)]
+      const attachments = type === 'DiagnosticReport' ? [...array(resource.presentedForm), ...array(resource.media).map(item => resolve(object(item).link, resource)?.content), ...array(resource.image).map(ref => resolve(ref, resource)?.content)]
         : type === 'DocumentReference' ? array(resource.content).map(item => object(item).attachment)
           : type === 'Media' ? [resource.content] : [];
-      const series = type === 'ImagingStudy' ? array(resource.series).map(item => `${concept(object(item).modality)} ${string(object(item).description)}`.trim()).filter(Boolean) : [];
-      addReport(resource, title, [string(resource.conclusion), string(resource.description), plainNarrative(object(resource.text).div), ...details, ...series].filter(Boolean).join('\n'), attachments, related);
+      const seriesText = imaging?.series.map(item => [item.description, item.modality, item.bodySite].filter(Boolean).join(' · ')).filter(Boolean) ?? [];
+      const studyText = imaging?.studyDescription && imaging.studyDescription !== string(resource.description) ? [imaging.studyDescription] : [];
+      const notes = array(resource.note).map(item => string(object(item).text)).filter(Boolean);
+      addReport(resource, title, [string(resource.conclusion), string(resource.description), plainNarrative(object(resource.text).div), ...details, ...studyText, ...seriesText, ...notes].filter(Boolean).join('\n'), attachments, related, imaging);
     }
 
     if (type === 'Immunization') {

@@ -1,6 +1,30 @@
 {
-  "currentVersion": "2.3.1",
+  "currentVersion": "2.4.0",
   "releases": [
+    {
+      "version": "2.4.0",
+      "date": "2026-10-31",
+      "title": "影像報告分頁：檢查類型、部位與系列",
+      "type": "feature",
+      "changes": [
+        {
+          "tag": "new",
+          "text": "新增「影像報告」分頁，將 ImagingStudy、Media、影像類 DiagnosticReport 與影像類 DocumentReference 從一般醫療報告分離；醫療報告分頁只保留非影像報告，兩邊皆可對照來源資源與原始內容。"
+        },
+        {
+          "tag": "new",
+          "text": "影像報告卡片顯示檢查類型（modality）、檢查部位、檢查描述、檢查狀態、系列數與影像張數，並列出各系列的編號、描述、類型、部位與張數；報告連結的 ImagingStudy 會一併彙整。"
+        },
+        {
+          "tag": "improved",
+          "text": "影像報告支援全文搜尋與檢查類型篩選，搜尋範圍涵蓋檢查類型、部位、系列描述、院所、資源 ID 與附件標題；沿用既有附件預覽／下載與外部附件不連線提示。"
+        },
+        {
+          "tag": "improved",
+          "text": "「影像報告」分頁納入可隱藏區塊設定與最後瀏覽分頁記憶；FHIR 影像報告日期補上 Media.createdDateTime，讓未提供 issued／created 的影像仍能依檢查時間排序。"
+        }
+      ]
+    },
     {
       "version": "2.3.1",
       "date": "2026-10-31",

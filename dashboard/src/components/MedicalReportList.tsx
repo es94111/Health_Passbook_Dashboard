@@ -17,9 +17,10 @@ export default function MedicalReportList({ reports, loadAttachment }: Props) {
     ...record.relatedResources, ...(record.origins ?? []).map(originLabel), ...record.attachments.map(attachment => attachment.title)]
     .some(value => value.toLocaleLowerCase().includes(normalizedQuery)));
   return (
-    <section className="card" aria-label="醫療報告與影像">
-      <h2 className="section-title mb-2">醫療報告與影像</h2>
+    <section className="card" aria-label="醫療報告">
+      <h2 className="section-title mb-2">醫療報告</h2>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">
+        此分頁列出非影像類報告與文件；影像類檢查請切換至「影像報告」。
         僅使用匯入檔案內可取得的附件；點選預覽或下載後才讀取附件。
         JPG／PNG／WebP 為影像預覽，不是原始 DICOM；PDF 僅提供下載。
         外部附件網址不會連線或下載。

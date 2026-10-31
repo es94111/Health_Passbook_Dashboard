@@ -2,7 +2,7 @@
 
 台灣健保健康存摺（NHI）個人健康資料視覺化儀表板。
 
-**開發版本：2.3.1 — 大檔匯入（單檔上限 4 GiB、病歷文字索引上限 8 GiB，皆以加密分塊保存）；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
+**開發版本：2.4.0 — 新增「影像報告」分頁（檢查類型、部位、系列與影像張數）；大檔匯入（單檔上限 4 GiB、病歷文字索引上限 8 GiB，皆以加密分塊保存）；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
 
 ## 快速開始（本機開發）
 
@@ -35,14 +35,14 @@ npm run dev
    - 第一個註冊的帳號自動成為管理員
 2. 登入後設定至少 12 字元的「資料加密密碼」（不同於登入密碼），選擇健保快易通原生 JSON 或 NHI-FHIR Bridge 匯出的 FHIR R4 Bundle JSON
 3. 若沒有可自動比對的病人識別碼，核對檔案與本帳號屬於同一人，勾選確認後才合併；已知識別碼衝突時無法強制合併
-4. 匯入後可瀏覽門診、住院、檢驗、醫療報告、用藥與「同步紀錄」；重新登入需再次輸入資料加密密碼解鎖
+4. 匯入後可瀏覽門診、住院、檢驗、醫療報告、影像報告、用藥與「同步紀錄」；重新登入需再次輸入資料加密密碼解鎖
 
 ### NHI-FHIR Bridge 匯入方式與限制
 
 1. 在健保署網站自行登入並明確授權 NHI-FHIR Bridge 擴充功能匯出資料，將完整 Bundle JSON 下載到自己的裝置。整合背景見 [參考 PR #59](https://github.com/es94111/Health_Passbook_Dashboard/pull/59)，該連結不是外掛安裝頁。
 2. 於本網站點選「匯入新資料」選檔。網站不索取健保署密碼、Cookie 或登入工作階段；不監聽外掛訊息、不連線至 localhost 接收資料，也不下載外部附件 URL。
 3. 一個帳號僅用於同一人，眷屬應分開建立帳號。每份 Bundle 必須且只能包含一位 Patient；無法解析／跨病人的 subject、patient 等參照會拒絕整份匯入。Patient.id 只是檔內識別，不能證明是同一人。原生 NHI JSON 與沒有共同可靠識別碼的來源，每次都須人工確認。
-4. 支援 Encounter、Observation（含 component）、MedicationRequest／Dispense／Statement、DiagnosticReport、DocumentReference、ImagingStudy、Media、Binary、Immunization 等 R4 資源的專用展示或關聯。未提供專用畫面的資源仍保存在原始來源檔；本程式做結構及關聯驗證，不是完整的 FHIR 規範／醫療正確性驗證器。
+4. 支援 Encounter、Observation（含 component）、MedicationRequest／Dispense／Statement、DiagnosticReport、DocumentReference、ImagingStudy、Media、Binary、Immunization 等 R4 資源的專用展示或關聯；影像類報告獨立於「影像報告」分頁，顯示檢查類型、部位、系列與影像張數，並可依檢查類型篩選。未提供專用畫面的資源仍保存在原始來源檔；本程式做結構及關聯驗證，不是完整的 FHIR 規範／醫療正確性驗證器。
 5. 檢驗的數值、單位、來源與參考文字分別保存；文字、陰陽性、比較符號及缺少日期的結果不冒充精確數字。不同單位／來源分開畫趨勢；參考條件不相容時不套用單一正常範圍。缺少日期不補成今天。
 6. 支援內嵌 JPEG／PNG／WebP 預覽及 PDF 下載（不內嵌執行）；以 Base64、檔頭、大小與 SHA-256 驗證附件。同內容附件只儲存一份，使用隨機 ID，與病歷索引分開以 AES-GCM 加密。非支援類型僅保留原始內容，不提供預覽。
 7. 單次 JSON 上限 **4 GiB**、單一附件解碼後上限 **12 MiB**、每帳號附件索引上限 **512 個**、來源分塊上限 **512 個**；加密前的累計病歷索引（含目前紀錄、歷次原始來源與歷程，但不含已分離的附件位元組）上限 **8 GiB**。

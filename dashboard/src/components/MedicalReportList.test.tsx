@@ -8,6 +8,7 @@ const report = (overrides: Partial<MedicalReport> = {}): MedicalReport => ({
   id: 'report-1', date: null, hospital: '甲醫院', title: '胸部報告', text: '未見明顯異常',
   attachments: [{ id: 'attachment-1', title: '胸部影像', contentType: 'image/jpeg' }],
   relatedResources: ['Observation/o1', 'ImagingStudy/i1'], externalAttachmentCount: 0,
+  kind: 'general',
   rawResource: { resourceType: 'DiagnosticReport', id: 'report-1' },
   origins: [{ format: 'FHIR', resourceType: 'DiagnosticReport', id: 'report-1', source: 'import-a' }], ...overrides,
 });
