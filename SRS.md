@@ -109,6 +109,7 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
+| 2.2.0 | 2026-10-31 | Docker image 發版自動化：標籤觸發多架構推送與 GitHub Release、版號一致性檢查、PR image smoke test、SBOM／provenance attestation 與 release 腳本 |
 | 2.1.0 | 2026-10-31 | 開發中、待真實 Bridge／瀏覽器端到端驗收：備份上限由 200 MiB 提高至 20 GB，匯出改為伺服器暫存後串流下載（短時效票證、Range 續傳、可取消），還原改為串流上傳落盤並在驗證通過後才快照覆寫；新增解析深度／欄位大小上限與重複鍵、不安全附件 ID 拒絕 |
 | 2.0.0 | 2026-10-30 | 開發中、待真實 Bridge／瀏覽器端到端驗收：新增 FHIR R4 匯入、逐次身分確認、加密原始來源與匯入歷程、單位／來源分組與文字檢驗、報告／用藥頁、獨立加密附件及含附件備份還原；保留原生 NHI 相容性，不提供外掛直接同步或 DICOM 取得 |
 | 1.5.3 | 2026-10-30 | 專案改為公開後，Docker 發佈與安全掃描改回 GitHub-hosted `ubuntu-latest` runner（自架 runner 已無註冊導致 workflow 永久排隊、checkout 出現 bad object 錯誤）；Docker 多架構建置補上 QEMU；npm audit 開放 fork PR 執行並改為只回報不阻擋 PR，弱點修復交由 Dependabot 追蹤 |

@@ -1,74 +1,254 @@
-name: Build & Push Docker Image
+name: Build & Publish Docker Image
 
 on:
   push:
     branches: [main]
     tags: ['v*']
+  # PR 只驗證 image 可建置並通過 smoke test，不推送任何映像。
+  pull_request:
+    branches: [main]
   workflow_dispatch:
+
+# 同一個 ref 只保留最新一次發佈；PR 驗證則取消舊的以節省 runner 時間。
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE_NAME: nhi-dashboard
+  RELEASE_PLATFORMS: linux/amd64,linux/arm64
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  build-and-push:
-    # GitHub-hosted runner (free for public repositories).
+  build:
+    name: Build image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      tags: ${{ steps.meta.outputs.tags }}
+      version: ${{ steps.images.outputs.version }}
+      ghcr_image: ${{ steps.images.outputs.ghcr_image }}
+      dockerhub_image: ${{ steps.images.outputs.dockerhub_image }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # arm64 映像在 amd64 runner 上需要 QEMU 模擬。
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # 標籤發版前先確認 changelog.json／SRS.md 已同步，避免發佈沒有紀錄的版本。
+      - name: Verify release version
+        if: github.ref_type == 'tag'
+        run: node scripts/release/check-version.mjs "$GITHUB_REF_NAME"
+
+      - name: Resolve image names
+        id: images
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          ghcr_image="ghcr.io/${owner}/${IMAGE_NAME}"
+          dockerhub_username="${DOCKERHUB_USERNAME:-}"
+          dockerhub_image=""
+          if [ -n "$dockerhub_username" ]; then
+            dockerhub_image="${dockerhub_username}/${IMAGE_NAME}"
+          fi
+          version=""
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          {
+            echo "ghcr_image=${ghcr_image}"
+            echo "dockerhub_image=${dockerhub_image}"
+            echo "version=${version}"
+            echo "images<<__IMAGES__"
+            echo "$ghcr_image"
+            if [ -n "$dockerhub_image" ]; then echo "$dockerhub_image"; fi
+            echo "__IMAGES__"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$dockerhub_image" ]; then
+            echo "dockerhub_enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dockerhub_enabled=false" >> "$GITHUB_OUTPUT"
+            if [ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]; then
+              echo "::warning::未設定 DOCKERHUB_USERNAME，本次只發佈到 GHCR。"
+            fi
+          fi
+
+      # arm64 映像在 amd64 runner 上需要 QEMU 模擬；PR 只建置 amd64。
       - name: Set up QEMU
+        if: github.event_name != 'pull_request'
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # ── Docker Hub ──
       - name: Login to Docker Hub
+        if: github.event_name != 'pull_request' && steps.images.outputs.dockerhub_enabled == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ── GitHub Container Registry (備用) ──
       - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 產生標籤 ──
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
-            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.images.outputs.images }}
+          labels: |
+            org.opencontainers.image.title=Health Passbook Dashboard
+            org.opencontainers.image.description=NHI health passbook dashboard with end-to-end encrypted storage
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}#readme
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, '-') }}
+            type=semver,pattern={{major}},enable=${{ !contains(github.ref_name, '-') && !startsWith(github.ref_name, 'v0.') }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=raw,value=ci-smoke,enable=${{ github.event_name == 'pull_request' }}
+            type=sha,format=long
 
-      # ── 建置 & 推送（支援 AMD64 + ARM64） ──
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || env.RELEASE_PLATFORMS }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # VITE_GOOGLE_CLIENT_ID is baked into the JS bundle at build time by Vite.
-          # Set this secret in GitHub → Settings → Secrets and variables → Actions.
-          build-args: |
-            VITE_GOOGLE_CLIENT_ID=${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          # docker exporter 無法保存 attestation，PR 建置時關閉。
+          provenance: ${{ github.event_name == 'pull_request' && 'false' || 'mode=max' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name == 'pull_request' && 'type=gha,mode=min' || 'type=gha,mode=max' }}
+
+      # 以真正建置出的 image 啟動容器，確認 API 與 SPA 都能服務。
+      - name: Smoke test image
+        if: github.event_name == 'pull_request'
+        env:
+          IMAGE: ${{ steps.images.outputs.ghcr_image }}:ci-smoke
+          CONTAINER_NAME: nhi-smoke
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker logs "${CONTAINER_NAME}" 2>/dev/null || true
+            docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run -d --name "${CONTAINER_NAME}" -p 3001:3001 \
+            -e NODE_ENV=production \
+            -e JWT_SECRET="$(openssl rand -hex 32)" \
+            -e ENCRYPTION_KEY="$(openssl rand -hex 32)" \
+            "${IMAGE}"
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS --max-time 5 http://127.0.0.1:3001/api/ping 2>/dev/null | grep -q '"ok":true'; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "${ready}" -ne 1 ]; then
+            echo "::error::/api/ping 未在 60 秒內回應"
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:3001/ | grep -qi '<!doctype html'
+          echo "✔ 容器啟動、/api/ping 與 SPA 首頁皆正常"
+
+      - name: Write build summary
+        if: always()
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Docker image"
+            echo ""
+            echo '```'
+            echo "${TAGS:-（未產生標籤）}"
+            echo '```'
+            if [ -n "${DIGEST:-}" ]; then
+              echo "- digest: \`${DIGEST}\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # Release 內文取自 changelog.json，附加 pull 指令、平台與 digest。
+      - name: Generate release notes
+        id: notes
+        env:
+          IMAGE_TAGS: ${{ needs.build.outputs.tags }}
+        run: |
+          node scripts/release/release-notes.mjs \
+            --tag "$GITHUB_REF_NAME" \
+            --image "${{ needs.build.outputs.ghcr_image }}" \
+            --image "${{ needs.build.outputs.dockerhub_image }}" \
+            --digest "${{ needs.build.outputs.digest }}" \
+            --platforms "$RELEASE_PLATFORMS" \
+            --out "$RUNNER_TEMP/release-notes.md"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          TITLE: ${{ steps.notes.outputs.title }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+          PRERELEASE: ${{ steps.notes.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" --title "${TITLE}" --notes-file "${NOTES_FILE}" \
+              --prerelease="${PRERELEASE}"
+            echo "✔ 已更新既有 GitHub Release：${TAG}"
+          else
+            if [ "${PRERELEASE}" = "true" ]; then
+              gh release create "${TAG}" --title "${TITLE}" --notes-file "${NOTES_FILE}" \
+                --verify-tag --prerelease
+            else
+              gh release create "${TAG}" --title "${TITLE}" --notes-file "${NOTES_FILE}" \
+                --verify-tag
+            fi
+            echo "✔ 已建立 GitHub Release：${TAG}"
+          fi

@@ -7,6 +7,7 @@
     "frontend": "npm run dev --prefix dashboard",
     "build": "npm run build --prefix dashboard",
     "install:all": "npm install --prefix server && npm install --prefix dashboard",
+    "release:tag": "bash scripts/release/tag-release.sh",
     "postinstall": "npm install --prefix server && npm install --prefix dashboard"
   },
   "devDependencies": {

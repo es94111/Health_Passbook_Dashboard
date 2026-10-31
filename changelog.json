@@ -1,6 +1,42 @@
 {
-  "currentVersion": "2.1.0",
+  "currentVersion": "2.2.0",
   "releases": [
+    {
+      "version": "2.2.0",
+      "date": "2026-10-31",
+      "title": "Docker image 發版自動化與 GitHub Release",
+      "type": "feature",
+      "changes": [
+        {
+          "tag": "new",
+          "text": "推送 vX.Y.Z 標籤後自動建置 linux/amd64 與 linux/arm64 映像、推送 Docker Hub 與 GHCR，並以 changelog.json 產生 GitHub Release（含分類變更、pull 指令、平台、可用標籤與 digest）。"
+        },
+        {
+          "tag": "new",
+          "text": "新增 scripts/release/check-version.mjs：標籤版號必須與 changelog.json.currentVersion 及 SRS.md 版本歷程一致，不一致即阻擋發佈。"
+        },
+        {
+          "tag": "new",
+          "text": "PR 新增 image 驗證：建置 linux/amd64 映像後實際啟動容器，確認 /api/ping 與 SPA 首頁正常才回報成功。"
+        },
+        {
+          "tag": "new",
+          "text": "新增 npm run release:tag：檢查工作目錄、分支與遠端標籤後建立並推送 vX.Y.Z，直接銜接 CI 發佈。"
+        },
+        {
+          "tag": "improved",
+          "text": "映像加入 OCI labels、SBOM 與 mode=max provenance attestation，並提供完整 commit SHA 的不可變標籤；同一 ref 只保留最新一次建置。"
+        },
+        {
+          "tag": "improved",
+          "text": "未設定 DOCKERHUB_USERNAME 時自動只發佈至 GHCR，不再因缺少 Docker Hub 認證而中斷；Docker Hub 登入僅在需要推送時執行。"
+        },
+        {
+          "tag": "improved",
+          "text": "移除已無作用的 VITE_GOOGLE_CLIENT_ID build arg；Google Client ID 一律於執行期由 GOOGLE_CLIENT_ID 提供，發版不再需要建置期 secret。"
+        }
+      ]
+    },
     {
       "version": "2.1.0",
       "date": "2026-10-31",
