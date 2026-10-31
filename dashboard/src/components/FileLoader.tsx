@@ -2,8 +2,12 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ClientEncryptedRecords, UploadResult } from '../api';
 import type { NHIData } from '../parsers/types';
 import { PatientConfirmationRequired, validateVaultPassphrase, VAULT_PASSPHRASE_MIN_LENGTH } from '../cryptoVault';
-import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData, type LargeImportPreview } from '../importHealthData';
+import {
+  commitLargeImport, commitPreparedJsonImport, migrateHealthData, prepareJsonImport, prepareLargeImport, unlockHealthData,
+  type LargeImportPreview, type PreparedJsonImport,
+} from '../importHealthData';
 import { MAX_IMPORT_BYTES, MAX_IMPORT_FILE_BYTES, MAX_RECORD_BYTES } from '../medicalAttachments';
+import ImportPreview from './ImportPreview';
 
 interface Props {
   onLoad: (data: NHIData) => void;
@@ -34,7 +38,11 @@ function HeartbeatIcon() {
   );
 }
 
-type Status = 'idle' | 'uploading' | 'migrating' | 'loading' | 'confirming' | 'error';
+type Status = 'idle' | 'preparing' | 'preview' | 'uploading' | 'migrating' | 'loading' | 'error';
+
+type PendingImport =
+  | { kind: 'json'; prepared: PreparedJsonImport }
+  | { kind: 'large'; preview: LargeImportPreview };
 
 function importError(error: unknown): string {
   if (error instanceof SyntaxError) return 'JSON 格式無法解析，請重新匯出原始檔案';
@@ -53,8 +61,7 @@ export default function FileLoader({
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [passphrase, setPassphrase] = useState('');
-  const [pendingJson, setPendingJson] = useState<object | null>(null);
-  const [pendingLarge, setPendingLarge] = useState<LargeImportPreview | null>(null);
+  const [pending, setPending] = useState<PendingImport | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [identityConfirmed, setIdentityConfirmed] = useState(false);
   const operation = useRef<AbortController | null>(null);
@@ -66,7 +73,7 @@ export default function FileLoader({
     operation.current = controller;
     setStatus(migrate ? 'migrating' : 'loading');
     setError(null);
-    setPendingJson(null);
+    setPending(null);
     setProgress(null);
     const trackShards = (ratio: number) => setProgress(ratio);
     try {
@@ -88,74 +95,17 @@ export default function FileLoader({
   const unlockStoredData = () => loadStored(false);
   const migrateLegacyData = () => loadStored(true);
 
-  const processJson = useCallback(async (json: object, confirmed = false) => {
-    operation.current?.abort();
-    const controller = new AbortController();
-    operation.current = controller;
-    setStatus('uploading');
-    setError(null);
-    setUploadResult(null);
-    setPendingJson(null);
-    try {
-      const imported = await importHealthData(json, passphrase, confirmed, controller.signal);
-      if (controller.signal.aborted) return;
-      setUploadResult(imported.result);
-      onEnvelopeSaved(imported.envelope);
-      setStatus('loading');
-      onLoad(imported.data);
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      if (err instanceof PatientConfirmationRequired) {
-        setPendingJson(json);
-        setIdentityConfirmed(false);
-        setStatus('confirming');
-      } else {
-        setError(importError(err));
-        setStatus('error');
-      }
-    }
-  }, [onEnvelopeSaved, onLoad, passphrase]);
-
-  const processLarge = useCallback(async (preview: LargeImportPreview, confirmed = false) => {
-    operation.current?.abort();
-    const controller = new AbortController();
-    operation.current = controller;
-    setStatus('uploading');
-    setError(null);
-    setUploadResult(null);
-    setPendingLarge(null);
-    setProgress(0);
-    try {
-      const imported = await commitLargeImport(preview, passphrase, confirmed, controller.signal, ratio => setProgress(ratio));
-      if (controller.signal.aborted) return;
-      setUploadResult(imported.result);
-      onEnvelopeSaved(imported.envelope);
-      setStatus('loading');
-      onLoad(imported.data);
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      if (err instanceof PatientConfirmationRequired) {
-        setPendingLarge(preview);
-        setIdentityConfirmed(false);
-        setStatus('confirming');
-      } else {
-        setError(importError(err));
-        setStatus('error');
-      }
-    } finally {
-      if (!controller.signal.aborted) setProgress(null);
-    }
-  }, [onEnvelopeSaved, onLoad, passphrase]);
-
+  /** 只做檢查與統計，真正的寫入要等使用者在預覽畫面按下確認。 */
   const processFile = useCallback(async (file: File) => {
     operation.current?.abort();
     const controller = new AbortController();
     operation.current = controller;
-    setPendingJson(null);
-    setPendingLarge(null);
+    setPending(null);
     setIdentityConfirmed(false);
-    setStatus('uploading');
+    setUploadResult(null);
     setError(null);
+    setProgress(null);
+    setStatus('preparing');
     try {
       validateVaultPassphrase(passphrase);
       if (file.size > MAX_IMPORT_BYTES) {
@@ -163,26 +113,59 @@ export default function FileLoader({
         const preview = await prepareLargeImport(file, passphrase, controller.signal, ratio => setProgress(ratio));
         if (controller.signal.aborted) return;
         setProgress(null);
-        if (preview.needsConfirmation) {
-          setPendingLarge(preview);
-          setIdentityConfirmed(false);
-          setStatus('confirming');
-          return;
-        }
-        await processLarge(preview);
+        setPending({ kind: 'large', preview });
+        setStatus('preview');
         return;
       }
       const text = await file.text();
       if (controller.signal.aborted) return;
       const json: unknown = JSON.parse(text.replace(/^\uFEFF/, ''));
       if (!json || typeof json !== 'object' || Array.isArray(json)) throw new Error('JSON 根節點必須是物件');
-      await processJson(json);
+      const prepared = await prepareJsonImport(json, passphrase, file, controller.signal);
+      if (controller.signal.aborted) return;
+      setPending({ kind: 'json', prepared });
+      setStatus('preview');
     } catch (err) {
       if (controller.signal.aborted) return;
       setError(importError(err));
       setStatus('error');
+    } finally {
+      if (!controller.signal.aborted) setProgress(null);
     }
-  }, [passphrase, processJson, processLarge]);
+  }, [passphrase]);
+
+  const commitImport = useCallback(async (confirmed: boolean) => {
+    if (!pending) return;
+    operation.current?.abort();
+    const controller = new AbortController();
+    operation.current = controller;
+    setStatus('uploading');
+    setError(null);
+    setUploadResult(null);
+    setProgress(0);
+    try {
+      const imported = pending.kind === 'json'
+        ? await commitPreparedJsonImport(pending.prepared, passphrase, confirmed, controller.signal)
+        : await commitLargeImport(pending.preview, passphrase, confirmed, controller.signal, ratio => setProgress(ratio));
+      if (controller.signal.aborted) return;
+      setPending(null);
+      setUploadResult(imported.result);
+      onEnvelopeSaved(imported.envelope);
+      setStatus('loading');
+      onLoad(imported.data);
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      if (err instanceof PatientConfirmationRequired) {
+        setStatus('preview');
+        setError('病人身分仍需確認，請勾選確認後再匯入');
+      } else {
+        setError(importError(err));
+        setStatus('error');
+      }
+    } finally {
+      if (!controller.signal.aborted) setProgress(null);
+    }
+  }, [onEnvelopeSaved, onLoad, passphrase, pending]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -198,17 +181,16 @@ export default function FileLoader({
     if (file) { void processFile(file); }
   }
 
-  const confirmImport = () => {
-    if (pendingJson) void processJson(pendingJson, true);
-    else if (pendingLarge) void processLarge(pendingLarge, true);
-  };
   const cancelImport = () => {
-    setPendingJson(null);
-    setPendingLarge(null);
+    operation.current?.abort();
+    setPending(null);
     setIdentityConfirmed(false);
+    setError(null);
+    setProgress(null);
     setStatus('idle');
   };
-  const busy = status === 'uploading' || status === 'migrating' || status === 'loading';
+  const busy = status === 'preparing' || status === 'uploading' || status === 'migrating' || status === 'loading';
+  const preview = pending ? (pending.kind === 'json' ? pending.prepared.preview : pending.preview.preview) : null;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
@@ -281,19 +263,15 @@ export default function FileLoader({
           ) : null}
         </div>
 
-        {(pendingJson || pendingLarge) && status === 'confirming' && (
-          <section aria-label="確認病人身分" className="mb-4 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm">
-            <h2 className="font-medium text-gray-900 dark:text-gray-100">無法自動確認為同一位病人</h2>
-            <p className="mt-2 text-gray-700 dark:text-gray-300">原生 NHI JSON、去識別化資料或缺少共同識別碼的匯出檔，必須由你確認。請核對檔案與目前帳號的病人，這不代表網站已驗證身分。</p>
-            <label className="mt-3 flex items-start gap-2 text-gray-800 dark:text-gray-200">
-              <input type="checkbox" checked={identityConfirmed} onChange={e => setIdentityConfirmed(e.target.checked)} className="mt-1 accent-teal-600" />
-              我已核對，確定此檔案與本帳號既有資料屬於同一人，並同意合併
-            </label>
-            <div className="mt-3 flex gap-2">
-              <button type="button" disabled={!identityConfirmed || passphrase.length < VAULT_PASSPHRASE_MIN_LENGTH} onClick={confirmImport} className="btn-primary">確認並匯入</button>
-              <button type="button" onClick={cancelImport} className="btn-secondary">取消匯入</button>
-            </div>
-          </section>
+        {status === 'preview' && preview && (
+          <ImportPreview
+            preview={preview}
+            identityConfirmed={identityConfirmed}
+            onIdentityConfirmed={setIdentityConfirmed}
+            onConfirm={() => void commitImport(identityConfirmed)}
+            onCancel={cancelImport}
+            blocked={passphrase.length < VAULT_PASSPHRASE_MIN_LENGTH}
+          />
         )}
 
         <div
@@ -315,13 +293,17 @@ export default function FileLoader({
                 aria-hidden="true"
               />
               <p className="text-gray-500 dark:text-gray-400 text-sm">
-                {status === 'uploading'
-                  ? progress === null || progress <= 0 ? '加密並儲存資料中...' : `加密並儲存資料中... ${Math.round(progress * 100)}%`
-                  : progress !== null && progress > 0 && progress < 1
-                    ? `解密病歷索引分片... ${Math.round(progress * 100)}%`
-                    : status === 'migrating'
-                      ? '加密既有資料中...'
-                      : '載入儀表板...'}
+                {status === 'preparing'
+                  ? progress !== null && progress > 0
+                    ? `檢查檔案內容... ${Math.round(progress * 100)}%`
+                    : '讀取並檢查檔案內容...'
+                  : status === 'uploading'
+                    ? progress === null || progress <= 0 ? '加密並儲存資料中...' : `加密並儲存資料中... ${Math.round(progress * 100)}%`
+                    : progress !== null && progress > 0 && progress < 1
+                      ? `解密病歷索引分片... ${Math.round(progress * 100)}%`
+                      : status === 'migrating'
+                        ? '加密既有資料中...'
+                        : '載入儀表板...'}
               </p>
             </div>
           ) : (
@@ -330,7 +312,7 @@ export default function FileLoader({
                 選擇或拖曳健保署 JSON／NHI-FHIR Bridge FHIR Bundle
               </p>
               <p className="text-gray-400 dark:text-gray-500 text-sm mb-4">
-                檔案會先在此瀏覽器加密，再上傳保存
+                選檔後先顯示資料日期、筆數與影像附件摘要，確認後才會加密上傳
               </p>
               <label className="cursor-pointer inline-block btn-primary">
                 選擇檔案
@@ -380,7 +362,7 @@ export default function FileLoader({
           </div>
         )}
 
-        {status === 'error' && error && (
+        {error && (status === 'error' || status === 'preview') && (
           <div
             className="mt-4 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg msg-fade"
             role="alert"
@@ -388,7 +370,7 @@ export default function FileLoader({
             <p className="text-red-700 dark:text-red-400 text-sm">{error}</p>
             <button
               className="mt-2 text-sm text-red-600 dark:text-red-400 underline cursor-pointer hover:text-red-800 dark:hover:text-red-300"
-              onClick={() => { setStatus('idle'); setError(null); }}
+              onClick={() => { setStatus('idle'); setError(null); setPending(null); }}
             >
               重試
             </button>

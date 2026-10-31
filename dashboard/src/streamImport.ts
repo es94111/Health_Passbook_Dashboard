@@ -1,11 +1,14 @@
 import { JSONParser } from '@streamparser/json';
-import { canonicalJson, object, sha256, string, type FhirObject } from './parsers/fhir-common';
+import { canonicalJson, fhirDate, object, sha256, string, type FhirObject } from './parsers/fhir-common';
 import { patientIdentifiers } from './parsers/fhir-parser';
+import { parseNHIDate } from './parsers/nhi-parser';
 import {
-  createAttachmentSeparator, MAX_IMPORT_FILE_BYTES, MAX_RECORD_BYTES, SOURCE_CHUNK_BYTES,
+  attachmentType, createAttachmentSeparator, MAX_IMPORT_FILE_BYTES, MAX_RECORD_BYTES, SOURCE_CHUNK_BYTES,
   type AttachmentMetadata, type PendingAttachment,
 } from './medicalAttachments';
-import { patientIdentityDecision } from './recordImport';
+import type { ScanSummary } from './importPreview';
+import { formatLocalDate } from './lib/clock';
+import { LEGACY_DATE_FIELDS, patientIdentityDecision } from './recordImport';
 import { RECORD_TYPES, type RecordType, type SourceChunk, type StoredRecords } from './recordStore';
 
 const SCAN_READ_BYTES = 4 * 1024 * 1024;
@@ -18,6 +21,7 @@ const NHI_TYPES: readonly NhiType[] = RECORD_TYPES.filter((type): type is NhiTyp
 export interface ImportScanResult {
   format: 'NHI' | 'FHIR';
   needsConfirmation: boolean;
+  summary: ScanSummary;
 }
 
 export interface SourceChunkUpload {
@@ -57,6 +61,73 @@ function nhiType(key: unknown): NhiType | null {
   return NHI_TYPES.includes(key as NhiType) ? key as NhiType : null;
 }
 
+const IMAGING_RESOURCE_TYPES = new Set(['ImagingStudy', 'Media']);
+const REPORT_RESOURCE_TYPES = new Set(['DiagnosticReport', 'DocumentReference', 'ImagingStudy', 'Media']);
+
+function listOf(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : value === undefined || value === null ? [] : [value];
+}
+
+/** 掃描階段可見的日期欄位；與 fhir-parser 的取用順序一致。 */
+function resourceDate(resource: FhirObject): Date | null {
+  return fhirDate(
+    resource.effectiveDateTime, object(resource.effectivePeriod).start, resource.issued, resource.date,
+    resource.created, resource.createdDateTime, object(resource.period).start, resource.started,
+    resource.authoredOn, resource.occurrenceDateTime, resource.recorded, resource.whenHandedOver,
+    resource.whenPrepared, resource.dateAsserted,
+  );
+}
+
+/** 尚未分離的附件來源；參考形式的附件要等匯入解析後才知道有沒有內容。 */
+function rawAttachments(resource: FhirObject): unknown[] {
+  return [
+    ...listOf(resource.presentedForm),
+    ...listOf(resource.content).map(item => object(item).attachment ?? item),
+    ...listOf(resource.media).map(item => object(item).link ?? item),
+    ...listOf(resource.image),
+  ];
+}
+
+interface ScanTally {
+  counts: Record<string, number>;
+  min: number;
+  max: number;
+  reports: number;
+  imagingReports: number;
+  inline: number;
+  previewable: number;
+  references: number;
+  unsupported: Set<string>;
+}
+
+function tally(): ScanTally {
+  return {
+    counts: {}, min: Infinity, max: -Infinity,
+    reports: 0, imagingReports: 0, inline: 0, previewable: 0, references: 0, unsupported: new Set(),
+  };
+}
+
+function noteDate(state: ScanTally, date: Date | null): void {
+  if (!date) return;
+  const time = date.getTime();
+  if (!Number.isFinite(time)) return;
+  if (time < state.min) state.min = time;
+  if (time > state.max) state.max = time;
+}
+
+function tallySummary(state: ScanTally): ScanSummary {
+  const iso = (time: number) => Number.isFinite(time) ? formatLocalDate(new Date(time)) : null;
+  return {
+    counts: state.counts,
+    from: iso(state.min),
+    to: iso(state.max),
+    attachments: {
+      reports: state.reports, imagingReports: state.imagingReports, inline: state.inline,
+      previewable: state.previewable, references: state.references, unsupported: [...state.unsupported].sort(),
+    },
+  };
+}
+
 /** Rejects anything that is not a complete, exportable FHIR Bundle before a single byte is stored. */
 function assertBundleShape(state: {
   type: unknown; total: unknown; links: unknown[]; entries: number; patients: FhirObject[];
@@ -91,6 +162,36 @@ export async function scanImportFile(
   const fullUrls = new Set<string>();
   const patients: FhirObject[] = [];
   const patientFullUrls: string[] = [];
+  const nhiTally = tally();
+  const fhirTally = tally();
+
+  const countNhi = (type: NhiType, record: FhirObject) => {
+    nhiTally.counts[type] = (nhiTally.counts[type] ?? 0) + 1;
+    for (const field of LEGACY_DATE_FIELDS[type] ?? []) {
+      const raw = string(record[field]);
+      if (!raw) continue;
+      try { noteDate(nhiTally, parseNHIDate(raw)); } catch { /* 匯入時會回報日期格式問題 */ }
+    }
+  };
+
+  const countResource = (type: string, resource: FhirObject) => {
+    fhirTally.counts[type] = (fhirTally.counts[type] ?? 0) + 1;
+    noteDate(fhirTally, resourceDate(resource));
+    if (!REPORT_RESOURCE_TYPES.has(type)) return;
+    const values = rawAttachments(resource);
+    if (!values.length) return;
+    fhirTally.reports++;
+    if (IMAGING_RESOURCE_TYPES.has(type)) fhirTally.imagingReports++;
+    for (const value of values) {
+      const raw = object(value);
+      if (typeof raw.data === 'string' && raw.data) {
+        fhirTally.inline++;
+        const mime = attachmentType(raw.contentType);
+        if (mime) fhirTally.previewable++;
+        else fhirTally.unsupported.add(string(raw.contentType).toLowerCase().split(';')[0].trim() || '未知格式');
+      } else fhirTally.references++;
+    }
+  };
 
   const paths = ['$.resourceType', '$.type', '$.total', '$.link', '$.entry.*',
     ...NHI_TYPES.flatMap(type => [`$.${type}.*`, `$.myhealthbank.bdata.${type}.*`])];
@@ -109,7 +210,10 @@ export async function scanImportFile(
     const wrapped = stack.length === 4 && stack[1].key === 'myhealthbank' && stack[2].key === 'bdata';
     if (type && (stack.length === 2 || wrapped)) {
       if (!Array.isArray(info.parent) || !value || typeof value !== 'object' || Array.isArray(value)) nhiShapeError = true;
-      else nhiItems++;
+      else {
+        nhiItems++;
+        countNhi(type, object(value));
+      }
       return;
     }
     if (stack.length !== 2 || container.key !== 'entry') return;
@@ -126,6 +230,7 @@ export async function scanImportFile(
         (resource.id !== undefined && !RESOURCE_ID_PATTERN.test(string(resource.id)))) {
       throw new Error('FHIR entry 含有缺漏或格式錯誤的 resource，已中止整份匯入');
     }
+    countResource(resourceTypeName, resource);
     const fullUrl = string(entry.fullUrl);
     if (fullUrl) {
       if (fullUrls.has(fullUrl)) throw new Error('FHIR Bundle 含有重複的 fullUrl，無法安全關聯資源');
@@ -152,10 +257,14 @@ export async function scanImportFile(
     if (!string(patient.id) && !string(patientFullUrls[0]) && !patientIdentifiers(patient).size) {
       throw new Error('Patient 缺少可建立關聯的 id、fullUrl 或 identifier');
     }
-    return { format: 'FHIR', needsConfirmation: patientIdentityDecision(existing, patient) };
+    return {
+      format: 'FHIR',
+      needsConfirmation: patientIdentityDecision(existing, patient),
+      summary: tallySummary(fhirTally),
+    };
   }
   if (!nhiItems || nhiShapeError) throw new Error('不是支援的 NHI JSON 或 FHIR Bundle，既有資料未變更');
-  return { format: 'NHI', needsConfirmation: true };
+  return { format: 'NHI', needsConfirmation: true, summary: tallySummary(nhiTally) };
 }
 
 export async function extractImportFile(

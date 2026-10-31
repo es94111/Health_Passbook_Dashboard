@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, fetchEncryptedAttachment, fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
 import { decryptRecords, decryptVaultBytes, deriveVaultKey, encryptRecords } from './cryptoVault';
-import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData } from './importHealthData';
+import { commitLargeImport, commitPreparedJsonImport, importHealthData, migrateHealthData, prepareJsonImport, prepareLargeImport, unlockHealthData } from './importHealthData';
 import { base64ToBytes, SOURCE_CHUNK_BYTES } from './medicalAttachments';
 import { emptyPersonal, newPersonalId, type PersonalData } from './personalData';
 import type { SourceChunk } from './recordStore';
 import { sha256 } from './parsers/fhir-common';
 import { emptyRecords } from './recordStore';
+import { recordsTotal } from './importPreview';
 import { SYNTHETIC_PNG, syntheticBundle, syntheticNhi } from './test/fixtures';
 
 vi.mock('./api', async (importOriginal) => ({
@@ -106,11 +107,78 @@ function jsonFile(value: unknown): File {
   return new File([JSON.stringify(value)], 'synthetic.json', { type: 'application/json' });
 }
 
+describe('pre-import preview for in-memory files', () => {
+  it('summarises the file without touching the vault', async () => {
+    const prepared = await prepareJsonImport(withImage(), passphrase, jsonFile(withImage()));
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
+    expect(uploadEncryptedAttachment).not.toHaveBeenCalled();
+    expect(prepared.preview).toMatchObject({
+      fileName: 'synthetic.json', format: 'FHIR', estimated: false, needsConfirmation: false,
+      from: null, to: null, counts: { incoming: 2, added: 2, updated: 0, skipped: 0 },
+      existingTotal: 0, totalAfter: 2,
+      attachments: { reports: 1, imagingReports: 0, total: 1, previewable: 1, external: 0, references: 0, unsupported: [] },
+    });
+    expect(prepared.preview.rows).toEqual([{ key: 'fhir', label: 'FHIR 資源', incoming: 2, added: 2, updated: 0, skipped: 0 }]);
+  });
+
+  it('writes the same vault as a direct import once confirmed', async () => {
+    const direct = await importHealthData(withImage(), passphrase);
+    const directRecords = await decryptRecords(direct.envelope, passphrase);
+    vi.mocked(uploadEncryptedHealthData).mockClear();
+    const prepared = await prepareJsonImport(withImage(), passphrase, jsonFile(withImage()));
+    expect(prepared.preview.totalAfter).toBe(recordsTotal(directRecords));
+    const committed = await commitPreparedJsonImport(prepared, passphrase);
+    expect(uploadEncryptedHealthData).toHaveBeenCalledWith(committed.envelope, prepared.stats, null, undefined);
+    const stored = await decryptRecords(committed.envelope, passphrase);
+    expect(Object.keys(stored.fhir)).toEqual(Object.keys(directRecords.fhir));
+    expect(stored.importHistory).toHaveLength(1);
+  });
+
+  it('refuses to commit an unverified file until the user ticks the identity box', async () => {
+    const prepared = await prepareJsonImport(syntheticNhi, passphrase, jsonFile(syntheticNhi));
+    expect(prepared.needsConfirmation).toBe(true);
+    expect(prepared.preview).toMatchObject({ format: 'NHI', from: '2026-10-01', to: '2026-10-02' });
+    expect(prepared.preview.warnings[0]).toContain('病人身分');
+    await expect(commitPreparedJsonImport(prepared, passphrase)).rejects.toThrow('確認');
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
+    const committed = await commitPreparedJsonImport(prepared, passphrase, true);
+    expect(Object.keys((await decryptRecords(committed.envelope, passphrase)).r1)).toHaveLength(1);
+  });
+
+  it('reuses the dry run so a duplicate import reports skipped records before committing', async () => {
+    const first = await importHealthData(withImage(), passphrase);
+    vi.mocked(fetchHealthData).mockResolvedValue({ envelope: first.envelope, needsClientEncryptionMigration: false });
+    vi.mocked(uploadEncryptedHealthData).mockClear();
+    const prepared = await prepareJsonImport(withImage(), passphrase, jsonFile(withImage()));
+    expect(prepared.preview.counts).toEqual({ incoming: 2, added: 0, updated: 0, skipped: 2 });
+    expect(prepared.preview).toMatchObject({ existingTotal: 2, totalAfter: 2 });
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
+    const committed = await commitPreparedJsonImport(prepared, passphrase);
+    expect(uploadEncryptedHealthData).toHaveBeenCalledWith(committed.envelope, expect.any(Object), first.envelope.revision, undefined);
+  });
+
+  it('reads nothing from the vault when the existing password is wrong', async () => {
+    vi.mocked(fetchHealthData).mockResolvedValue({ envelope: await encryptRecords(emptyRecords(), passphrase), needsClientEncryptionMigration: false });
+    await expect(prepareJsonImport(withImage(), 'wrong-long-password', jsonFile(withImage()))).rejects.toThrow();
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a revision conflict instead of overwriting a vault changed meanwhile', async () => {
+    const prepared = await prepareJsonImport(withImage(), passphrase, jsonFile(withImage()));
+    vi.mocked(uploadEncryptedHealthData).mockRejectedValue(new ApiError('版本衝突，請重新載入', 409));
+    await expect(commitPreparedJsonImport(prepared, passphrase)).rejects.toThrow('版本衝突');
+  });
+});
+
 describe('streaming import of oversized source files', () => {
   it('stores the original bytes as encrypted chunks and only an index in the manifest', async () => {
     const file = jsonFile(withImage());
     const preview = await prepareLargeImport(file, passphrase);
     expect(preview).toMatchObject({ format: 'FHIR', needsConfirmation: false });
+    expect(preview.preview).toMatchObject({
+      estimated: true, format: 'FHIR', counts: { incoming: 2 }, existingTotal: 0, totalAfter: null,
+      attachments: { reports: 1, imagingReports: 0, total: 1, previewable: 1, external: 0, references: 0, unsupported: [] },
+    });
     expect(uploadEncryptedAttachment).not.toHaveBeenCalled();
     const staged = new Map<string, ClientEncryptedRecords>();
     vi.mocked(uploadEncryptedAttachment).mockImplementation(async (id, envelope) => { staged.set(id, envelope); return { ok: true }; });
@@ -136,6 +204,11 @@ describe('streaming import of oversized source files', () => {
   it('still requires explicit patient consent before the vault is replaced', async () => {
     const preview = await prepareLargeImport(jsonFile(syntheticNhi), passphrase);
     expect(preview).toMatchObject({ format: 'NHI', needsConfirmation: true });
+    expect(preview.preview).toMatchObject({ estimated: true, format: 'NHI', from: '2026-10-01', to: '2026-10-02', totalAfter: null });
+    expect(preview.preview.rows).toEqual([
+      { key: 'r1', label: '就醫紀錄', incoming: 1 },
+      { key: 'r7', label: '檢驗結果', incoming: 1 },
+    ]);
     await expect(commitLargeImport(preview, passphrase)).rejects.toThrow('確認');
     expect(uploadEncryptedAttachment).not.toHaveBeenCalled();
     expect(uploadEncryptedHealthData).not.toHaveBeenCalled();

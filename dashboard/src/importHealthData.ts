@@ -2,8 +2,10 @@ import { fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uplo
 import {
   decryptRecords, deriveVaultKey, encryptRecordsWithKey, encryptWithVaultKey, prepareVaultKey, validateVaultPassphrase,
 } from './cryptoVault';
-import { base64ToBytes } from './medicalAttachments';
-import { emptyRecords, normalizeStoredRecords, RECORD_TYPES, type StoredRecords } from './recordStore';
+import { base64ToBytes, type PendingAttachment } from './medicalAttachments';
+import { buildMergedPreview, buildScannedPreview, recordsTotal, type ImportPreview } from './importPreview';
+import { parseNHIJson } from './parsers/nhi-parser';
+import { emptyRecords, flattenRecords, normalizeStoredRecords, RECORD_TYPES, type MergeStats, type StoredRecords } from './recordStore';
 import { PatientConfirmationRequired, inspectImportIdentity, mergeNHIJson, mergePreparedImport } from './recordImport';
 import { extractImportFile, scanImportFile, type LargeImportSink } from './streamImport';
 import { createVaultSession, uploadShardWith } from './vaultSession';
@@ -24,9 +26,15 @@ export async function unlockHealthData(passphrase: string, signal?: AbortSignal,
   return { data: createVaultSession(records, previous, key), envelope: previous };
 }
 
-export async function importHealthData(json: object, passphrase: string, confirmPatient = false, signal?: AbortSignal) {
-  const { records: existing, previous } = await currentRecords(passphrase, signal);
-  const { records, stats, pendingAttachments } = await mergeNHIJson(existing, json, { confirmPatient });
+/** Shared tail: encrypt the merged records, ship attachments, then replace the vault index. */
+async function commitRecords(
+  records: StoredRecords,
+  pendingAttachments: readonly PendingAttachment[],
+  stats: MergeStats,
+  previous: ClientEncryptedRecords | null,
+  passphrase: string,
+  signal?: AbortSignal,
+) {
   const prepared = await prepareVaultKey(passphrase, previous);
   const envelope = await encryptRecordsWithKey(records, prepared, { previous, signal, uploadShard: uploadShardWith(prepared, signal) });
   const key = prepared.key;
@@ -42,12 +50,72 @@ export async function importHealthData(json: object, passphrase: string, confirm
   return { data, envelope, result };
 }
 
+export async function importHealthData(json: object, passphrase: string, confirmPatient = false, signal?: AbortSignal) {
+  const { records: existing, previous } = await currentRecords(passphrase, signal);
+  const { records, stats, pendingAttachments } = await mergeNHIJson(existing, json, { confirmPatient });
+  return commitRecords(records, pendingAttachments, stats, previous, passphrase, signal);
+}
+
+export interface PreparedJsonImport {
+  json: object;
+  existing: StoredRecords;
+  previous: ClientEncryptedRecords | null;
+  records: StoredRecords;
+  stats: MergeStats;
+  pendingAttachments: PendingAttachment[];
+  needsConfirmation: boolean;
+  preview: ImportPreview;
+}
+
+/**
+ * Dry run for files small enough to hold in memory: merge without writing anything so the
+ * user can review dates, counts and attachments before the vault is touched.
+ */
+export async function prepareJsonImport(
+  json: object,
+  passphrase: string,
+  file: File,
+  signal?: AbortSignal,
+): Promise<PreparedJsonImport> {
+  const { records: existing, previous } = await currentRecords(passphrase, signal);
+  signal?.throwIfAborted();
+  const identity = inspectImportIdentity(existing, json);
+  // confirmPatient: true keeps the dry run side-effect free; the real gate is the preview checkbox.
+  const { records, stats, pendingAttachments } = await mergeNHIJson(existing, json, { confirmPatient: true });
+  signal?.throwIfAborted();
+  const data = parseNHIJson(flattenRecords(records));
+  const preview = buildMergedPreview({
+    fileName: file.name,
+    fileSize: file.size,
+    format: identity.format,
+    needsConfirmation: identity.needsConfirmation,
+    stats,
+    records,
+    data,
+    warnings: [],
+  });
+  return { json, existing, previous, records, stats, pendingAttachments, needsConfirmation: identity.needsConfirmation, preview };
+}
+
+/** Commits a previewed in-memory import; the preview itself wrote nothing. */
+export async function commitPreparedJsonImport(
+  prepared: PreparedJsonImport,
+  passphrase: string,
+  confirmPatient = false,
+  signal?: AbortSignal,
+) {
+  if (prepared.needsConfirmation && !confirmPatient) throw new PatientConfirmationRequired();
+  signal?.throwIfAborted();
+  return commitRecords(prepared.records, prepared.pendingAttachments, prepared.stats, prepared.previous, passphrase, signal);
+}
+
 export interface LargeImportPreview {
   file: File;
   existing: StoredRecords;
   previous: ClientEncryptedRecords | null;
   format: 'NHI' | 'FHIR';
   needsConfirmation: boolean;
+  preview: ImportPreview;
 }
 
 /** First pass over a multi-gigabyte file: validate its shape without storing anything. */
@@ -58,8 +126,16 @@ export async function prepareLargeImport(
   onProgress?: (ratio: number) => void,
 ): Promise<LargeImportPreview> {
   const { records: existing, previous } = await currentRecords(passphrase, signal);
-  const { format, needsConfirmation } = await scanImportFile(file, existing, signal, onProgress);
-  return { file, existing, previous, format, needsConfirmation };
+  const { format, needsConfirmation, summary } = await scanImportFile(file, existing, signal, onProgress);
+  const preview = buildScannedPreview({
+    fileName: file.name,
+    fileSize: file.size,
+    format,
+    needsConfirmation,
+    summary,
+    existingTotal: recordsTotal(existing),
+  });
+  return { file, existing, previous, format, needsConfirmation, preview };
 }
 
 /** Second pass: stream, encrypt and upload the raw source plus every attachment, then commit the index. */

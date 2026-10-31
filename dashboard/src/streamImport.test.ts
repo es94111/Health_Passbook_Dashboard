@@ -29,13 +29,34 @@ async function fileBytes(file: File): Promise<Uint8Array<ArrayBuffer>> {
 
 describe('streaming scan of oversized source files', () => {
   it('recognises native and wrapped NHI exports without reading them into memory', async () => {
-    expect(await scanImportFile(jsonFile(syntheticNhi), emptyRecords())).toEqual({ format: 'NHI', needsConfirmation: true });
-    expect(await scanImportFile(jsonFile({ r7: syntheticNhi.myhealthbank.bdata.r7 }), emptyRecords())).toEqual({ format: 'NHI', needsConfirmation: true });
+    expect(await scanImportFile(jsonFile(syntheticNhi), emptyRecords())).toMatchObject({
+      format: 'NHI', needsConfirmation: true,
+      summary: { counts: { r1: 1, r7: 1 }, from: '2026-10-01', to: '2026-10-02' },
+    });
+    expect(await scanImportFile(jsonFile({ r7: syntheticNhi.myhealthbank.bdata.r7 }), emptyRecords())).toMatchObject({
+      format: 'NHI', needsConfirmation: true, summary: { counts: { r7: 1 }, from: '2026-10-02', to: '2026-10-02' },
+    });
   });
   it('recognises FHIR bundles and requires a verifiable patient', async () => {
-    expect(await scanImportFile(jsonFile(syntheticBundle()), emptyRecords())).toEqual({ format: 'FHIR', needsConfirmation: false });
+    expect(await scanImportFile(jsonFile(syntheticBundle()), emptyRecords())).toMatchObject({
+      format: 'FHIR', needsConfirmation: false, summary: { counts: { Patient: 1 } },
+    });
     const anonymous = { resourceType: 'Bundle', type: 'collection', entry: [{ resource: { resourceType: 'Patient' } }, { resource: { resourceType: 'Observation', id: 'synthetic' } }] };
     await expect(scanImportFile(jsonFile(anonymous), emptyRecords())).rejects.toThrow('Patient');
+  });
+  it('counts dates and inline attachments while scanning so the preview needs no second parse', async () => {
+    const file = jsonFile(syntheticBundle([
+      { resourceType: 'DiagnosticReport', id: 'report-a', effectiveDateTime: '2025-03-04', presentedForm: [{ contentType: 'image/png', data: SYNTHETIC_PNG }] },
+      { resourceType: 'DocumentReference', id: 'report-b', date: '2025-05-06', content: [{ attachment: { contentType: 'application/dicom', data: 'synthetic' } }] },
+      { resourceType: 'Observation', id: 'lab-a', effectiveDateTime: '2024-01-02', valueString: 'synthetic' },
+    ]));
+    const scanned = await scanImportFile(file, emptyRecords());
+    expect(scanned.summary.counts).toMatchObject({ Patient: 1, DiagnosticReport: 1, DocumentReference: 1, Observation: 1 });
+    expect(scanned.summary.from).toBe('2024-01-02');
+    expect(scanned.summary.to).toBe('2025-05-06');
+    expect(scanned.summary.attachments).toEqual({
+      reports: 2, imagingReports: 0, inline: 2, previewable: 1, references: 0, unsupported: ['application/dicom'],
+    });
   });
   it('rejects partial, duplicated and non-bundle FHIR input before anything is stored', async () => {
     await expect(scanImportFile(jsonFile({ resourceType: 'Patient', id: 'synthetic' }), emptyRecords())).rejects.toThrow('FHIR R4 Bundle');
