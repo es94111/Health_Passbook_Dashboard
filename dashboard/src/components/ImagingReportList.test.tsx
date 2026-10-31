@@ -58,6 +58,11 @@ describe('ImagingReportList', () => {
     expect(screen.getByText('另有 2 個外部附件，未取得且不會自動下載。')).toBeTruthy();
   });
 
+  it('explains attachment formats that cannot be previewed', () => {
+    render(<ImagingReportList reports={[report({ unsupportedAttachmentTypes: ['application/dicom'] })]} />);
+    expect(screen.getByText('附件格式無法在瀏覽器預覽：application/dicom；原始內容仍保留於加密紀錄與匯入來源檔。')).toBeTruthy();
+  });
+
   it('distinguishes an empty tab from an empty filter result', () => {
     const { rerender } = render(<ImagingReportList reports={[]} />);
     expect(screen.getByText('尚無影像報告')).toBeTruthy();

@@ -168,6 +168,9 @@ export default function ImagingReportList({ reports, loadAttachment }: Props) {
                 {report.externalAttachmentCount > 0 && (
                   <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">另有 {report.externalAttachmentCount} 個外部附件，未取得且不會自動下載。</p>
                 )}
+                {report.unsupportedAttachmentTypes && report.unsupportedAttachmentTypes.length > 0 && (
+                  <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">附件格式無法在瀏覽器預覽：{[...new Set(report.unsupportedAttachmentTypes)].join('、')}；原始內容仍保留於加密紀錄與匯入來源檔。</p>
+                )}
                 {report.attachments.length > 0 && (
                   <div className="mt-3">
                     <h4 className="text-xs font-medium text-gray-500 dark:text-gray-400">報告與影像附件（{report.attachments.length}）</h4>

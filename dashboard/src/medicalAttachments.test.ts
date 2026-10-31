@@ -53,6 +53,8 @@ describe('independent medical attachment validation and retention', () => {
   it.each([
     ['image/jpeg', [0xff, 0xd8, 0xff, 0]],
     ['image/webp', [82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80]],
+    ['image/gif', [71, 73, 70, 56, 57, 97]],
+    ['image/bmp', [66, 77, 0, 0]],
     ['application/pdf', [37, 80, 68, 70, 45]],
   ] as const)('recognizes %s magic bytes without rendering it', (type, signature) => {
     expect(() => validateAttachmentBytes(new Uint8Array(signature), type)).not.toThrow();

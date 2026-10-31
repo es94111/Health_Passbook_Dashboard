@@ -1,6 +1,26 @@
 {
-  "currentVersion": "2.6.0",
+  "currentVersion": "2.6.1",
   "releases": [
+    {
+      "version": "2.6.1",
+      "date": "2026-10-31",
+      "title": "修正影像報告附件未顯示",
+      "type": "fix",
+      "changes": [
+        {
+          "tag": "fixed",
+          "text": "影像報告附件改為從所有報告資源欄位解析：presentedForm、content（DocumentReference 的 content[].attachment 與 Media 的 content）、media[].link 與 image[]（含指向 Media 或 Binary 的參考），不再只限 DiagnosticReport／DocumentReference／Media 三種資源；ImagingStudy 或其他資源若帶有這些欄位也會顯示附件"
+        },
+        {
+          "tag": "fixed",
+          "text": "附件格式無法在瀏覽器預覽時（例如 application/dicom、image/tiff）不再無提示消失：醫療報告與影像報告卡片會列出無法預覽的格式，並說明原始內容仍保留於加密紀錄與匯入來源檔"
+        },
+        {
+          "tag": "fixed",
+          "text": "新增 image/gif 與 image/bmp 附件支援（含 magic bytes 驗證、預覽與下載副檔名），涵蓋更多 Bridge 匯出的影像格式"
+        }
+      ]
+    },
     {
       "version": "2.6.0",
       "date": "2026-10-31",

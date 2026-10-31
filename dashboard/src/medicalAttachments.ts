@@ -17,7 +17,7 @@ export const MAX_RECORD_SHARDS = 1024;
 export const MAX_RECORD_BYTES = MAX_RECORD_SHARDS * RECORD_SHARD_BYTES;
 /** Attachments (512) + source chunks (2048) + record shards (1024) share one reference list. */
 export const MAX_ENVELOPE_ATTACHMENT_IDS = 4096;
-export const SUPPORTED_ATTACHMENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
+export const SUPPORTED_ATTACHMENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp', 'application/pdf'] as const;
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 export interface AttachmentMetadata {
@@ -62,7 +62,9 @@ export function validateAttachmentBytes(bytes: Uint8Array, contentType: MedicalA
   const valid = contentType === 'image/jpeg' ? starts(0xff, 0xd8, 0xff)
     : contentType === 'image/png' ? starts(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
       : contentType === 'image/webp' ? starts(0x52, 0x49, 0x46, 0x46) && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
-        : starts(0x25, 0x50, 0x44, 0x46, 0x2d);
+        : contentType === 'image/gif' ? starts(0x47, 0x49, 0x46, 0x38)
+          : contentType === 'image/bmp' ? starts(0x42, 0x4d)
+            : starts(0x25, 0x50, 0x44, 0x46, 0x2d);
   if (!valid) throw new Error('附件內容與宣告類型不符，已中止匯入');
 }
 

@@ -68,7 +68,7 @@ describe('MedicalReportList attachments', () => {
     expect(network).not.toHaveBeenCalled();
   });
 
-  it.each(['image/jpeg', 'image/png', 'image/webp'] as const)('supports on-demand legacy inline %s previews', async contentType => {
+  it.each(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'] as const)('supports on-demand legacy inline %s previews', async contentType => {
     const loader = vi.fn<AttachmentLoader>();
     render(<MedicalReportList reports={[report({ attachments: [{ title: '本機影像', contentType, data: btoa('image-bytes') }] })]} loadAttachment={loader} />);
     expect(createObjectURL).not.toHaveBeenCalled();
