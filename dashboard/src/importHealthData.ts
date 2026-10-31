@@ -1,32 +1,49 @@
-import { fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
-import { decryptRecords, deriveVaultKey, encryptRecords, encryptRecordsWithKey, encryptWithVaultKey, prepareVaultKey, validateVaultPassphrase } from './cryptoVault';
+import { ApiError, fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
+import {
+  decryptRecords, deriveVaultKey, encryptRecordsWithKey, encryptWithVaultKey, prepareVaultKey, validateVaultPassphrase, type VaultKey,
+} from './cryptoVault';
 import { base64ToBytes } from './medicalAttachments';
 import { emptyRecords, normalizeStoredRecords, RECORD_TYPES, type StoredRecords } from './recordStore';
 import { PatientConfirmationRequired, inspectImportIdentity, mergeNHIJson, mergePreparedImport } from './recordImport';
 import { extractImportFile, scanImportFile, type LargeImportSink } from './streamImport';
 import { createVaultSession } from './vaultSession';
+import type { RecordShardUpload } from './recordShards';
 
-async function currentRecords(passphrase: string, signal?: AbortSignal) {
+async function currentRecords(passphrase: string, signal?: AbortSignal, onProgress?: (ratio: number) => void) {
   validateVaultPassphrase(passphrase);
   signal?.throwIfAborted();
   const current = await fetchHealthData(signal);
-  const records = current.envelope ? await decryptRecords(current.envelope, passphrase)
+  const records = current.envelope ? await decryptRecords(current.envelope, passphrase, undefined, onProgress)
     : current.needsClientEncryptionMigration ? normalizeStoredRecords((await fetchLegacyHealthData(signal)).records) : emptyRecords();
   return { records, previous: current.envelope };
 }
 
-export async function unlockHealthData(passphrase: string, signal?: AbortSignal) {
-  const { records, previous } = await currentRecords(passphrase, signal);
+export async function unlockHealthData(passphrase: string, signal?: AbortSignal, onProgress?: (ratio: number) => void) {
+  const { records, previous } = await currentRecords(passphrase, signal, onProgress);
   if (!previous) throw new Error('尚未建立瀏覽器端加密資料，請先匯入或遷移既有資料');
   const key = await deriveVaultKey(passphrase, base64ToBytes(previous.salt), previous.iterations);
   return { data: createVaultSession(records, previous, key), envelope: previous };
 }
 
+/** Shards are content-addressed, so a 409 means the identical ciphertext is already stored. */
+function uploadShardWith(prepared: VaultKey, signal?: AbortSignal) {
+  return async ({ id, bytes }: RecordShardUpload) => {
+    const envelope = await encryptWithVaultKey(bytes, prepared.key, prepared);
+    signal?.throwIfAborted();
+    try {
+      await uploadEncryptedAttachment(id, envelope, signal);
+    } catch (error) {
+      if (!(error instanceof ApiError && error.status === 409)) throw error;
+    }
+  };
+}
+
 export async function importHealthData(json: object, passphrase: string, confirmPatient = false, signal?: AbortSignal) {
   const { records: existing, previous } = await currentRecords(passphrase, signal);
   const { records, stats, pendingAttachments } = await mergeNHIJson(existing, json, { confirmPatient });
-  const envelope = await encryptRecords(records, passphrase, previous);
-  const key = await deriveVaultKey(passphrase, base64ToBytes(envelope.salt), envelope.iterations);
+  const prepared = await prepareVaultKey(passphrase, previous);
+  const envelope = await encryptRecordsWithKey(records, prepared, { previous, signal, uploadShard: uploadShardWith(prepared, signal) });
+  const key = prepared.key;
   // Parse the complete candidate before any write; failed parsing must not replace a working vault.
   const data = createVaultSession(records, envelope, key);
   for (const attachment of pendingAttachments) {
@@ -98,17 +115,18 @@ export async function commitLargeImport(
     chunks: extracted.chunks,
   }, { confirmPatient });
   // Everything that can fail has run before the vault is replaced.
-  const envelope = await encryptRecordsWithKey(records, prepared);
+  const envelope = await encryptRecordsWithKey(records, prepared, { previous, signal, uploadShard: uploadShardWith(prepared, signal) });
   const data = createVaultSession(records, envelope, prepared.key);
   signal?.throwIfAborted();
   const result = await uploadEncryptedHealthData(envelope, stats, previous?.revision ?? null, signal);
   return { data, envelope, result };
 }
 
-export async function migrateHealthData(passphrase: string, signal?: AbortSignal) {
-  const { records, previous } = await currentRecords(passphrase, signal);
-  if (previous) return unlockHealthData(passphrase, signal);
-  const envelope: ClientEncryptedRecords = await encryptRecords(records, passphrase);
+export async function migrateHealthData(passphrase: string, signal?: AbortSignal, onProgress?: (ratio: number) => void) {
+  const { records, previous } = await currentRecords(passphrase, signal, onProgress);
+  if (previous) return unlockHealthData(passphrase, signal, onProgress);
+  const prepared = await prepareVaultKey(passphrase);
+  const envelope: ClientEncryptedRecords = await encryptRecordsWithKey(records, prepared, { signal, uploadShard: uploadShardWith(prepared, signal) });
   const key = await deriveVaultKey(passphrase, base64ToBytes(envelope.salt), envelope.iterations);
   const data = createVaultSession(records, envelope, key);
   const stats = Object.fromEntries(RECORD_TYPES.map(type => [type, { added: Object.keys(records[type]).length, skipped: 0, updated: 0 }]));

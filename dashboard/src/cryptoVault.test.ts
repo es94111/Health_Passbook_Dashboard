@@ -73,3 +73,52 @@ describe('browser encrypted manifests and independent binary attachments', () =>
     await expect(encryptRecords(emptyRecords(), 'short')).rejects.toThrow('12');
   });
 });
+
+describe('sharded record index for multi-gigabyte text', () => {
+  const limits = { inlineBytes: 2048, shardBytes: 1024 };
+  const big = () => normalizeStoredRecords({ r1: Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`r1.${index}`, { 'r1.1': `synthetic-${index}`, 'r1.4': 'y'.repeat(300) }])) });
+  const collect = () => {
+    const shards = new Map<string, Uint8Array<ArrayBuffer>>();
+    let uploads = 0;
+    const uploadShard = async ({ id, bytes }: { id: string; bytes: Uint8Array<ArrayBuffer> }) => { uploads += 1; shards.set(id, bytes); };
+    return { shards, count: () => uploads, uploadShard };
+  };
+
+  it('keeps the manifest tiny and roundtrips the index from verified shards', async () => {
+    const records = big();
+    const store = collect();
+    const envelope = await encryptRecords(records, passphrase, null, { limits, uploadShard: store.uploadShard });
+    expect(store.shards.size).toBeGreaterThan(2);
+    expect(envelope.data.length).toBeLessThan(1024);
+    expect(envelope.attachmentIds).toEqual([...store.shards.keys()].sort());
+    const stored = await decryptRecords(JSON.parse(JSON.stringify(envelope)), passphrase, async shard => store.shards.get(shard.id)!);
+    expect(stored).toEqual(records);
+  });
+  it('rejects shards that were truncated or tampered with after upload', async () => {
+    const store = collect();
+    const envelope = await encryptRecords(big(), passphrase, null, { limits, uploadShard: store.uploadShard });
+    const [id, bytes] = [...store.shards][0];
+    const tampered = bytes.slice();
+    tampered[0] ^= 1;
+    await expect(decryptRecords(envelope, passphrase, async shard => (shard.id === id ? tampered : store.shards.get(shard.id)!))).rejects.toThrow('完整性');
+    await expect(decryptRecords(envelope, passphrase, async shard => (shard.id === id ? bytes.subarray(1) : store.shards.get(shard.id)!))).rejects.toThrow('完整性');
+  });
+  it('does not re-upload shards that the previous manifest already references', async () => {
+    const records = big();
+    const first = collect();
+    const envelope = await encryptRecords(records, passphrase, null, { limits, uploadShard: first.uploadShard });
+    const again = collect();
+    const second = await encryptRecords(records, passphrase, envelope, { limits, uploadShard: again.uploadShard });
+    expect(again.count()).toBe(0);
+    expect(second.attachmentIds).toEqual(envelope.attachmentIds);
+    expect(second.salt).toBe(envelope.salt);
+  });
+  it('refuses to shard without an upload sink and keeps small indexes inline', async () => {
+    await expect(encryptRecords(big(), passphrase, null, { limits })).rejects.toThrow('重新整理');
+    const small = normalizeStoredRecords({ r1: { one: { 'r1.1': 'synthetic' } } });
+    const store = collect();
+    const envelope = await encryptRecords(small, passphrase, null, { limits, uploadShard: store.uploadShard });
+    expect(store.count()).toBe(0);
+    expect(await decryptRecords(envelope, passphrase)).toEqual(small);
+  });
+});

@@ -96,10 +96,11 @@ describe('two-pass extraction of oversized source files', () => {
     expect(store.attachments).toHaveLength(0);
     expect(store.chunks).toHaveLength(1);
   });
-  it('refuses to build an index beyond the encrypted manifest budget', async () => {
+  it('accepts an index larger than the old 32 MiB manifest budget', async () => {
     const valueString = 'x'.repeat(33 * 1024 * 1024);
     const store = sink();
-    await expect(extractImportFile(jsonFile(syntheticBundle([{ resourceType: 'Observation', id: 'huge', valueString }])), 'FHIR', emptyRecords(), store.target))
-      .rejects.toThrow('32 MiB');
-  });
+    const extracted = await extractImportFile(jsonFile(syntheticBundle([{ resourceType: 'Observation', id: 'huge', valueString }])), 'FHIR', emptyRecords(), store.target);
+    const entry = (extracted.json.entry as { resource: Record<string, unknown> }[])[1].resource;
+    expect(entry.valueString).toBe(valueString);
+  }, 60_000);
 });
