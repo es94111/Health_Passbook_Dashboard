@@ -1,6 +1,18 @@
 {
-  "currentVersion": "2.2.0",
+  "currentVersion": "2.2.1",
   "releases": [
+    {
+      "version": "2.2.1",
+      "date": "2026-10-31",
+      "title": "修正 GitHub Release 缺少映像資訊",
+      "type": "fix",
+      "changes": [
+        {
+          "tag": "fixed",
+          "text": "建置資訊改以 artifact 傳遞給 release job：GitHub 會丟棄含有 secret 值（Docker Hub 帳號即為 repo owner）的 job outputs，導致 v2.2.0 的 Release 內文缺少映像名稱、可用標籤與 digest。"
+        }
+      ]
+    },
     {
       "version": "2.2.0",
       "date": "2026-10-31",

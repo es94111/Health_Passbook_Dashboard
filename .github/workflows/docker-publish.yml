@@ -30,12 +30,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-      tags: ${{ steps.meta.outputs.tags }}
-      version: ${{ steps.images.outputs.version }}
-      ghcr_image: ${{ steps.images.outputs.ghcr_image }}
-      dockerhub_image: ${{ steps.images.outputs.dockerhub_image }}
 
     steps:
       - name: Checkout
@@ -145,6 +139,32 @@ jobs:
           cache-from: type=gha
           cache-to: ${{ github.event_name == 'pull_request' && 'type=gha,mode=min' || 'type=gha,mode=max' }}
 
+      # job outputs 只要含 secret 值（例如 Docker Hub 帳號）就會被 GitHub 丟棄，
+      # 因此改用 artifact 把映像資訊傳給 release job。
+      - name: Save image metadata
+        if: github.event_name != 'pull_request'
+        env:
+          GHCR_IMAGE: ${{ steps.images.outputs.ghcr_image }}
+          DOCKERHUB_IMAGE: ${{ steps.images.outputs.dockerhub_image }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          jq -n \
+            --arg ghcr_image "$GHCR_IMAGE" \
+            --arg dockerhub_image "$DOCKERHUB_IMAGE" \
+            --arg tags "$TAGS" \
+            --arg digest "$DIGEST" \
+            '{ghcr_image: $ghcr_image, dockerhub_image: $dockerhub_image, tags: $tags, digest: $digest}' \
+            > "$RUNNER_TEMP/image-metadata.json"
+
+      - name: Upload image metadata
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-metadata
+          path: ${{ runner.temp }}/image-metadata.json
+          retention-days: 3
+
       # 以真正建置出的 image 啟動容器，確認 API 與 SPA 都能服務。
       - name: Smoke test image
         if: github.event_name == 'pull_request'
@@ -215,17 +235,35 @@ jobs:
         with:
           node-version: 22
 
+      # 映像資訊由 build job 的 artifact 取得，避免 job outputs 因含 secret 值被丟棄。
+      - name: Download image metadata
+        uses: actions/download-artifact@v8
+        with:
+          name: image-metadata
+
+      - name: Resolve image metadata
+        id: image
+        run: |
+          {
+            echo "ghcr_image=$(jq -r '.ghcr_image' image-metadata.json)"
+            echo "dockerhub_image=$(jq -r '.dockerhub_image' image-metadata.json)"
+            echo "digest=$(jq -r '.digest' image-metadata.json)"
+            echo "tags<<__TAGS__"
+            jq -r '.tags' image-metadata.json
+            echo "__TAGS__"
+          } >> "$GITHUB_OUTPUT"
+
       # Release 內文取自 changelog.json，附加 pull 指令、平台與 digest。
       - name: Generate release notes
         id: notes
         env:
-          IMAGE_TAGS: ${{ needs.build.outputs.tags }}
+          IMAGE_TAGS: ${{ steps.image.outputs.tags }}
         run: |
           node scripts/release/release-notes.mjs \
             --tag "$GITHUB_REF_NAME" \
-            --image "${{ needs.build.outputs.ghcr_image }}" \
-            --image "${{ needs.build.outputs.dockerhub_image }}" \
-            --digest "${{ needs.build.outputs.digest }}" \
+            --image "${{ steps.image.outputs.ghcr_image }}" \
+            --image "${{ steps.image.outputs.dockerhub_image }}" \
+            --digest "${{ steps.image.outputs.digest }}" \
             --platforms "$RELEASE_PLATFORMS" \
             --out "$RUNNER_TEMP/release-notes.md"
 
