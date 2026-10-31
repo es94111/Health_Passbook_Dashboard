@@ -3,7 +3,15 @@ import { array, object, sha256, string } from './parsers/fhir-common';
 
 export const MAX_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 export const MAX_ATTACHMENTS = 512;
+/** Largest manifest / decrypted record index the browser and API accept. */
 export const MAX_IMPORT_BYTES = 32 * 1024 * 1024;
+/** Largest single file accepted by the two-pass streaming import. */
+export const MAX_IMPORT_FILE_BYTES = 4 * 1024 * 1024 * 1024;
+/** Raw source is uploaded as independently encrypted 8 MiB chunks. */
+export const SOURCE_CHUNK_BYTES = 8 * 1024 * 1024;
+export const MAX_SOURCE_CHUNKS = 2048;
+/** Attachments (512) plus source chunks share one manifest reference list. */
+export const MAX_ENVELOPE_ATTACHMENT_IDS = 4096;
 export const SUPPORTED_ATTACHMENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const;
 export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -50,49 +58,64 @@ export function validateAttachmentBytes(bytes: Uint8Array, contentType: MedicalA
   if (!valid) throw new Error('附件內容與宣告類型不符，已中止匯入');
 }
 
+export interface AttachmentSeparator {
+  metadata: Record<string, AttachmentMetadata>;
+  warnings: Set<string>;
+  /** Separates one value at a time so a huge source file can be streamed. */
+  separate(value: unknown): Promise<{ json: unknown; pending: PendingAttachment[] }>;
+}
+
+export function createAttachmentSeparator(existing: Record<string, AttachmentMetadata>): AttachmentSeparator {
+  const metadata = { ...existing };
+  const warnings = new Set<string>();
+  const byDigest = new Map(Object.values(metadata).map(item => [`${item.contentType}:${item.digest}`, item]));
+  const separate = async (value: unknown): Promise<{ json: unknown; pending: PendingAttachment[] }> => {
+    const pending: PendingAttachment[] = [];
+    const visit = async (input: unknown): Promise<unknown> => {
+      if (Array.isArray(input)) return Promise.all(input.map(visit));
+      if (input === null || typeof input !== 'object') return input;
+      const inputObject = object(input);
+      if (Object.keys(inputObject).some(key => key.startsWith('__vault'))) throw new Error('匯入檔含有保留的附件欄位，請使用原始 Bridge 匯出檔');
+      const result = Object.fromEntries(await Promise.all(Object.entries(inputObject).map(async ([key, child]) => [key, await visit(child)])));
+      const mime = attachmentType(inputObject.contentType);
+      if (typeof inputObject.data === 'string' && inputObject.data.length && mime) {
+        if (inputObject.data.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4) throw new Error('單一附件超過 12 MiB 上限');
+        const bytes = base64ToBytes(inputObject.data);
+        validateAttachmentBytes(bytes, mime);
+        if (Object.hasOwn(inputObject, 'size') && (!Number.isSafeInteger(inputObject.size) || inputObject.size !== bytes.length)) throw new Error('附件大小與宣告 size 不符');
+        const digest = await sha256(bytes);
+        let item = byDigest.get(`${mime}:${digest}`);
+        if (!item) {
+          if (Object.keys(metadata).length >= MAX_ATTACHMENTS) throw new Error('附件數量超過 512 個上限，既有資料未變更');
+          item = { id: crypto.randomUUID(), digest, contentType: mime, size: bytes.length };
+          byDigest.set(`${mime}:${digest}`, item);
+          metadata[item.id] = item;
+          pending.push({ ...item, data: inputObject.data });
+        }
+        delete result.data;
+        result.__vaultAttachment = item.id;
+        result.__vaultOriginalSize = Object.hasOwn(inputObject, 'size');
+        result.size = bytes.length;
+      } else if (typeof inputObject.data === 'string' && inputObject.contentType && !mime) {
+        warnings.add('部分附件類型不支援預覽；原始內容仍保留於加密來源檔');
+      }
+      if (typeof inputObject.url === 'string' && /^(?:https?:|data:|file:|javascript:)/i.test(inputObject.url)) {
+        warnings.add('外部附件未連線或下載；僅保留來源資訊');
+      }
+      return result;
+    };
+    return { json: await visit(value), pending };
+  };
+  return { metadata, warnings, separate };
+}
+
 export async function separateAttachments(
   json: object,
   existing: Record<string, AttachmentMetadata>,
 ): Promise<{ json: object; metadata: Record<string, AttachmentMetadata>; pending: PendingAttachment[]; warnings: string[] }> {
-  const metadata = { ...existing };
-  const pending: PendingAttachment[] = [];
-  const warnings = new Set<string>();
-  const byDigest = new Map(Object.values(metadata).map(item => [`${item.contentType}:${item.digest}`, item]));
-  const visit = async (value: unknown): Promise<unknown> => {
-    if (Array.isArray(value)) return Promise.all(value.map(visit));
-    if (value === null || typeof value !== 'object') return value;
-    const input = object(value);
-    if (Object.keys(input).some(key => key.startsWith('__vault'))) throw new Error('匯入檔含有保留的附件欄位，請使用原始 Bridge 匯出檔');
-    const result = Object.fromEntries(await Promise.all(Object.entries(input).map(async ([key, child]) => [key, await visit(child)])));
-    const mime = attachmentType(input.contentType);
-    if (typeof input.data === 'string' && input.data.length && mime) {
-      if (input.data.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4) throw new Error('單一附件超過 12 MiB 上限');
-      const bytes = base64ToBytes(input.data);
-      validateAttachmentBytes(bytes, mime);
-      if (Object.hasOwn(input, 'size') && (!Number.isSafeInteger(input.size) || input.size !== bytes.length)) throw new Error('附件大小與宣告 size 不符');
-      const digest = await sha256(bytes);
-      let item = byDigest.get(`${mime}:${digest}`);
-      if (!item) {
-        item = { id: crypto.randomUUID(), digest, contentType: mime, size: bytes.length };
-        byDigest.set(`${mime}:${digest}`, item);
-        metadata[item.id] = item;
-        pending.push({ ...item, data: input.data });
-      }
-      delete result.data;
-      result.__vaultAttachment = item.id;
-      result.__vaultOriginalSize = Object.hasOwn(input, 'size');
-      result.size = bytes.length;
-    } else if (typeof input.data === 'string' && input.contentType && !mime) {
-      warnings.add('部分附件類型不支援預覽；原始內容仍保留於加密來源檔');
-    }
-    if (typeof input.url === 'string' && /^(?:https?:|data:|file:|javascript:)/i.test(input.url)) {
-      warnings.add('外部附件未連線或下載；僅保留來源資訊');
-    }
-    return result;
-  };
-  const separated = await visit(json) as object;
-  if (Object.keys(metadata).length > MAX_ATTACHMENTS) throw new Error('附件數量超過 512 個上限，既有資料未變更');
-  return { json: separated, metadata, pending, warnings: [...warnings] };
+  const separator = createAttachmentSeparator(existing);
+  const { json: separated, pending } = await separator.separate(json);
+  return { json: separated as object, metadata: separator.metadata, pending, warnings: [...separator.warnings] };
 }
 
 export async function restoreAttachmentData(

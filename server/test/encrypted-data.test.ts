@@ -190,11 +190,11 @@ test('rejects path traversal, noncanonical IDs and invalid manifest reference li
       assert.equal(response.status, 400, invalid);
     }
   }
-  for (const ids of [[id, id], ['../users'], [id.toUpperCase()], Array.from({ length: 513 }, () => crypto.randomUUID())]) {
+  for (const ids of [[id, id], ['../users'], [id.toUpperCase()], Array.from({ length: 4097 }, () => crypto.randomUUID())]) {
     assert.equal((await request('POST', '/api/data/upload', { envelope: envelope('manifest', { attachmentIds: ids }) })).status, 400);
   }
   assert.equal(encryption.isClientEncryptedRecords(envelope('manifest', {
-    attachmentIds: Array.from({ length: 512 }, () => crypto.randomUUID()),
+    attachmentIds: Array.from({ length: 4096 }, () => crypto.randomUUID()),
   })), true);
   await assert.rejects(fs.access(path.join(dataDir, 'attachments')));
 });

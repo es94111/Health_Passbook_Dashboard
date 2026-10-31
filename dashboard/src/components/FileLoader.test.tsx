@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import FileLoader from './FileLoader';
-import { importHealthData, unlockHealthData, migrateHealthData } from '../importHealthData';
+import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData } from '../importHealthData';
 import { PatientConfirmationRequired } from '../recordImport';
 
-vi.mock('../importHealthData', () => ({ importHealthData: vi.fn(), unlockHealthData: vi.fn(), migrateHealthData: vi.fn() }));
+vi.mock('../importHealthData', () => ({ importHealthData: vi.fn(), unlockHealthData: vi.fn(), migrateHealthData: vi.fn(), prepareLargeImport: vi.fn(), commitLargeImport: vi.fn() }));
 afterEach(cleanup);
 beforeEach(() => vi.resetAllMocks());
 const props = () => ({ storedEnvelope: null, needsClientEncryptionMigration: false, onEnvelopeSaved: vi.fn(), onLoad: vi.fn() });
@@ -13,6 +13,16 @@ function selectFile(container: HTMLElement, json = '{"r1":[{}]}') {
   Object.defineProperty(file, 'text', { value: async () => json });
   fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
 }
+function selectOversizedFile(container: HTMLElement) {
+  const file = new File(['{}'], 'synthetic-large.json', { type: 'application/json' });
+  Object.defineProperty(file, 'size', { value: 2 * 1024 * 1024 * 1024 });
+  fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+}
+const largePreview = (needsConfirmation: boolean) => ({
+  file: new File(['{}'], 'synthetic-large.json'), existing: {} as never, previous: null,
+  format: 'FHIR' as const, needsConfirmation,
+});
+const loaded = () => ({ data: { importHistory: [] }, envelope: { revision: 'synthetic' }, result: { message: 'ok', stats: {} } });
 function enterPassword() { fireEvent.change(screen.getByLabelText('資料加密密碼'), { target: { value: 'synthetic-passphrase' } }); }
 
 describe('explicit same-patient confirmation flow', () => {
@@ -67,5 +77,50 @@ describe('explicit same-patient confirmation flow', () => {
     expect(unlockHealthData).not.toHaveBeenCalled();
     expect(migrateHealthData).not.toHaveBeenCalled();
     expect(screen.queryByText(/synthetic-invalid-json/)).toBeNull();
+  });
+});
+
+describe('streaming import of oversized files', () => {
+  it('streams files above the inline limit instead of reading them into memory', async () => {
+    const callbacks = props();
+    const preview = largePreview(false);
+    vi.mocked(prepareLargeImport).mockResolvedValue(preview);
+    vi.mocked(commitLargeImport).mockImplementation(async (_preview, _passphrase, _confirmed, _signal, onProgress) => {
+      onProgress!(0.5);
+      return loaded() as never;
+    });
+    const { container } = render(<FileLoader {...callbacks} />);
+    enterPassword();
+    selectOversizedFile(container);
+    await waitFor(() => expect(callbacks.onLoad).toHaveBeenCalled());
+    expect(prepareLargeImport).toHaveBeenCalledWith(expect.objectContaining({ name: 'synthetic-large.json' }), 'synthetic-passphrase', expect.any(AbortSignal), expect.any(Function));
+    expect(commitLargeImport).toHaveBeenCalledWith(preview, 'synthetic-passphrase', false, expect.any(AbortSignal), expect.any(Function));
+    expect(importHealthData).not.toHaveBeenCalled();
+    expect(callbacks.onEnvelopeSaved).toHaveBeenCalledWith(expect.objectContaining({ revision: 'synthetic' }));
+  });
+  it('asks for patient consent before streaming an unverifiable oversized file', async () => {
+    const callbacks = props();
+    const preview = largePreview(true);
+    vi.mocked(prepareLargeImport).mockResolvedValue(preview);
+    vi.mocked(commitLargeImport).mockResolvedValueOnce(loaded() as never).mockRejectedValueOnce(new PatientConfirmationRequired());
+    const { container } = render(<FileLoader {...callbacks} />);
+    enterPassword();
+    selectOversizedFile(container);
+    const confirm = await screen.findByRole('button', { name: '確認並匯入' });
+    expect(commitLargeImport).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(confirm);
+    await waitFor(() => expect(commitLargeImport).toHaveBeenCalledWith(preview, 'synthetic-passphrase', true, expect.any(AbortSignal), expect.any(Function)));
+    await waitFor(() => expect(callbacks.onLoad).toHaveBeenCalled());
+  });
+  it('shows a streaming error without saving anything', async () => {
+    const callbacks = props();
+    vi.mocked(prepareLargeImport).mockRejectedValue(new Error('病歷文字內容超過 32 MiB 上限'));
+    const { container } = render(<FileLoader {...callbacks} />);
+    enterPassword();
+    selectOversizedFile(container);
+    await screen.findByText('病歷文字內容超過 32 MiB 上限');
+    expect(commitLargeImport).not.toHaveBeenCalled();
+    expect(callbacks.onLoad).not.toHaveBeenCalled();
   });
 });

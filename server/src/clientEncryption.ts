@@ -11,7 +11,8 @@ export interface ClientEncryptedRecords {
   revision?: string;
 }
 
-export const MAX_ATTACHMENT_IDS = 512;
+/** 512 attachments plus the 8 MiB raw-source chunks of an import up to 4 GiB. */
+export const MAX_ATTACHMENT_IDS = 4096;
 export const MAX_ATTACHMENT_CIPHERTEXT_LENGTH = 18 * 1024 * 1024;
 const MAX_MANIFEST_CIPHERTEXT_LENGTH = 50 * 1024 * 1024;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;

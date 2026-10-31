@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchEncryptedAttachment, fetchHealthData, fetchLegacyHealthData, uploadEncryptedAttachment, uploadEncryptedHealthData, type ClientEncryptedRecords } from './api';
-import { decryptRecords, encryptRecords } from './cryptoVault';
-import { importHealthData, migrateHealthData, unlockHealthData } from './importHealthData';
+import { decryptRecords, decryptVaultBytes, deriveVaultKey, encryptRecords } from './cryptoVault';
+import { commitLargeImport, importHealthData, migrateHealthData, prepareLargeImport, unlockHealthData } from './importHealthData';
 import { base64ToBytes } from './medicalAttachments';
+import type { SourceChunk } from './recordStore';
+import { sha256 } from './parsers/fhir-common';
 import { emptyRecords } from './recordStore';
 import { SYNTHETIC_PNG, syntheticBundle, syntheticNhi } from './test/fixtures';
 
@@ -78,5 +80,61 @@ describe('encrypted import transaction orchestration', () => {
     expect(await decryptRecords(migrated.envelope, passphrase)).toEqual(records);
     expect(migrated.data.importHistory).toEqual([]);
     expect(uploadEncryptedHealthData).toHaveBeenCalledOnce();
+  });
+});
+
+function jsonFile(value: unknown): File {
+  return new File([JSON.stringify(value)], 'synthetic.json', { type: 'application/json' });
+}
+
+describe('streaming import of oversized source files', () => {
+  it('stores the original bytes as encrypted chunks and only an index in the manifest', async () => {
+    const file = jsonFile(withImage());
+    const preview = await prepareLargeImport(file, passphrase);
+    expect(preview).toMatchObject({ format: 'FHIR', needsConfirmation: false });
+    expect(uploadEncryptedAttachment).not.toHaveBeenCalled();
+    const staged = new Map<string, ClientEncryptedRecords>();
+    vi.mocked(uploadEncryptedAttachment).mockImplementation(async (id, envelope) => { staged.set(id, envelope); return { ok: true }; });
+    const imported = await commitLargeImport(preview, passphrase);
+    expect(vi.mocked(uploadEncryptedAttachment).mock.invocationCallOrder.every(order =>
+      order < vi.mocked(uploadEncryptedHealthData).mock.invocationCallOrder[0])).toBe(true);
+    expect(uploadEncryptedHealthData).toHaveBeenCalledWith(imported.envelope, expect.any(Object), null, undefined);
+    const records = await decryptRecords(imported.envelope, passphrase);
+    const [sourceId] = Object.keys(records.sources);
+    expect(records.sources[sourceId].data).toBeUndefined();
+    const chunks = records.sources[sourceId].chunks as SourceChunk[];
+    expect(chunks).toHaveLength(1);
+    const key = await deriveVaultKey(passphrase, base64ToBytes(imported.envelope.salt), imported.envelope.iterations);
+    const bytes = await decryptVaultBytes(staged.get(chunks[0].id)!, key);
+    expect(bytes).toEqual(new Uint8Array(await file.arrayBuffer()));
+    expect(chunks[0]).toEqual({ id: chunks[0].id, digest: await sha256(bytes), size: bytes.length });
+    const [attachmentId] = Object.keys(records.attachments);
+    expect(records.attachments[attachmentId]).toMatchObject({ contentType: 'image/png', size: base64ToBytes(SYNTHETIC_PNG).length });
+    expect(await decryptVaultBytes(staged.get(attachmentId)!, key)).toEqual(base64ToBytes(SYNTHETIC_PNG));
+    expect(JSON.stringify(records)).not.toContain(SYNTHETIC_PNG);
+    expect(imported.data.importHistory).toHaveLength(1);
+  });
+  it('still requires explicit patient consent before the vault is replaced', async () => {
+    const preview = await prepareLargeImport(jsonFile(syntheticNhi), passphrase);
+    expect(preview).toMatchObject({ format: 'NHI', needsConfirmation: true });
+    await expect(commitLargeImport(preview, passphrase)).rejects.toThrow('確認');
+    expect(uploadEncryptedAttachment).not.toHaveBeenCalled();
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
+    const confirmed = await commitLargeImport(preview, passphrase, true);
+    expect(uploadEncryptedHealthData).toHaveBeenCalledWith(confirmed.envelope, expect.any(Object), null, undefined);
+    expect(Object.keys((await decryptRecords(confirmed.envelope, passphrase)).r1)).toHaveLength(1);
+  });
+  it('does not commit the manifest when a chunk upload fails', async () => {
+    const preview = await prepareLargeImport(jsonFile(withImage()), passphrase);
+    vi.mocked(uploadEncryptedAttachment).mockRejectedValue(new Error('synthetic storage unavailable'));
+    await expect(commitLargeImport(preview, passphrase)).rejects.toThrow('unavailable');
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
+  });
+  it('aborts a streaming import before any commit when cancelled', async () => {
+    const preview = await prepareLargeImport(jsonFile(withImage()), passphrase);
+    const controller = new AbortController();
+    vi.mocked(uploadEncryptedAttachment).mockImplementation(async () => { controller.abort(); return { ok: true }; });
+    await expect(commitLargeImport(preview, passphrase, false, controller.signal)).rejects.toThrow();
+    expect(uploadEncryptedHealthData).not.toHaveBeenCalled();
   });
 });

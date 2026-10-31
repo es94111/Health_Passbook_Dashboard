@@ -1,8 +1,8 @@
 import { comparePatients, isFhirBundle, patientIdentifiers, readFhirBundleResources } from './parsers/fhir-parser';
 import { array, canonicalJson, fhirDate, object, resourceSource, sha256, string, type FhirObject } from './parsers/fhir-common';
-import { separateAttachments, type PendingAttachment } from './medicalAttachments';
+import { separateAttachments, type AttachmentMetadata, type PendingAttachment } from './medicalAttachments';
 import { parseNHIDate } from './parsers/nhi-parser';
-import { normalizeStoredRecords, RECORD_TYPES, type MergeStats, type RecordType, type StoredRecords } from './recordStore';
+import { normalizeStoredRecords, RECORD_TYPES, type MergeStats, type RecordType, type SourceChunk, type StoredRecords } from './recordStore';
 
 export class PatientConfirmationRequired extends Error {
   constructor() { super('無法自動比對病人身分。請確認此次檔案與目前帳號的既有資料屬於同一人後再匯入。'); }
@@ -12,17 +12,21 @@ function nhiSource(json: FhirObject): FhirObject {
   return Object.hasOwn(json, 'myhealthbank') ? object(object(json.myhealthbank).bdata) : json;
 }
 
+export function patientIdentityDecision(existing: StoredRecords, patient: FhirObject): boolean {
+  const prior = Object.values(existing.fhir ?? {}).map(object).filter(resource => resource.resourceType === 'Patient');
+  const matches = prior.map(previous => comparePatients(previous, patient));
+  if (matches.includes('different')) throw new Error('偵測到不同的病人識別資訊，已中止匯入以避免混合病歷');
+  const hasExisting = RECORD_TYPES.some(type => Object.keys(existing[type] ?? {}).length);
+  return hasExisting ? !matches.includes('same') : patientIdentifiers(patient).size === 0;
+}
+
 export function inspectImportIdentity(existing: StoredRecords, input: object): { needsConfirmation: boolean; format: 'NHI' | 'FHIR' } {
   const json = object(input);
   if (json.resourceType !== undefined) {
     if (!isFhirBundle(json)) throw new Error('請選擇完整的 FHIR R4 Bundle JSON，而非單一 FHIR resource');
     const resources = readFhirBundleResources(json);
     const patient = resources.find(resource => resource.resourceType === 'Patient')!;
-    const prior = Object.values(existing.fhir ?? {}).map(object).filter(resource => resource.resourceType === 'Patient');
-    const matches = prior.map(previous => comparePatients(previous, patient));
-    if (matches.includes('different')) throw new Error('偵測到不同的病人識別資訊，已中止匯入以避免混合病歷');
-    const hasExisting = RECORD_TYPES.some(type => Object.keys(existing[type] ?? {}).length);
-    return { format: 'FHIR', needsConfirmation: hasExisting ? !matches.includes('same') : patientIdentifiers(patient).size === 0 };
+    return { format: 'FHIR', needsConfirmation: patientIdentityDecision(existing, patient) };
   }
   const source = nhiSource(json);
   const recognized = RECORD_TYPES.filter(type => type !== 'fhir' && Object.hasOwn(source, type));
@@ -56,26 +60,35 @@ function staleResource(previous: FhirObject, incoming: FhirObject): boolean {
   return /^\d+$/.test(oldVersion) && /^\d+$/.test(newVersion) && BigInt(newVersion) < BigInt(oldVersion);
 }
 
-export async function mergeNHIJson(
+export interface PreparedMergeInput {
+  /** Attachment-separated JSON that is safe to store in the encrypted manifest. */
+  json: object;
+  format: 'NHI' | 'FHIR';
+  needsConfirmation: boolean;
+  attachments: Record<string, AttachmentMetadata>;
+  warnings: string[];
+  sourceId: string;
+  chunks?: SourceChunk[];
+}
+
+export async function mergePreparedImport(
   previous: StoredRecords,
-  json: object,
+  input: PreparedMergeInput,
   options: { confirmPatient?: boolean } = {},
-): Promise<{ records: StoredRecords; stats: MergeStats; pendingAttachments: PendingAttachment[] }> {
+): Promise<{ records: StoredRecords; stats: MergeStats }> {
   const existing = normalizeStoredRecords(previous);
-  const identity = inspectImportIdentity(existing, json);
-  if (identity.needsConfirmation && !options.confirmPatient) throw new PatientConfirmationRequired();
-  const sourceId = await sha256(canonicalJson(json));
-  const separated = await separateAttachments(json, existing.attachments);
-  const prepared = object(separated.json);
+  if (input.needsConfirmation && !options.confirmPatient) throw new PatientConfirmationRequired();
+  const prepared = object(input.json);
   const records = normalizeStoredRecords(existing);
-  records.attachments = separated.metadata;
-  records.sources = { ...existing.sources, [sourceId]: { format: identity.format, data: prepared } };
+  records.attachments = input.attachments;
+  records.sources = { ...existing.sources,
+    [input.sourceId]: input.chunks ? { format: input.format, chunks: input.chunks } : { format: input.format, data: prepared } };
   records.fhirAliases = { ...existing.fhirAliases };
   const stats = Object.fromEntries(RECORD_TYPES.map(type => [type, { added: 0, skipped: 0, updated: 0 }])) as MergeStats;
-  const warnings = new Set(separated.warnings);
-  if (identity.needsConfirmation) warnings.add('此來源的病人身分由使用者人工確認，無法由系統自動驗證');
+  const warnings = new Set(input.warnings);
+  if (input.needsConfirmation) warnings.add('此來源的病人身分由使用者人工確認，無法由系統自動驗證');
 
-  if (identity.format === 'FHIR') {
+  if (input.format === 'FHIR') {
     const resources = readFhirBundleResources(prepared);
     const entries = array(prepared.entry).map(object);
     const seen = new Set<string>();
@@ -136,7 +149,28 @@ export async function mergeNHIJson(
     }
   }
   const total = Object.values(stats).reduce((sum, item) => ({ added: sum.added + item.added, updated: sum.updated + item.updated, skipped: sum.skipped + item.skipped }), { added: 0, updated: 0, skipped: 0 });
-  records.importHistory = [...existing.importHistory, { id: crypto.randomUUID(), sourceId, format: identity.format, importedAt: new Date().toISOString(),
-    ...total, warnings: [...warnings], identityConfirmed: identity.needsConfirmation && options.confirmPatient === true }];
-  return { records, stats, pendingAttachments: separated.pending };
+  records.importHistory = [...existing.importHistory, { id: crypto.randomUUID(), sourceId: input.sourceId, format: input.format, importedAt: new Date().toISOString(),
+    ...total, warnings: [...warnings], identityConfirmed: input.needsConfirmation && options.confirmPatient === true }];
+  return { records, stats };
+}
+
+export async function mergeNHIJson(
+  previous: StoredRecords,
+  json: object,
+  options: { confirmPatient?: boolean } = {},
+): Promise<{ records: StoredRecords; stats: MergeStats; pendingAttachments: PendingAttachment[] }> {
+  const existing = normalizeStoredRecords(previous);
+  const identity = inspectImportIdentity(existing, json);
+  if (identity.needsConfirmation && !options.confirmPatient) throw new PatientConfirmationRequired();
+  const sourceId = await sha256(canonicalJson(json));
+  const separated = await separateAttachments(json, existing.attachments);
+  const merged = await mergePreparedImport(existing, {
+    json: object(separated.json),
+    format: identity.format,
+    needsConfirmation: identity.needsConfirmation,
+    attachments: separated.metadata,
+    warnings: separated.warnings,
+    sourceId,
+  }, options);
+  return { ...merged, pendingAttachments: separated.pending };
 }
