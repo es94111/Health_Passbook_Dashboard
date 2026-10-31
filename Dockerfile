@@ -33,6 +33,13 @@ COPY --from=server-build /app/server/dist ./dist/
 # Dashboard static files served by Express at /public
 COPY --from=dashboard-build /app/dashboard/dist ./public/
 
+# Version info for the in-app system update panel (no secrets included)
+COPY changelog.json ./changelog.json
+
+# Opt in to Watchtower's label filter; Watchtower still needs to be running
+# with WATCHTOWER_LABEL_ENABLE=true to update this container.
+LABEL com.centurylinklabs.watchtower.enable="true"
+
 # Run as non-root. Create /app/data and chown before the VOLUME declaration so a
 # fresh anonymous volume inherits the app user's ownership.
 RUN addgroup -S app && adduser -S app -G app \

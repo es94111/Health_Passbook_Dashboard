@@ -18,6 +18,12 @@ import {
 import { importBackupStream, prepareBackupFile } from '../backupTransfer.js';
 import { BackupDownloads } from '../backupDownloads.js';
 import { BackupSizeError } from '../backupLimits.js';
+import {
+  getSystemInfo,
+  triggerSystemUpdate,
+  UpdateConfigurationError,
+  UpdateConflictError,
+} from '../systemUpdate.js';
 
 const router = Router();
 const downloads = new BackupDownloads();
@@ -53,6 +59,15 @@ const backupRateLimit = createRateLimiter({
   max: 10,
   message: '備份操作嘗試次數過多，請稍後再試。',
   key: (req) => `admin-backup:${clientIp(req)}:${req.user?.userId ?? '?'}`,
+});
+
+// Updating restarts the service; keep repeated password attempts and manual
+// restart loops bounded.
+const systemUpdateRateLimit = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: '系統更新嘗試次數過多，請稍後再試。',
+  key: (req) => `admin-system-update:${clientIp(req)}:${req.user?.userId ?? '?'}`,
 });
 
 // ── Admin IP allowlist ────────────────────────────────────────────────────────
@@ -322,6 +337,71 @@ router.put('/settings', async (req, res) => {
 
   const updated = await updateSettings(patch);
   res.json(updated);
+});
+
+// ── GET /api/admin/system — version + Watchtower update status ───────────────
+router.get('/system', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await getSystemInfo());
+});
+
+// ── POST /api/admin/system/update — trigger a Watchtower image update ────────
+// The admin must re-enter their password; the attempt is audit-logged and rate
+// limited. The Watchtower token never leaves the server.
+router.post('/system/update', systemUpdateRateLimit, async (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const admin = await getUserById(req.user!.userId);
+  if (!admin) {
+    res.status(401).json({ error: '管理員帳號不存在' });
+    return;
+  }
+  if (!admin.passwordHash) {
+    res.status(400).json({ error: '此帳號尚未設定密碼（僅 Google 登入），請先至帳號設定頁設定密碼後再更新系統' });
+    return;
+  }
+  const { password } = req.body as { password?: unknown };
+  if (typeof password !== 'string' || password.length === 0) {
+    res.status(400).json({ error: '請輸入管理員密碼以確認更新' });
+    return;
+  }
+  const valid = await bcrypt.compare(password, admin.passwordHash);
+  if (!valid) {
+    res.status(401).json({ error: '密碼錯誤' });
+    return;
+  }
+
+  try {
+    const result = await triggerSystemUpdate({ username: admin.username });
+    addLoginLog({
+      userId: admin.id,
+      username: admin.username,
+      isAdmin: true,
+      method: 'password',
+      success: result.update.state !== 'failed',
+      ip: clientIp(req),
+      timestamp: new Date().toISOString(),
+      action: 'admin-system-update',
+      ...(result.update.state === 'failed'
+        ? { failReason: result.message }
+        : { note: `watchtower=${result.update.state}` }),
+    }).catch(() => undefined);
+
+    if (result.update.state === 'failed') {
+      res.status(502).json({ error: result.message, update: result.update });
+      return;
+    }
+    res.status(202).json(result);
+  } catch (err) {
+    if (err instanceof UpdateConfigurationError) {
+      res.status(503).json({ error: err.message });
+      return;
+    }
+    if (err instanceof UpdateConflictError) {
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    next(err as Error);
+  }
 });
 
 // ── GET /api/admin/login-logs — all users' logs (success + failure), max 500

@@ -1,4 +1,5 @@
 import express, { type Request, type Response, type NextFunction } from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import path from 'path';
 import { loadMasterKey } from './crypto.js';
@@ -19,6 +20,17 @@ export function createApp() {
     ? process.env.CORS_ORIGIN.split(',').map((s) => s.trim())
     : ['http://localhost:5173', 'http://127.0.0.1:5173'];
   app.use(cors({ origin: corsOrigins, credentials: true }));
+  // Compress text assets/JSON. Encrypted payloads (`/api/data`) and backup
+  // streams (`/api/admin/backup`) are already incompressible, so skip them to
+  // avoid wasting CPU on every record read/write.
+  app.use(compression({
+    threshold: 1024,
+    filter: (req, res) => {
+      // Inside a mounted router req.path is relative; use the original URL.
+      if (/^\/api\/(?:data|admin\/backup)(?:\/|$)/i.test(req.originalUrl.split('?')[0])) return false;
+      return compression.filter(req, res);
+    },
+  }));
   app.use((req, res, next) => {
     // Ordinary request bodies retain a five-minute absolute deadline. Only an
     // authenticated backup operation may replace it with its 24-hour deadline.
@@ -92,10 +104,21 @@ export function createApp() {
   // Serve dashboard SPA in production (docker / npm start)
   // In dev the Vite dev server handles this via proxy — only activate when public/ exists
   const PUBLIC = path.join(process.cwd(), 'public');
-  app.use(express.static(PUBLIC));
+  app.use(express.static(PUBLIC, {
+    index: false,
+    setHeaders: (res, filePath) => {
+      // Vite emits content-hashed files under /assets — safe to cache forever.
+      if (/[/\\]assets[/\\]/.test(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      } else {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }));
   // Express 5: bare '*' is no longer a valid route pattern; '/{*splat}' matches all paths incl. '/'
   app.get('/{*splat}', (_req, res, next) => {
     const indexFile = path.join(PUBLIC, 'index.html');
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(indexFile, (err) => { if (err) next(); });
   });
 
