@@ -316,6 +316,37 @@ export function deleteAdminLoginLogs(ids: string[]): Promise<{ deleted: number }
   });
 }
 
+// ── Admin system update (Watchtower sidecar) ──────────────────────────────────
+
+export type SystemUpdateState = 'idle' | 'pending' | 'restarted' | 'failed' | 'unknown';
+
+export interface SystemUpdateStatus {
+  state: SystemUpdateState;
+  requestedAt: string | null;
+  requestedBy: string | null;
+  message: string | null;
+}
+
+export interface SystemInfo {
+  version: string;
+  image: string | null;
+  startedAt: string;
+  nodeVersion: string;
+  watchtowerConfigured: boolean;
+  update: SystemUpdateStatus;
+}
+
+export function fetchSystemInfo(): Promise<SystemInfo> {
+  return request('/admin/system');
+}
+
+export function triggerSystemUpdate(password: string): Promise<{ message: string; update: SystemUpdateStatus }> {
+  return request('/admin/system/update', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}
+
 // ── Admin backup ──────────────────────────────────────────────────────────────
 
 export interface ImportStats {

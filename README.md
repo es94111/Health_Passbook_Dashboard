@@ -2,7 +2,7 @@
 
 台灣健保健康存摺（NHI）個人健康資料視覺化儀表板。
 
-**開發版本：2.5.0 — 加密個人健康資料（自我量測、健康檔案、看診摘要、領藥提醒、檢驗個人目標值）；2.4.0 起的「影像報告」分頁（檢查類型、部位、系列與影像張數）；大檔匯入（單檔上限 4 GiB、病歷文字索引上限 8 GiB，皆以加密分塊保存）；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
+**開發版本：2.6.0 — 新增管理員可從網頁觸發 Watchtower 更新 Docker image，並改善前端載入（分頁與設定頁按需載入、圖表獨立 chunk）與後端傳輸（gzip／Brotli 壓縮、hash 靜態資源長期快取）；2.5.0 起支援加密個人健康資料（自我量測、健康檔案、看診摘要、領藥提醒、檢驗個人目標值）；2.4.0 起的「影像報告」分頁（檢查類型、部位、系列與影像張數）；大檔匯入（單檔上限 4 GiB、病歷文字索引上限 8 GiB，皆以加密分塊保存）；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
 
 ## 快速開始（本機開發）
 
@@ -116,6 +116,10 @@ Docker 部署時務必掛載 Volume，並定期備份。
 | `ENCRYPTION_KEY` | 64 char hex 主加密金鑰 | 自動生成並存入 `server/data/.key` |
 | `GOOGLE_CLIENT_ID` | Google OAuth 用戶端 ID（選填） | — |
 | `PORT` | 後端監聽埠號 | `3001` |
+| `WATCHTOWER_URL` | Watchtower HTTP API 位址，例如 `http://watchtower:8080`（選填） | — |
+| `WATCHTOWER_TOKEN` | 與 Watchtower `WATCHTOWER_HTTP_API_TOKEN` 相同的權杖（選填） | — |
+| `APP_IMAGE` | 管理頁顯示的 image 名稱（選填，僅供辨識） | — |
+| `APP_VERSION` | 覆寫顯示版本（選填） | `changelog.json` 的 `currentVersion` |
 
 金鑰生成指令：
 
@@ -219,6 +223,70 @@ docker run -d \
   -e GOOGLE_CLIENT_ID=你的用戶端ID \
   nhi-dashboard
 ```
+
+### 從網頁更新 Docker Image（Watchtower）
+
+管理員可在「管理員設定 → 系統更新」查看目前版本與 Watchtower 連線狀態，輸入登入密碼後觸發更新。應用程式本身**不需要掛載 Docker socket**，而是呼叫同一個 Docker network 上的 Watchtower HTTP API；權杖只存在伺服器端，不會回傳瀏覽器。
+
+`docker-compose.yml` 範例：
+
+```yaml
+services:
+  app:
+    image: ghcr.io/owner/health-passbook-dashboard:latest
+    container_name: nhi-dashboard
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - nhi-data:/app/data
+    environment:
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      WATCHTOWER_URL: http://watchtower:8080
+      WATCHTOWER_TOKEN: ${WATCHTOWER_TOKEN}
+      APP_IMAGE: ghcr.io/owner/health-passbook-dashboard:latest
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    networks: [internal]
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_HTTP_API_UPDATE: "true"
+      WATCHTOWER_HTTP_API_TOKEN: ${WATCHTOWER_TOKEN}
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_CLEANUP: "true"
+      TZ: Asia/Taipei
+    networks: [internal]
+
+networks:
+  internal:
+volumes:
+  nhi-data:
+```
+
+`.env`（與 compose 同目錄，請妥善保管）：
+
+```bash
+WATCHTOWER_TOKEN=$(openssl rand -hex 32)
+JWT_SECRET=你的JWT金鑰
+ENCRYPTION_KEY=你的64字元hex金鑰
+```
+
+重點：
+
+- `WATCHTOWER_URL` 留空時，管理頁的更新按鈕會顯示為停用；設定時只接受 `http`／`https`，且不可在網址中夾帶帳密。
+- Watchtower 的 API 連接埠**不要**對外發布（範例未設定 `ports`），只讓 app 透過內部 network 存取。能存取 Docker socket 的容器等同主機 root 權限，請限制其範圍並定期更新 Watchtower。
+- `WATCHTOWER_HTTP_API_UPDATE=true` 必須搭配 `WATCHTOWER_HTTP_API_TOKEN`；兩邊權杖需一致。Watchtower 會回 `401`／`403`，管理頁會提示權杖設定不符。
+- `WATCHTOWER_LABEL_ENABLE=true` 時只更新帶有 `com.centurylinklabs.watchtower.enable=true` 標籤的容器；本專案 Dockerfile 已預設加上此標籤。
+- 更新時容器會重建，連線會中斷數十秒；若 `JWT_SECRET` 未固定，重啟後所有使用者都需要重新登入。資料保存在 `nhi-data` volume，不會因更新遺失。
+- 更新採「拉取目前 tag 的最新 manifest」語意。使用固定的版本 tag（例如 `2.6.0`）時不會自動跳到新版本，請改用 `latest` 或由 CI 更新 compose 中的 tag；若已是最新 image，Watchtower 可能不會重啟容器，管理頁會在等待逾時後說明。
+- 每次更新都需要重新輸入管理員密碼、有速率限制（15 分鐘內最多 5 次），並寫入「全站登入記錄」供稽核。僅有 Google 登入、尚未設定密碼的帳號無法使用此功能。
 
 ### Volume 資料持久化
 

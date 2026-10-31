@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router';
-import type { AppSettings, UserInfo, LoginLog, ImportStats } from '../api';
+import type { AppSettings, UserInfo, LoginLog, ImportStats, SystemInfo, SystemUpdateState } from '../api';
 import {
+  ApiError,
   fetchAdminSettings,
   updateAdminSettings,
   listUsers,
@@ -13,6 +14,8 @@ import {
   startBackupDownload,
   importBackup,
   readBackupHeader,
+  fetchSystemInfo,
+  triggerSystemUpdate,
   MAX_BACKUP_BYTES,
 } from '../api';
 
@@ -136,6 +139,228 @@ function SystemSettingsSection() {
           </p>
         )}
       </div>
+    </section>
+  );
+}
+
+// ── System update section (Watchtower sidecar) ────────────────────────────────
+
+const UPDATE_STATE_LABEL: Record<SystemUpdateState, string> = {
+  idle: '尚無更新紀錄',
+  pending: '等待重新啟動',
+  restarted: '已重新啟動',
+  failed: '更新失敗',
+  unknown: '狀態未知',
+};
+
+const UPDATE_STATE_STYLE: Record<SystemUpdateState, string> = {
+  idle: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  restarted: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+  failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+  unknown: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+};
+
+function formatSystemTime(value: string | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-TW', { hour12: false });
+}
+
+function SystemUpdateSection() {
+  const [info, setInfo] = useState<SystemInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [password, setPassword] = useState('');
+  const [updating, setUpdating] = useState(false);
+  const alive = useRef(true);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+
+  useEffect(() => {
+    fetchSystemInfo()
+      .then(setInfo)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : '無法載入系統資訊'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function waitForRestart(baselineStartedAt: string) {
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (!alive.current) return;
+      try {
+        const next = await fetchSystemInfo();
+        if (!alive.current) return;
+        setInfo(next);
+        if (next.startedAt !== baselineStartedAt) {
+          setNotice(
+            next.update.state === 'pending' || next.update.state === 'unknown'
+              ? '服務已重新啟動，但更新狀態尚未寫入，請稍後重新整理確認。'
+              : '更新完成：服務已重新啟動，請重新整理頁面以載入新版本。',
+          );
+          return;
+        }
+      } catch (e) {
+        if (!alive.current) return;
+        if (e instanceof ApiError && e.status === 401) {
+          setError('服務已重新啟動，但登入狀態已失效，請重新整理並重新登入。');
+          return;
+        }
+        setNotice('服務連線中斷，可能正在重新啟動，等待恢復…');
+      }
+    }
+    if (alive.current) {
+      setNotice('尚未偵測到服務重新啟動。可能已是最新版本，或 Watchtower 仍在處理，請稍後重新整理確認。');
+    }
+  }
+
+  async function handleUpdate() {
+    if (!info || updating || password.length === 0) return;
+    setUpdating(true);
+    setError('');
+    setNotice('');
+    const baselineStartedAt = info.startedAt;
+    try {
+      const result = await triggerSystemUpdate(password);
+      setPassword('');
+      setConfirming(false);
+      setInfo((prev) => (prev ? { ...prev, update: result.update } : prev));
+      setNotice(result.message);
+      await waitForRestart(baselineStartedAt);
+      if (alive.current) {
+        try {
+          setInfo(await fetchSystemInfo());
+        } catch {
+          // The panel keeps the last known state; the notice already explains it.
+        }
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '更新請求失敗');
+    } finally {
+      if (alive.current) setUpdating(false);
+    }
+  }
+
+  if (loading) return <section className="card"><p className="text-sm text-gray-400">載入中…</p></section>;
+
+  if (!info) {
+    return (
+      <section className="card">
+        <h2 className="section-title">系統更新</h2>
+        <p className="mt-3 text-sm text-red-500" role="alert">{error || '無法載入系統資訊'}</p>
+      </section>
+    );
+  }
+
+  const configured = info.watchtowerConfigured;
+  const update = info.update;
+  const busy = updating || update.state === 'pending';
+
+  return (
+    <section className="card">
+      <h2 className="section-title">系統更新</h2>
+      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        透過 Watchtower 從網頁檢查並更新 Docker image。更新期間服務會中斷數十秒，完成後需重新整理頁面。
+      </p>
+
+      <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-gray-500 dark:text-gray-400">目前版本</dt>
+          <dd className="text-sm font-medium text-gray-800 dark:text-gray-200 font-mono">{info.version}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-gray-500 dark:text-gray-400">Container Image</dt>
+          <dd className="text-sm text-gray-800 dark:text-gray-200 font-mono break-all">{info.image ?? '未設定 APP_IMAGE'}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-gray-500 dark:text-gray-400">服務啟動時間</dt>
+          <dd className="text-sm text-gray-800 dark:text-gray-200">{formatSystemTime(info.startedAt)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-gray-500 dark:text-gray-400">Watchtower 連線</dt>
+          <dd className="mt-0.5">
+            <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+              configured
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+            }`}>
+              {configured ? '已設定' : '未設定'}
+            </span>
+          </dd>
+        </div>
+      </dl>
+
+      {!configured && (
+        <div className="mt-4 rounded-lg border border-amber-300/60 bg-amber-50 dark:border-amber-700/50 dark:bg-amber-900/20 p-3">
+          <p className="text-sm text-amber-800 dark:text-amber-300">尚未設定 Watchtower，無法從網頁更新。</p>
+          <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+            請在伺服器環境變數設定 <code className="font-mono">WATCHTOWER_URL</code> 與{' '}
+            <code className="font-mono">WATCHTOWER_TOKEN</code>，並以 HTTP API 模式啟動 Watchtower（詳見 README）。
+          </p>
+        </div>
+      )}
+
+      {update.state !== 'idle' && (
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+          <span className={`px-1.5 py-0.5 rounded-full ${UPDATE_STATE_STYLE[update.state]}`}>
+            {UPDATE_STATE_LABEL[update.state]}
+          </span>
+          <span>要求時間：{formatSystemTime(update.requestedAt)}</span>
+          {update.requestedBy && <span>操作者：{update.requestedBy}</span>}
+          {update.message && <span className="w-full">{update.message}</span>}
+        </div>
+      )}
+
+      {configured && (
+        <div className="mt-4">
+          {confirming ? (
+            <div className="space-y-2">
+              <label className="label" htmlFor="system-update-password">請輸入管理員密碼確認更新</label>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  id="system-update-password"
+                  type="password"
+                  className="input"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void handleUpdate(); }}
+                  autoComplete="current-password"
+                  disabled={updating}
+                />
+                <button onClick={() => void handleUpdate()} disabled={updating || password.length === 0} className="btn-danger">
+                  {updating ? '更新中…' : '確認更新'}
+                </button>
+                <button
+                  onClick={() => { setConfirming(false); setPassword(''); }}
+                  disabled={updating}
+                  className="btn-secondary"
+                >
+                  取消
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                更新會重新啟動服務，進行中的操作將被中斷。
+              </p>
+            </div>
+          ) : (
+            <button onClick={() => setConfirming(true)} disabled={busy} className="btn-primary">
+              {busy ? '等待服務重新啟動…' : '更新 Docker Image'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {notice && (
+        <p className="mt-3 text-sm text-teal-600 dark:text-teal-400" aria-live="polite">{notice}</p>
+      )}
+      {error && (
+        <p className="mt-3 text-sm text-red-500" role="alert">{error}</p>
+      )}
     </section>
   );
 }
@@ -421,6 +646,11 @@ function AdminLoginLogsSection() {
                     {log.action === 'admin-import' && (
                       <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
                         備份還原
+                      </span>
+                    )}
+                    {log.action === 'admin-system-update' && (
+                      <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400">
+                        系統更新
                       </span>
                     )}
                   </td>
@@ -771,6 +1001,7 @@ export default function AdminSettingsPage({ currentUserId }: Props) {
 
       <main className="max-w-4xl mx-auto px-4 py-6 space-y-4">
         <SystemSettingsSection />
+        <SystemUpdateSection />
         <UserManagementSection currentUserId={currentUserId} />
         <BackupSection />
         <AdminLoginLogsSection />

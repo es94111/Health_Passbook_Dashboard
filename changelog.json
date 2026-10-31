@@ -1,6 +1,42 @@
 {
-  "currentVersion": "2.5.0",
+  "currentVersion": "2.6.0",
   "releases": [
+    {
+      "version": "2.6.0",
+      "date": "2026-10-31",
+      "title": "網頁更新 Docker Image 與載入效能改善",
+      "type": "feature",
+      "changes": [
+        {
+          "tag": "new",
+          "text": "管理員設定新增「系統更新」區塊：顯示目前版本、container image、服務啟動時間與 Watchtower 連線狀態，並可在輸入管理員密碼後從網頁觸發 Watchtower 拉取最新 image 並重建容器；更新狀態會保存於 data/system-update.json，重啟後可辨識為「已重新啟動」"
+        },
+        {
+          "tag": "new",
+          "text": "新增 GET /api/admin/system 與 POST /api/admin/system/update：更新請求需再次輸入密碼、每 15 分鐘最多 5 次，並寫入「全站登入記錄」（admin-system-update）供稽核；Watchtower 權杖只留在伺服器端，僅回傳是否已設定"
+        },
+        {
+          "tag": "new",
+          "text": "新增 WATCHTOWER_URL、WATCHTOWER_TOKEN、APP_IMAGE 與 APP_VERSION 環境變數；未設定 Watchtower 時更新按鈕顯示為停用，Dockerfile 預設加上 Watchtower label，README 提供內部 network 的 compose 範例（應用程式不需掛載 Docker socket）"
+        },
+        {
+          "tag": "improved",
+          "text": "前端分頁與帳號／管理員設定頁改為按需載入，圖表相依套件獨立為 charts chunk：初始 JS 由約 927 kB（gzip 267 kB）降至約 383 kB（gzip 121 kB），縮短首次載入時間"
+        },
+        {
+          "tag": "improved",
+          "text": "後端啟用 gzip／Brotli 壓縮（略過已加密的 /api/data 與備份串流），靜態資源加上快取標頭：/assets 下具內容雜湊的檔案可長期快取，index.html 一律 revalidate，降低重複造訪的傳輸量"
+        },
+        {
+          "tag": "warning",
+          "text": "Watchtower 需要存取 Docker socket（等同主機 root 權限），其 HTTP API 請只綁定內部 Docker network、勿對外發布，並定期更新 Watchtower；更新會中斷服務數十秒，若未固定 JWT_SECRET，重啟後使用者需重新登入"
+        },
+        {
+          "tag": "warning",
+          "text": "更新採拉取目前 tag 的最新 manifest；使用固定版本 tag 時不會自動升級，且已是最新 image 時可能不會重啟容器，管理頁會在等待後說明可能原因"
+        }
+      ]
+    },
     {
       "version": "2.5.0",
       "date": "2026-10-31",

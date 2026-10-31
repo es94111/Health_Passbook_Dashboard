@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useEffect, useState } from 'react';
+import { useCallback, useMemo, useReducer, useEffect, useState, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router';
 import type { NHIData } from './parsers/types';
 import type { ClientEncryptedRecords, UserProfile } from './api';
@@ -10,24 +10,27 @@ import LoginScreen from './components/LoginScreen';
 import FileLoader from './components/FileLoader';
 import KeySummary from './components/KeySummary';
 import SummaryStats from './components/SummaryStats';
-import VisitTimeline from './components/VisitTimeline';
-import LabTrendCharts from './components/LabTrendCharts';
-import BilledItemsChart from './components/BilledItemsChart';
-import VaccinationCard from './components/VaccinationCard';
-import CheckupReportList from './components/CheckupReportList';
-import MedicalReportList from './components/MedicalReportList';
-import ImagingReportList from './components/ImagingReportList';
-import MedicationList from './components/MedicationList';
-import ImportHistory from './components/ImportHistory';
-import DentalVisitList from './components/DentalVisitList';
-import HospitalizationList from './components/HospitalizationList';
-import DiagnosisGroups from './components/DiagnosisGroups';
-import RefillPlanner from './components/RefillPlanner';
-import Measurements from './components/Measurements';
-import HealthProfile from './components/HealthProfile';
-import VisitSummary from './components/VisitSummary';
-import AccountSettingsPage from './pages/AccountSettingsPage';
-import AdminSettingsPage from './pages/AdminSettingsPage';
+
+// Tabs and settings pages are split into their own chunks: the initial bundle
+// only needs the login screen, the file loader and the dashboard header.
+const VisitTimeline = lazy(() => import('./components/VisitTimeline'));
+const LabTrendCharts = lazy(() => import('./components/LabTrendCharts'));
+const BilledItemsChart = lazy(() => import('./components/BilledItemsChart'));
+const VaccinationCard = lazy(() => import('./components/VaccinationCard'));
+const CheckupReportList = lazy(() => import('./components/CheckupReportList'));
+const MedicalReportList = lazy(() => import('./components/MedicalReportList'));
+const ImagingReportList = lazy(() => import('./components/ImagingReportList'));
+const MedicationList = lazy(() => import('./components/MedicationList'));
+const ImportHistory = lazy(() => import('./components/ImportHistory'));
+const DentalVisitList = lazy(() => import('./components/DentalVisitList'));
+const HospitalizationList = lazy(() => import('./components/HospitalizationList'));
+const DiagnosisGroups = lazy(() => import('./components/DiagnosisGroups'));
+const RefillPlanner = lazy(() => import('./components/RefillPlanner'));
+const Measurements = lazy(() => import('./components/Measurements'));
+const HealthProfile = lazy(() => import('./components/HealthProfile'));
+const VisitSummary = lazy(() => import('./components/VisitSummary'));
+const AccountSettingsPage = lazy(() => import('./pages/AccountSettingsPage'));
+const AdminSettingsPage = lazy(() => import('./pages/AdminSettingsPage'));
 
 // ── Data reducer ──────────────────────────────────────────────────────────────
 
@@ -195,6 +198,7 @@ function DashboardPage({
           )}
 
           {/* Tab content */}
+          <Suspense fallback={<p className="text-sm text-gray-400 dark:text-gray-500">載入中…</p>}>
           {currentTab === '門診' && (
             <div className="space-y-6">
               <VisitTimeline visits={nhiData.visits} />
@@ -237,6 +241,7 @@ function DashboardPage({
               <CheckupReportList reports={nhiData.checkupReports} />
             </div>
           )}
+          </Suspense>
         </main>
       </div>
     </PersonalProvider>
@@ -321,6 +326,7 @@ function AppRoot() {
   return (
     <ThemeProvider initialTheme={profile.themeMode}>
       <UserStoreProvider profile={profile} onProfileUpdate={handleProfileUpdate}>
+        <Suspense fallback={<div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-6 text-sm text-gray-400">載入中…</div>}>
         <Routes>
           <Route
             path="/"
@@ -369,6 +375,7 @@ function AppRoot() {
             }
           />
         </Routes>
+        </Suspense>
       </UserStoreProvider>
     </ThemeProvider>
   );
