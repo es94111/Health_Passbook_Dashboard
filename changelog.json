@@ -1,6 +1,22 @@
 {
-  "currentVersion": "2.7.0",
+  "currentVersion": "2.7.1",
   "releases": [
+    {
+      "version": "2.7.1",
+      "date": "2026-11-06",
+      "title": "相依套件更新至最新版本",
+      "type": "improved",
+      "changes": [
+        {
+          "tag": "improved",
+          "text": "相依套件全面更新至最新版本：前端 react 19.3.1、react-router 8.5.1、postcss 8.5.32、tailwindcss／@tailwindcss/vite 4.3.4、vite 8.3.6、vitest 5.1.0、jsdom 31、@vitejs/plugin-react 6.2.1、@types/react 19.3.0、@types/node 26.6.6；後端 google-auth-library 11.3.3、@types/node 26.6.6"
+        },
+        {
+          "tag": "improved",
+          "text": "lint 工具鏈更新至 eslint 10.14.0、typescript-eslint 8.72.1、eslint-plugin-react-refresh 0.5.7、globals 17.14.0；typescript 維持 6.0.3（typescript-eslint 目前僅支援 <6.1.0）"
+        }
+      ]
+    },
     {
       "version": "2.7.0",
       "date": "2026-11-01",

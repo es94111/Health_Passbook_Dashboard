@@ -126,6 +126,7 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
+| 2.7.1 | 2026-11-06 | 相依套件全面更新至最新版本：前端 react 19.3.1、react-router 8.5.1、postcss 8.5.32、tailwindcss 4.3.4、vite 8.3.6、vitest 5.1.0、jsdom 31 等，後端 google-auth-library 11.3.3，lint 工具鏈 eslint 10.14、typescript-eslint 8.72.1 等（typescript 維持 6.0.3 相容版本）；server 37 題、dashboard 1157 題測試全數通過 |
 | 2.7.0 | 2026-11-01 | 新增匯入前確認步驟：寫入前先顯示資料日期範圍、各類筆數與 FHIR 資源組成、新增／更新／略過與匯入後總筆數，以及影像／附件摘要（影像類報告、內嵌可預覽、外部連結、參考型與無法預覽格式）；可取消且不寫入任何資料，超過 32 MiB 的串流檔以單次掃描估算並標示為估算 |
 | 2.6.1 | 2026-10-31 | 修正影像報告附件未顯示：附件改從任何報告資源的 presentedForm、content、media[].link 與 image[]（含 Media／Binary 參考）解析，不再只限 DiagnosticReport／DocumentReference／Media；無法預覽的格式（如 application/dicom、image/tiff）改在卡片列出格式而非無提示消失；新增 GIF／BMP 附件預覽與下載 |
 | 2.6.0 | 2026-10-31 | 新增管理員從網頁更新 Docker image：顯示版本／image／Watchtower 狀態，密碼再確認後呼叫 Watchtower HTTP API，更新狀態持久化並寫入稽核記錄；前端分頁與設定頁按需載入、圖表獨立 chunk，後端加入 gzip／Brotli 與靜態資源快取標頭，初始 JS 由約 927 kB 降至約 383 kB |
