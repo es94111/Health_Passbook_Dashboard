@@ -126,6 +126,7 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
+| 3.0.1 | 2026-11-15 | README 增補「專案來源與修改聲明」：說明 mediprisma-app/ 複製自 MediPrisma/mediprisma-app（master @ 313fe14、Apache-2.0）且為修改版、修改只在本 repo 維護不會回傳上游，列出現階段修改清單與 Apache-2.0 授權歸屬 |
 | 3.0.0 | 2026-11-15 | 匯入 MediPrisma mediprisma-app 最新版（master @ 313fe14、Apache-2.0）完整程式碼至 mediprisma-app/ 子資料夾（2,394 檔與上游位元組一致，保留 LICENSE／NOTICE／vendor 歸屬）；舊專案檔案完全不變，修改僅進本 repo、不會回傳 MediPrisma GitHub |
 | 2.7.2 | 2026-11-15 | 相依套件更新至最新版本：前端 postcss 8.5.33、tailwindcss 4.3.5、vite 8.3.8、@vitejs/plugin-react 6.3.0、jsdom 31.0.1，後端 google-auth-library 11.3.4、stream-json 3.9.0，lint 工具鏈 eslint 10.15、typescript-eslint 8.72.2（typescript 維持 6.0.3 相容版本）；並修正全部 7 個 lint 錯誤（effect 內直接 setState 改以 render 同步／promise callback 取代，非元件匯出移出元件檔），lint 全數清零；server 37 題、dashboard 1157 題測試全數通過 |
 | 2.7.1 | 2026-11-06 | 相依套件全面更新至最新版本：前端 react 19.3.1、react-router 8.5.1、postcss 8.5.32、tailwindcss 4.3.4、vite 8.3.6、vitest 5.1.0、jsdom 31 等，後端 google-auth-library 11.3.3，lint 工具鏈 eslint 10.14、typescript-eslint 8.72.1 等（typescript 維持 6.0.3 相容版本）；server 37 題、dashboard 1157 題測試全數通過 |

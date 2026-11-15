@@ -1,6 +1,18 @@
 {
-  "currentVersion": "3.0.0",
+  "currentVersion": "3.0.1",
   "releases": [
+    {
+      "version": "3.0.1",
+      "date": "2026-11-15",
+      "title": "README 增補專案來源與修改聲明",
+      "type": "fixed",
+      "changes": [
+        {
+          "tag": "improved",
+          "text": "README.md 增補「專案來源與修改聲明」：說明 mediprisma-app/ 複製自 https://github.com/MediPrisma/mediprisma-app（上游 master @ 313fe14、Apache-2.0）且為修改版，所有修改只在本 repo 維護、不會回傳上游 GitHub，並列出現階段修改清單（.gitleaks.toml 誤報白名單、版號文件同步）與 Apache-2.0 授權歸屬（LICENSE／NOTICE）"
+        }
+      ]
+    },
     {
       "version": "3.0.0",
       "date": "2026-11-15",
