@@ -1,10 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { SourceLink } from '@/features/medical-summary/components/SourceLink'
-import { LanguageProvider, useLanguage } from '@/src/application/providers/language.provider'
-
-function CurrentLocale() {
-  return <span data-testid="current-locale">{useLanguage().locale}</span>
-}
 
 describe('SourceLink', () => {
   it('opens one clean source straight from the cited text, with no citation marks', () => {
@@ -138,34 +133,5 @@ describe('SourceLink', () => {
       maxHeight: 'min(20rem, calc(var(--radix-popover-content-available-height) - 0.5rem))',
     })
     expect(screen.getByRole('button', { name: /Observation 11/ })).toBeInTheDocument()
-  })
-
-  it('localizes frozen demo source titles in the English trace only', async () => {
-    localStorage.setItem('medical-note-locale', 'en')
-
-    render(
-      <LanguageProvider>
-        <CurrentLocale />
-        <SourceLink
-          sources={[
-            { key: 'K1', num: 1, verified: true, resourceType: 'CarePlan', resourceId: 'demo-careplan-1',
-              organization: '示範北辰醫院', display: '末期腎臟病前期（Pre-ESRD）之病人照護與衛教計畫' },
-            { key: 'K2', num: 2, verified: true, resourceType: 'Encounter', resourceId: 'demo-encounter-1' },
-          ]}
-          typeLabel={(resourceType) => resourceType ?? ''}
-          unverifiedLabel="Source may be incorrect"
-          onNavigate={jest.fn()}
-        >
-          CKD
-        </SourceLink>
-      </LanguageProvider>,
-    )
-
-    await waitFor(() => expect(screen.getByTestId('current-locale')).toHaveTextContent('en'))
-    fireEvent.click(screen.getByRole('button', { name: /CKD\s*\(2 sources\)/ }))
-
-    expect(screen.getByText(/CarePlan · C Hospital/)).toBeInTheDocument()
-    expect(screen.getByText('Pre-ESRD patient care and education program')).toBeInTheDocument()
-    expect(document.body).not.toHaveTextContent('末期腎臟病前期')
   })
 })

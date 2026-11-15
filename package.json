@@ -1,6 +1,6 @@
 {
   "name": "medical-note-smart-on-fhir",
-  "version": "0.51.1",
+  "version": "4.0.0",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
@@ -26,7 +26,8 @@
     "loop:log": "node scripts/loop/log.mjs",
     "lint": "eslint .",
     "typecheck": "node scripts/typecheck.mjs",
-    "test:optional": "node --test scripts/__tests__/optional-install.test.mjs scripts/__tests__/app-version.test.mjs"
+    "test:optional": "node --test scripts/__tests__/optional-install.test.mjs scripts/__tests__/app-version.test.mjs",
+    "release:tag": "bash scripts/release/tag-release.sh"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.84",

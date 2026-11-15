@@ -17,9 +17,11 @@ describe('SMART issuer policy', () => {
     })).toBe(true)
   })
 
-  it('trusts the MediPrisma School training server by default, and not look-alikes', () => {
+  it('trusts no cloud defaults — training/sandbox servers must be configured explicitly', () => {
     const options = { configuredIssuers: '' }
-    expect(isTrustedSmartIssuer('https://school.mediprisma.tw/fhir/RD-0123ABCD', options)).toBe(true)
+    expect(isTrustedSmartIssuer('https://school.mediprisma.tw/fhir/RD-0123ABCD', options)).toBe(false)
+    expect(isTrustedSmartIssuer('https://launch.smarthealthit.org/v/r4/fhir', options)).toBe(false)
+    expect(isTrustedSmartIssuer('http://localhost:5001/fhir', options)).toBe(true)
     expect(isTrustedSmartIssuer('http://school.mediprisma.tw/fhir/RD-0123ABCD', options)).toBe(false)
     expect(isTrustedSmartIssuer('https://school.mediprisma.tw.evil.example/fhir/RD-0123ABCD', options)).toBe(false)
     expect(isTrustedSmartIssuer('https://fhir.mediprisma.tw/cdss/', options)).toBe(false)

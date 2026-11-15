@@ -1,4 +1,26 @@
-# 醫析 MediPrisma · SMART on FHIR
+# 醫析 MediPrisma · SMART on FHIR（本地複製版）
+
+**目前版本：4.0.0** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
+
+> ## 專案來源與修改聲明
+>
+> 本專案複製自 [MediPrisma/mediprisma-app](https://github.com/MediPrisma/mediprisma-app)
+> （上游 master @ `313fe14`，2026-11-15 匯入，授權 Apache-2.0），**此為修改版**：
+> 所有修改只維護於 [es94111/Health_Passbook_Dashboard](https://github.com/es94111/Health_Passbook_Dashboard)，
+> **不會回傳上游 GitHub**（不設定 upstream remote；上游 sync／hmc 發佈 workflow 一律不納入）。
+>
+> 本版重點（4.0.0）：
+>
+> - **Google 登入**：Firebase Auth Google provider（`features/auth/GoogleSignInButton.tsx`）。
+> - **金鑰管理**：OpenBao 介接＋自產金鑰自動輪換（見 [`openbao/README.md`](openbao/README.md)）。
+> - **AI 服務自架化**：單一 OpenAI 相容供應商；base URL＋金鑰以 env／OpenBao 設定，
+>   經同源 `/api/ai` 代理，金鑰不進瀏覽器（見 `.env.example`「Self-hosted AI Service」）。
+> - **已移除測試資料與模擬資料**：示範病人、demo AI 快照、驗證資料集、合成情境頁與其產生器。
+> - **GitHub CI 維持本 repo 原本流程**：Docker 映像發版＋Release（`docker-publish.yml`）、
+>   Gitleaks（`security.yml`）；OpenBao 輪換排程為選填附加。
+>
+> 部署：Docker 多架構映像（GHCR／Docker Hub）→ Zeabur／自架主機，Watchtower 熱更新；
+> 容器啟動可自 OpenBao 注入 runtime 密語。環境變數見 `.env.example`。
 
 **把跨院病歷整理成看得懂、查得到來源、能接續照護的臨床工作區。**
 
@@ -12,8 +34,8 @@ MediPrisma 整合就診、用藥、檢驗與臨床文件，提供來源可回查
 
 ## 先試用，再接自己的資料
 
-1. 開啟 [App](https://mediprisma.tw/app)，選擇醫療人員或民眾身份。
-2. 載入內建示範病人，或匯入自己的 FHIR Bundle／健康存摺 SDK JSON。
+1. 開啟部署的應用（Docker 映像，預設 `http://localhost:3001`），選擇醫療人員或民眾身份。
+2. 匯入自己的 FHIR Bundle／健康存摺 SDK JSON（本版已移除內建示範病人與模擬資料）。
 3. 從「醫療摘要」掌握重點，再查看原始報告、提出問題或套用摘要範本。
 
 ## 主要功能
