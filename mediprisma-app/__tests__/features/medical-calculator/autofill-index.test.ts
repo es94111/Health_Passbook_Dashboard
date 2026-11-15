@@ -1,0 +1,288 @@
+import { buildAutofill } from '@/features/medical-calculator/hooks/use-lab-autofill.hook'
+
+// Synthetic observations mimicking the bridge's FHIR shapes.
+const bpPanel = (sys: number, dia: number, date: string) => ({
+  effectiveDateTime: date,
+  code: { coding: [{ code: '85354-9' }] }, // Blood pressure panel — no top-level value
+  component: [
+    { code: { coding: [{ code: '8480-6' }] }, valueQuantity: { value: sys, unit: 'mmHg' } },
+    { code: { coding: [{ code: '8462-4' }] }, valueQuantity: { value: dia, unit: 'mmHg' } },
+  ],
+})
+const labLoinc = (code: string, value: number, unit: string, date: string, specimen?: string) => ({
+  effectiveDateTime: date,
+  code: { coding: [{ code }] },
+  valueQuantity: { value, unit },
+  ...(specimen ? { specimen: { display: specimen } } : {}),
+})
+// An observation identified by display name/text ONLY (no LOINC coding).
+const named = (text: string, value: number, unit: string, date: string) => ({
+  effectiveDateTime: date,
+  code: { text },
+  valueQuantity: { value, unit },
+})
+
+describe('buildAutofill — panel components (blood pressure)', () => {
+  it('resolves systolic BP from a BP-panel component via vital LOINC 8480-6', () => {
+    const af = buildAutofill([bpPanel(154, 88, '2020-01-01')], {})
+    expect(af.resolve({ kind: 'vital', loinc: ['8480-6'] })).toMatchObject({ value: 154, unit: 'mmHg' })
+    // diastolic too, proving component indexing is general
+    expect(af.resolve({ kind: 'vital', loinc: ['8462-4'] })?.value).toBe(88)
+  })
+
+  it('keeps the latest panel when there are several', () => {
+    const af = buildAutofill(
+      [bpPanel(120, 80, '2019-05-01'), bpPanel(160, 95, '2021-06-01')],
+      {},
+    )
+    expect(af.resolve({ kind: 'vital', loinc: ['8480-6'] })?.value).toBe(160)
+  })
+
+  it('a bare top-level lab still resolves (regression)', () => {
+    const af = buildAutofill([labLoinc('2093-3', 200, 'mg/dL', '2020-01-01')], {})
+    // 2093-3 → CHOL canonical
+    expect(af.resolve({ kind: 'lab', keys: ['CHOL'] })?.value).toBe(200)
+  })
+})
+
+describe('buildAutofill — ACR / PCR by LOINC', () => {
+  it('ACR resolves via LOINC fallback 9318-7 (not in the canonical map)', () => {
+    const af = buildAutofill([labLoinc('9318-7', 45, 'mg/g', '2020-01-01')], {})
+    expect(af.resolve({ kind: 'labSpecimen', keys: ['ACR'], loinc: ['9318-7', '14959-1'], specimen: 'urine' })?.value).toBe(45)
+  })
+
+  it('ACR resolves via canonical + urine specimen (LOINC 14959-1)', () => {
+    const af = buildAutofill([labLoinc('14959-1', 30, 'mg/g', '2020-01-01', 'Urine')], {})
+    expect(af.resolve({ kind: 'labSpecimen', keys: ['ACR'], loinc: ['9318-7', '14959-1'], specimen: 'urine' })?.value).toBe(30)
+  })
+
+  it('PCR resolves via LOINC 2890-2', () => {
+    const af = buildAutofill([labLoinc('2890-2', 600, 'mg/g', '2020-01-01')], {})
+    expect(af.resolve({ kind: 'labLoinc', loinc: ['2890-2'] })?.value).toBe(600)
+  })
+})
+
+describe('buildAutofill — eGFR equation identity', () => {
+  const ckdEpiSource = { kind: 'lab' as const, keys: ['EGFR(EPI)'] }
+
+  it('uses a CKD-EPI result and does not substitute MDRD', () => {
+    const both = buildAutofill([
+      labLoinc('77147-7', 45, 'mL/min/1.73m2', '2026-01-01'),
+      labLoinc('62238-1', 50, 'mL/min/1.73m2', '2026-01-02'),
+    ], {})
+    expect(both.resolve(ckdEpiSource)?.value).toBe(50)
+
+    const mdrdOnly = buildAutofill([
+      labLoinc('77147-7', 45, 'mL/min/1.73m2', '2026-01-01'),
+    ], {})
+    expect(mdrdOnly.resolve(ckdEpiSource)).toBeUndefined()
+  })
+})
+
+describe('buildAutofill — source-report provenance capture', () => {
+  it('captures testName, LOINC, facility and obsId on the resolved value', () => {
+    const obs = {
+      id: 'obs-123',
+      effectiveDateTime: '2026-06-02',
+      code: { text: '肌酸酐 Creatinine', coding: [{ code: '2160-0', system: 'http://loinc.org', display: 'Creatinine' }] },
+      valueQuantity: { value: 1.4, unit: 'mg/dL' },
+      performer: [{ display: '臺北榮總' }],
+    }
+    const hit = buildAutofill([obs as never], {}).resolve({ kind: 'lab', keys: ['CREA'] })
+    expect(hit?.value).toBe(1.4)
+    expect(hit?.testName).toBe('肌酸酐 Creatinine')
+    expect(hit?.loinc).toBe('2160-0')
+    expect(hit?.facility).toBe('臺北榮總')
+    expect(hit?.obsId).toBe('obs-123')
+  })
+  it('panel components inherit the parent obs id + facility, keep their own LOINC', () => {
+    const bp = {
+      id: 'bp-1', effectiveDateTime: '2026-06-02',
+      code: { coding: [{ code: '85354-9', system: 'http://loinc.org' }] },
+      performer: [{ display: 'Clinic A' }],
+      component: [{ code: { text: 'Systolic', coding: [{ code: '8480-6', system: 'http://loinc.org' }] }, valueQuantity: { value: 130, unit: 'mmHg' } }],
+    }
+    const hit = buildAutofill([bp as never], {}).resolve({ kind: 'vital', loinc: ['8480-6'], vital: 'sbp' })
+    expect(hit?.value).toBe(130)
+    expect(hit?.obsId).toBe('bp-1')
+    expect(hit?.facility).toBe('Clinic A')
+    expect(hit?.loinc).toBe('8480-6')
+  })
+})
+
+describe('buildAutofill — vital display-name fallback (no LOINC)', () => {
+  const sbp = { kind: 'vital' as const, loinc: ['8480-6'], vital: 'sbp' as const }
+  const weight = { kind: 'vital' as const, loinc: ['29463-7'], vital: 'weight' as const }
+  const height = { kind: 'vital' as const, loinc: ['8302-2'], vital: 'height' as const }
+
+  it('systolic BP resolves by name (中文 收縮壓 / English) when LOINC is absent', () => {
+    expect(buildAutofill([named('收縮壓', 135, 'mmHg', '2020-01-01')], {}).resolve(sbp)?.value).toBe(135)
+    expect(buildAutofill([named('Systolic blood pressure', 128, 'mmHg', '2020-01-01')], {}).resolve(sbp)?.value).toBe(128)
+  })
+  it('weight (體重) and height (身高) resolve by name', () => {
+    expect(buildAutofill([named('體重', 70, 'kg', '2020-01-01')], {}).resolve(weight)?.value).toBe(70)
+    expect(buildAutofill([named('身高', 168, 'cm', '2020-01-01')], {}).resolve(height)?.value).toBe(168)
+  })
+  it('a LOINC-coded vital still wins over a name match', () => {
+    const af = buildAutofill([labLoinc('8480-6', 150, 'mmHg', '2021-01-01')], {})
+    expect(af.resolve(sbp)?.value).toBe(150)
+  })
+  it('UNIT GATE: a name-matched vital with the wrong unit is NOT taken', () => {
+    // "體重" reported in mmHg (mislabelled) must not become a weight
+    expect(buildAutofill([named('體重', 70, 'mmHg', '2020-01-01')], {}).resolve(weight)).toBeUndefined()
+    // "收縮壓" in kg must not become an SBP
+    expect(buildAutofill([named('收縮壓', 70, 'kg', '2020-01-01')], {}).resolve(sbp)).toBeUndefined()
+  })
+})
+
+describe('buildAutofill — derived urine ACR (microalbumin ÷ urine creatinine)', () => {
+  const acrSource = { kind: 'labSpecimen' as const, keys: ['ACR'], loinc: ['9318-7', '14959-1'], specimen: 'urine' as const }
+
+  it('derives ACR from same-day microalbumin (mg/L) and urine creatinine (mg/dL)', () => {
+    // 80 mg/L ÷ (100 mg/dL = 1 g/L) = 80 mg/g
+    const af = buildAutofill([
+      labLoinc('14957-5', 80, 'mg/L', '2020-03-01'),
+      labLoinc('2161-8', 100, 'mg/dL', '2020-03-01', 'Urine'),
+    ], {})
+    const r = af.resolve(acrSource)
+    expect(r?.value).toBe(80)
+    expect(r?.unit).toBe('mg/g')
+  })
+
+  it('converts a microalbumin reported in mg/dL', () => {
+    // 8 mg/dL = 80 mg/L; ÷ 1 g/L = 80 mg/g
+    const af = buildAutofill([
+      labLoinc('14957-5', 8, 'mg/dL', '2020-03-01'),
+      labLoinc('2161-8', 100, 'mg/dL', '2020-03-01', 'Urine'),
+    ], {})
+    expect(af.resolve(acrSource)?.value).toBe(80)
+  })
+
+  it('does NOT derive when the components are from different days', () => {
+    const af = buildAutofill([
+      labLoinc('14957-5', 80, 'mg/L', '2020-03-01'),
+      labLoinc('2161-8', 100, 'mg/dL', '2020-04-15', 'Urine'),
+    ], {})
+    expect(af.resolve(acrSource)).toBeUndefined()
+  })
+
+  it('uses the most recent same-day pair', () => {
+    const af = buildAutofill([
+      labLoinc('14957-5', 40, 'mg/L', '2019-01-01'),
+      labLoinc('2161-8', 100, 'mg/dL', '2019-01-01', 'Urine'),
+      labLoinc('14957-5', 120, 'mg/L', '2021-06-01'),
+      labLoinc('2161-8', 100, 'mg/dL', '2021-06-01', 'Urine'),
+    ], {})
+    expect(af.resolve(acrSource)?.value).toBe(120) // 120 / 1 g/L, latest day
+  })
+
+  it('a directly-reported numeric ACR takes precedence over derivation', () => {
+    const af = buildAutofill([
+      labLoinc('14957-5', 80, 'mg/L', '2020-03-01'),
+      labLoinc('2161-8', 100, 'mg/dL', '2020-03-01', 'Urine'),
+      labLoinc('9318-7', 45, 'mg/g', '2020-05-01'), // direct ACR
+    ], {})
+    expect(af.resolve(acrSource)?.value).toBe(45)
+  })
+
+  it('never pairs serum creatinine (only urine) into the ACR', () => {
+    const af = buildAutofill([
+      labLoinc('14957-5', 80, 'mg/L', '2020-03-01'),
+      labLoinc('2160-0', 1.0, 'mg/dL', '2020-03-01', 'Blood'), // serum creatinine, same day
+    ], {})
+    expect(af.resolve(acrSource)).toBeUndefined()
+  })
+})
+
+describe('buildAutofill — pediatric eGFR', () => {
+  // 臺北榮總 eGFR rows: both may carry 69405-9 (no formula), so only the name
+  // tells the pediatric (Schwartz) value apart. Values are synthetic.
+  const egfr = (text: string, value: number, loinc: string, date: string) => ({
+    effectiveDateTime: date,
+    code: { text, coding: [{ system: 'http://loinc.org', code: loinc }] },
+    valueQuantity: { value, unit: 'mL/min/1.73m2' },
+  })
+  const ADULT = { kind: 'lab' as const, keys: ['EGFR(EPI)', 'EGFR(M)'] }
+
+  it('never fills an adult eGFR from a pediatric-only observation', () => {
+    expect(buildAutofill([egfr('eGFR(PED)', 102, '69405-9', '2026-10-01')], { age: 50 }).resolve(ADULT)).toBeUndefined()
+    expect(buildAutofill([egfr('GFR SerPlBld Schwartz-ArVRat', 102, '50384-7', '2026-10-01')], { age: 50 }).resolve(ADULT)).toBeUndefined()
+  })
+
+  it('never fills an adult eGFR from a pediatric panel component', () => {
+    const panel = { effectiveDateTime: '2026-10-01', code: { text: 'Creatinine' }, component: [egfr('eGFR(PED)', 102, '69405-9', '2026-10-01')] }
+    expect(buildAutofill([panel], { age: 50 }).resolve(ADULT)).toBeUndefined()
+  })
+
+  it('still fills from MDRD when a later pediatric value sits beside it', () => {
+    const af = buildAutofill([
+      egfr('eGFR(M)', 177, '69405-9', '2026-10-01'),
+      egfr('eGFR(PED)', 102, '69405-9', '2026-10-02'),
+    ], { age: 50 })
+    expect(af.resolve(ADULT)?.value).toBe(177)
+  })
+})
+
+describe('buildAutofill — a serum input never takes a urine row', () => {
+  const crea = { kind: 'lab' as const, keys: ['CREA'] }
+  const sodium = { kind: 'lab' as const, keys: ['NA'] }
+
+  it('uses the unmarked serum creatinine when a later same-day urine creatinine is marked Urine', () => {
+    const af = buildAutofill(
+      [
+        labLoinc('2160-0', 1.1, 'mg/dL', '2026-10-23T08:00:00+08:00'),
+        { ...named('Creatinine', 85, 'mg/dL', '2026-10-23T08:30:00+08:00'), specimen: { display: 'Urine' } },
+      ],
+      {},
+    )
+    expect(af.resolve(crea)?.value).toBe(1.1)
+  })
+
+  it('uses the unmarked serum sodium, not a later urine sodium', () => {
+    const af = buildAutofill(
+      [
+        named('Na', 139, 'mmol/L', '2026-10-23T08:00:00+08:00'),
+        { ...named('Na', 42, 'mmol/L', '2026-10-23T08:30:00+08:00'), specimen: { display: 'Urine' } },
+      ],
+      {},
+    )
+    expect(af.resolve(sodium)?.value).toBe(139)
+  })
+
+  it('fills nothing when the only creatinine is urine', () => {
+    const af = buildAutofill(
+      [{ ...named('Creatinine', 85, 'mg/dL', '2026-10-23'), specimen: { display: 'Urine' } }],
+      {},
+    )
+    expect(af.resolve(crea)).toBeUndefined()
+  })
+
+  it('treats a row named as urine as urine when it has no specimen field', () => {
+    const af = buildAutofill(
+      [
+        named('Creatinine', 1.1, 'mg/dL', '2026-10-22'),
+        named('Urine Creatinine', 85, 'mg/dL', '2026-10-23'),
+        named('尿液肌酸酐', 90, 'mg/dL', '2026-10-24'),
+      ],
+      {},
+    )
+    expect(af.resolve(crea)?.value).toBe(1.1)
+  })
+
+  it('still falls back to an unmarked row, and to one with an unrecognised specimen label', () => {
+    expect(buildAutofill([named('Creatinine', 1.3, 'mg/dL', '2026-10-23')], {}).resolve(crea)?.value).toBe(1.3)
+    const labelled = { ...named('Creatinine', 1.4, 'mg/dL', '2026-10-23'), specimen: { display: '血清' } }
+    expect(buildAutofill([labelled], {}).resolve(crea)?.value).toBe(1.4)
+  })
+
+  it('keeps the urine creatinine available to the urine ACR', () => {
+    const af = buildAutofill(
+      [
+        { ...named('Microalbumin', 30, 'mg/L', '2026-10-23'), code: { coding: [{ code: '14957-5' }] } },
+        { ...named('Creatinine', 100, 'mg/dL', '2026-10-23'), specimen: { display: 'Urine' } },
+      ],
+      {},
+    )
+    expect(af.resolve({ kind: 'labSpecimen', keys: ['ACR'], loinc: ['9318-7', '14959-1'], specimen: 'urine' })?.value).toBe(30)
+  })
+})

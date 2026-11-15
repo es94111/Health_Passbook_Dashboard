@@ -1,0 +1,134 @@
+import { buildClinicalContextCoverageSection } from '@/src/core/utils/clinical-context-coverage.utils'
+import {
+  ALL_DATA_FILTERS,
+  ALL_DATA_SELECTION,
+} from '@/src/shared/constants/data-selection.constants'
+
+const NOW = Date.parse('2026-07-13T12:00:00+08:00')
+
+describe('buildClinicalContextCoverageSection', () => {
+  it('distinguishes a successful empty query from a failed query', () => {
+    const section = buildClinicalContextCoverageSection(
+      {
+        ...ALL_DATA_SELECTION,
+        encounters: false,
+        labReports: false,
+        imagingReports: false,
+        procedures: false,
+        observations: false,
+        medications: false,
+        allergies: false,
+        immunizations: false,
+        documents: false,
+        vitalSigns: false,
+        advanceDirectives: false,
+        medicalDevices: false,
+        carePlans: false,
+      },
+      ALL_DATA_FILTERS,
+      {
+        conditions: [],
+        resourceQueryStatus: {
+          Condition: { state: 'error', message: 'FHIR unavailable' },
+        },
+      } as any,
+      [],
+      NOW,
+    )
+
+    expect(section?.items).toContain('Problem List: status=unavailable; source_records=0; included_records=0; query=Condition=error')
+    expect(section?.items[0]).toContain('generated_at=2026-07-13')
+    expect(section?.items.join('\n')).not.toContain('FHIR unavailable')
+  })
+
+  it('does not disclose counts for categories the user excluded', () => {
+    const section = buildClinicalContextCoverageSection(
+      { ...ALL_DATA_SELECTION, medications: false },
+      ALL_DATA_FILTERS,
+      { medications: [{ id: 'secret-med' }] } as any,
+      [],
+      NOW,
+    )
+
+    expect(section?.items).toContain('Medications: status=excluded')
+    expect(section?.items.join('\n')).not.toContain('secret-med')
+    expect(section?.items.join('\n')).not.toContain('Medications: status=excluded; source_records=1')
+  })
+
+  it('adds SDK source limitations and conversion audit counts to AI context', () => {
+    const section = buildClinicalContextCoverageSection(
+      ALL_DATA_SELECTION,
+      ALL_DATA_FILTERS,
+      {
+        sourceMetadata: {
+          source: 'health-bank-sdk-json',
+          convertedAt: '2000-01-01T00:00:00Z',
+          converterVersion: '0.1.4',
+          resourceCounts: {},
+          warnings: [],
+          labDuplicateMerge: {
+            sourceCount: 5,
+            convertedCount: 3,
+            mergedCount: 2,
+            conflictingValueGroupCount: 1,
+          },
+          unitInference: {
+            policyVersion: 'sdk-unit-policy-v1',
+            inferredCount: 4,
+            unitlessCount: 1,
+            unresolvedCount: 1,
+          },
+          sourceCapabilities: [],
+        },
+      } as any,
+      [],
+      NOW,
+    )
+
+    const context = section?.items.join('\n')
+    expect(context).toContain('converted locally from Health Bank SDK JSON')
+    expect(context).toContain('no reliably mappable structured patient name, birth date, sex, or age fields')
+    expect(context).toContain('full-text imaging/pathology reports may contain this personal information')
+    expect(context).toContain('does not infer Patient demographics from report text')
+    expect(context).toContain('Do not infer absent structured fields or treat report-text demographics as verified Patient fields')
+    expect(context).toContain('evidence_qualified_lab_duplicates_merged=2')
+    expect(context).toContain('same_day_distinct_value_groups_preserved=1')
+    expect(context).toContain('inferred_lab_units=4')
+  })
+
+  it('warns AI context that legacy SDK conversions may have dropped distinct values', () => {
+    const section = buildClinicalContextCoverageSection(
+      ALL_DATA_SELECTION,
+      ALL_DATA_FILTERS,
+      {
+        sourceMetadata: {
+          source: 'health-bank-sdk-json',
+          converterVersion: '0.1.2',
+          labDuplicateMerge: {
+            sourceCount: 10,
+            convertedCount: 7,
+            mergedCount: 3,
+            conflictingValueGroupCount: 2,
+          },
+          unitInference: {
+            policyVersion: 'sdk-unit-policy-v1',
+            inferredCount: 0,
+            unitlessCount: 7,
+            unresolvedCount: 7,
+          },
+          sourceCapabilities: [],
+          warnings: [],
+          resourceCounts: {},
+        },
+      } as any,
+      [],
+      NOW,
+    )
+
+    const context = section?.items.join('\n')
+    expect(context).toContain('legacy_same_day_lab_rows_merged=3')
+    expect(context).toContain('distinct_value_groups_potentially_dropped=2')
+    expect(context).toContain('re-import the original SDK JSON with converter 0.1.3 or later')
+    expect(context).not.toContain('same_day_distinct_value_groups_preserved=')
+  })
+})

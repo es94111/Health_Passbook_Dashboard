@@ -1,0 +1,169 @@
+import { useMemo } from 'react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LabelList } from 'recharts'
+import type { ComponentHistoryItem } from '../hooks/useObservationHistory'
+import { formatNumberSmart } from '../utils/number-format.utils'
+
+interface MultiLineTrendChartProps {
+  componentData: ComponentHistoryItem[]
+  unit?: string
+  /** Raw component name → display label (e.g. "Systolic blood pressure" → "SBP").
+   *  The series dataKey stays raw to match the data; only the legend/tooltip
+   *  label is swapped. Falls back to the raw name when no mapping is given. */
+  displayNames?: Record<string, string>
+}
+
+export function MultiLineTrendChart({ componentData, unit, displayNames }: MultiLineTrendChartProps) {
+  const chartData = useMemo(() => {
+    if (componentData.length === 0) return []
+
+    // Collect all unique dates
+    const dateSet = new Set<string>()
+    componentData.forEach(comp => {
+      comp.data.forEach(item => {
+        if (item.date) dateSet.add(item.date)
+      })
+    })
+
+    // Sort dates chronologically
+    const sortedDates = Array.from(dateSet).sort((a, b) => 
+      new Date(a).getTime() - new Date(b).getTime()
+    )
+
+    // Build chart data with all components
+    return sortedDates.map(date => {
+      const dataPoint: Record<string, any> = {
+        date: new Date(date).toLocaleDateString('zh-TW', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }),
+        fullDate: date,
+      }
+
+      componentData.forEach(comp => {
+        const item = comp.data.find(d => d.date === date)
+        if (item && typeof item.value === 'number') {
+          dataPoint[comp.componentName] = item.value
+        }
+      })
+
+      return dataPoint
+    })
+  }, [componentData])
+
+  const yDomain = useMemo(() => {
+    if (chartData.length === 0) return [0, 100]
+    
+    const allValues: number[] = []
+    componentData.forEach(comp => {
+      comp.data.forEach(item => {
+        if (typeof item.value === 'number') {
+          allValues.push(item.value)
+        }
+      })
+    })
+
+    if (allValues.length === 0) return [0, 100]
+
+    const minValue = Math.min(...allValues)
+    const maxValue = Math.max(...allValues)
+    const padding = (maxValue - minValue) * 0.1
+    
+    return [Math.max(0, minValue - padding), maxValue + padding]
+  }, [chartData, componentData])
+
+  if (chartData.length === 0) {
+    return (
+      <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
+        無數值資料可顯示圖表
+      </div>
+    )
+  }
+
+  // Shorter on phones (multi-line + legend) so it doesn't dominate the viewport;
+  // full height from sm up. Pure CSS (SSR-safe, no hydration).
+  return (
+    <div className="h-[240px] sm:h-[300px] w-full">
+      <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 14 }}>
+        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+        <XAxis
+          dataKey="date"
+          tick={{ fontSize: 12 }}
+          // Inset the first/last points so their value labels clear the axis
+          // edges instead of overlapping the Y-axis ticks (worst with 2 points).
+          padding={{ left: 30, right: 30 }}
+          className="text-muted-foreground"
+        />
+        <YAxis
+          domain={yDomain}
+          tick={{ fontSize: 12 }}
+          className="text-muted-foreground"
+          tickFormatter={(value: number) => formatNumberSmart(value)}
+          label={{ value: unit || '', angle: -90, position: 'insideLeft', style: { fontSize: 12 } }}
+        />
+        <Tooltip
+          contentStyle={{
+            backgroundColor: 'var(--background)',
+            border: '1px solid var(--border)',
+            borderRadius: '6px',
+            fontSize: '12px',
+          }}
+          labelStyle={{ color: 'var(--foreground)' }}
+          formatter={(value, name) => {
+            if (typeof value !== 'number') return ['', String(name ?? '')]
+            return [`${formatNumberSmart(value)} ${unit || ''}`, String(name ?? '')]
+          }}
+        />
+        <Legend />
+        
+        {componentData.map((comp, i) => (
+          <Line
+            key={comp.componentName}
+            type="monotone"
+            dataKey={comp.componentName}
+            name={displayNames?.[comp.componentName] ?? comp.componentName}
+            stroke={comp.color}
+            strokeWidth={2}
+            dot={{
+              r: 5,
+              fill: comp.color,
+              stroke: 'var(--card)',
+              strokeWidth: 1
+            }}
+            activeDot={{
+              r: 7,
+              fill: comp.color,
+              stroke: 'var(--card)',
+              strokeWidth: 2
+            }}
+            connectNulls
+          >
+            {/* Always-on value labels. The first series (systolic for BP, the
+                higher line) labels above; the rest below, so the two don't
+                collide. */}
+            <LabelList
+              dataKey={comp.componentName}
+              content={(props: any) => {
+                const { x, y, value, index } = props
+                if (x == null || y == null || typeof value !== 'number') return null
+                return (
+                  <text
+                    key={`${comp.componentName}-${index}`}
+                    x={x}
+                    y={y + (i === 0 ? -10 : 16)}
+                    textAnchor="middle"
+                    style={{ fontSize: 11, fontWeight: 500, fill: comp.color }}
+                  >
+                    {formatNumberSmart(value)}
+                  </text>
+                )
+              }}
+            />
+          </Line>
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+    </div>
+  )
+}

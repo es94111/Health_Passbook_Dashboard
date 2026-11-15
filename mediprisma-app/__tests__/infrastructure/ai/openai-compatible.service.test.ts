@@ -1,0 +1,205 @@
+import { OpenAiCompatibleService } from '@/src/infrastructure/ai/services/openai-compatible.service'
+import { getUserErrorMessage } from '@/src/core/errors'
+
+describe('OpenAiCompatibleService', () => {
+  const config = {
+    enabled: true,
+    baseUrl: 'https://10.20.30.40:8443/v1/chat/completions',
+    modelId: 'local-medical-model',
+    apiKey: null,
+  }
+
+  afterEach(() => jest.restoreAllMocks())
+
+  const jsonResponse = (body: unknown, status = 200): Response => ({
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: 'OK',
+    json: async () => body,
+  } as Response)
+
+  it('sends the actual model directly to the configured HTTPS endpoint without auth when optional', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse({
+      choices: [{ message: { content: 'local answer' } }],
+      usage: { total_tokens: 42 },
+    }))
+
+    const service = new OpenAiCompatibleService(config)
+    await expect(service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'hello' }],
+      temperature: 0.2,
+      maxTokens: 64,
+    })).resolves.toMatchObject({
+      text: 'local answer',
+      metadata: { modelId: 'unreported', provider: 'custom', tokensUsed: 42,
+        modelExecution: { customModelId: 'local-medical-model', actualModelId: null } },
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      'https://10.20.30.40:8443/v1/chat/completions',
+    )
+    const init = fetchMock.mock.calls[0][1]
+    expect(new Headers(init?.headers).has('Authorization')).toBe(false)
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      model: 'local-medical-model',
+      messages: [{ role: 'user', content: 'hello' }],
+      max_tokens: 64,
+      stream: false,
+    })
+  })
+
+  it('sends reasoning effort only to configured gpt-oss models', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse({
+      choices: [{ message: { content: 'answer' } }],
+    }))
+    const service = new OpenAiCompatibleService({ ...config, modelId: 'gpt-oss:20b' })
+
+    await service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'hello' }],
+      reasoningEffort: 'low',
+    })
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      model: 'gpt-oss:20b',
+      reasoning_effort: 'low',
+    })
+  })
+
+  it('rejects a response cut off by the endpoint output limit', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse({
+      choices: [{ message: { content: 'unfinished assessment' }, finish_reason: 'length' }],
+    }))
+    const service = new OpenAiCompatibleService(config)
+
+    const error = await service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'generate SOAP' }],
+    }).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ code: 'AI_OUTPUT_TRUNCATED' })
+    expect(getUserErrorMessage(error)).toContain('摘要尚未完成')
+  })
+
+  it('returns nonempty truncated text with an explicit marker when the caller opts in', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse({
+      choices: [{ message: { content: 'A:診斷\n部分內容' }, finish_reason: 'length' }],
+    }))
+    const service = new OpenAiCompatibleService(config)
+
+    await expect(service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'generate SOAP' }],
+      allowTruncatedOutput: true,
+    })).resolves.toMatchObject({
+      text: 'A:診斷\n部分內容',
+      metadata: { outputTruncated: true },
+    })
+  })
+
+  it('still rejects an empty truncated response when the caller opts in', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse({
+      choices: [{ message: { content: '' }, finish_reason: 'length' }],
+    }))
+    const service = new OpenAiCompatibleService(config)
+
+    await expect(service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'generate SOAP' }],
+      allowTruncatedOutput: true,
+    })).rejects.toMatchObject({ code: 'AI_OUTPUT_TRUNCATED' })
+  })
+
+  it('omits gpt-oss reasoning controls for other endpoint models', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(jsonResponse({
+      choices: [{ message: { content: 'answer' } }],
+    }))
+    const service = new OpenAiCompatibleService(config)
+
+    await service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'hello' }],
+      reasoningEffort: 'low',
+    })
+
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('never falls back when the custom profile is unavailable', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+    const service = new OpenAiCompatibleService({ ...config, enabled: false })
+    await expect(service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'clinical text' }],
+    })).rejects.toThrow('not configured')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('allows a custom timeout and maps its abort to a stable local-model timeout', async () => {
+    jest.useFakeTimers()
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation((
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('signal is aborted without reason', 'AbortError'))
+      }, { once: true })
+    }))
+
+    try {
+      const service = new OpenAiCompatibleService(config, 5_000)
+      const pending = service.query({
+        modelId: 'openai-compatible-custom',
+        messages: [{ role: 'user', content: 'long clinical prompt' }],
+      })
+      const captured = pending.catch((error: unknown) => error)
+      await jest.advanceTimersByTimeAsync(5_000)
+
+      const error = await captured
+      expect(error).toMatchObject({
+        code: 'AI_TIMEOUT',
+        message: expect.stringContaining('local model response timed out'),
+      })
+      expect(getUserErrorMessage(error)).toContain('地端模型回應逾時')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('reports a long direct connection failure without calling it a confirmed timeout', async () => {
+    jest.useFakeTimers()
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(() =>
+      new Promise<Response>((_resolve, reject) => {
+        setTimeout(() => reject(new TypeError('Failed to fetch')), 5 * 60_000)
+      }))
+    try {
+      const service = new OpenAiCompatibleService({ ...config, transport: 'direct' })
+      const captured = service.query({
+        modelId: 'openai-compatible-custom',
+        messages: [{ role: 'user', content: 'long clinical prompt' }],
+      }).catch((error: unknown) => error)
+      await jest.advanceTimersByTimeAsync(5 * 60_000)
+
+      const error = await captured
+      expect(error).toMatchObject({ code: 'AI_CONNECTION_INTERRUPTED' })
+      expect(getUserErrorMessage(error)).toContain('可能是服務端或網路逾時')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(jest.getTimerCount()).toBe(0)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('keeps a short fetch failure as an ordinary network failure', async () => {
+    jest.spyOn(global, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'))
+    const service = new OpenAiCompatibleService({ ...config, transport: 'direct' })
+    const error = await service.query({
+      modelId: 'openai-compatible-custom',
+      messages: [{ role: 'user', content: 'hello' }],
+    }).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(TypeError)
+    expect(getUserErrorMessage(error)).toContain('網路連線問題')
+  })
+})

@@ -1,0 +1,142 @@
+import { fireEvent, render, screen } from "@testing-library/react"
+import { Database, Settings2 } from "lucide-react"
+import { GenerationErrorBanner } from "@/features/medical-summary/components/GenerationErrorBanner"
+
+describe("GenerationErrorBanner", () => {
+  const errors = [{
+    label: "摘要重點",
+    message: "選取的病歷資料超過此模型的內容上限。",
+  }]
+
+  it("can be dismissed with its close button", () => {
+    render(
+      <GenerationErrorBanner
+        title="部分摘要內容尚未完成"
+        errors={errors}
+        retryLabel="重試"
+        closeLabel="關閉"
+        isBusy={false}
+        onRetry={jest.fn()}
+      />,
+    )
+
+    expect(screen.getByRole("alert")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "關閉" }))
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+  })
+
+  it("keeps retry available while idle", () => {
+    const onRetry = jest.fn()
+    render(
+      <GenerationErrorBanner
+        title="部分摘要內容尚未完成"
+        errors={errors}
+        retryLabel="重試"
+        closeLabel="關閉"
+        isBusy={false}
+        onRetry={onRetry}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "重試" }))
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it("shows overflow actions ALONGSIDE retry", () => {
+    const onAdjustScope = jest.fn()
+    const onOpenSettings = jest.fn()
+    const onRetry = jest.fn()
+
+    render(
+      <GenerationErrorBanner
+        title="輸入內容超過模型上限"
+        errors={errors}
+        retryLabel="重試"
+        closeLabel="關閉"
+        isBusy={false}
+        onRetry={onRetry}
+        actions={[
+          {
+            label: "調整資料範圍",
+            onClick: onAdjustScope,
+            icon: <Database aria-hidden="true" />,
+          },
+          {
+            label: "模型與內容視窗設定",
+            onClick: onOpenSettings,
+            icon: <Settings2 aria-hidden="true" />,
+            variant: "secondary",
+          },
+        ]}
+      />,
+    )
+
+    // The overflow variant used to DROP retry: after resolving the overflow
+    // elsewhere (narrower scope, different model) the banner that reported the
+    // problem offered no way to re-run.
+    fireEvent.click(screen.getByRole("button", { name: "調整資料範圍" }))
+    fireEvent.click(screen.getByRole("button", { name: "模型與內容視窗設定" }))
+    fireEvent.click(screen.getByRole("button", { name: "重試" }))
+
+    expect(onAdjustScope).toHaveBeenCalledTimes(1)
+    expect(onOpenSettings).toHaveBeenCalledTimes(1)
+    expect(onRetry).toHaveBeenCalledTimes(1)
+  })
+
+  it("hides retry while a generation is already running", () => {
+    render(
+      <GenerationErrorBanner
+        title="輸入內容超過模型上限"
+        errors={errors}
+        retryLabel="重試"
+        closeLabel="關閉"
+        isBusy
+        onRetry={jest.fn()}
+        actions={[
+          { label: "調整資料範圍", onClick: jest.fn() },
+        ]}
+      />,
+    )
+
+    expect(screen.queryByRole("button", { name: "重試" })).not.toBeInTheDocument()
+  })
+
+  it("can direct recovery through another action without offering retry", () => {
+    render(
+      <GenerationErrorBanner
+        title="所選模型目前無法使用"
+        errors={[{ label: "AI 模型", message: "本次未送出任何資料。" }]}
+        retryLabel="重試"
+        closeLabel="關閉"
+        isBusy={false}
+        onRetry={jest.fn()}
+        showRetry={false}
+        actions={[
+          { label: "切換模型", onClick: jest.fn() },
+        ]}
+      />,
+    )
+
+    expect(screen.getByRole("button", { name: "切換模型" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: "重試" })).not.toBeInTheDocument()
+  })
+
+  it("disables overflow actions while generation is busy", () => {
+    render(
+      <GenerationErrorBanner
+        title="輸入內容超過模型上限"
+        errors={errors}
+        retryLabel="重試"
+        closeLabel="關閉"
+        isBusy
+        onRetry={jest.fn()}
+        actions={[
+          { label: "調整資料範圍", onClick: jest.fn() },
+        ]}
+      />,
+    )
+
+    expect(screen.getByRole("button", { name: "調整資料範圍" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "關閉" })).toBeEnabled()
+  })
+})

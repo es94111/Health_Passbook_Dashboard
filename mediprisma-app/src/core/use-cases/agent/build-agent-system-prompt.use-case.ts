@@ -1,0 +1,231 @@
+/**
+ * Build Agent System Prompt Use Case
+ * Constructs enhanced system prompt for agent mode with clinical context and tool descriptions
+ */
+
+import type { ChatDataScope } from '@/src/core/entities/chat-message.entity'
+import type { Locale } from '@/src/shared/i18n/i18n.config'
+
+export interface BuildAgentSystemPromptInput {
+  baseSystemPrompt: string
+  clinicalContext: string
+  /** The UI locale is the authoritative language for the complete answer. */
+  locale: Locale
+  /**
+   * Whether a patient context is loaded. The actual FHIR ID is deliberately
+   * NOT included in the prompt — it would be sent to cloud LLM providers on
+   * every turn, defeating the tool-layer PII scrubber. Tools resolve the
+   * patient implicitly from the bound data source.
+   */
+  hasPatient?: boolean
+  /** 'local' = querying an in-memory uploaded FHIR bundle; 'live' (default) = SMART server */
+  mode?: 'live' | 'local'
+  hasPerplexityKey: boolean
+  /** Exact schemas exposed on this turn. Omit for the legacy/full tool list. */
+  availableToolNames?: readonly string[]
+  /** Runtime-resolved boundary for this turn. */
+  turnDataScope?: ChatDataScope
+  /** The user asks for current evidence but this turn has no literature tool. */
+  currentEvidenceUnavailable?: boolean
+  translations: {
+    deepModeIntro: string
+    currentPatient: string
+    hasPermission: string
+    organizedClinicalData: string
+    organizedClinicalDataDesc: string
+    availableTools: string
+    availableToolsPrefix: string
+    availableToolsSuffix: string
+    toolDescriptions: {
+      queryPatientInfo: string
+      getDataOverview: string
+      queryEncounters: string
+      getRecentVisits: string
+      getEncounterDetails: string
+      listEncounterDepartments: string
+      searchEncountersByDiagnosis: string
+      queryConditions: string
+      queryObservations: string
+      queryDiagnosticReports: string
+      queryLabResultsByCategory: string
+      queryImagingRecords: string
+      searchObservationByName: string
+      listAvailableObservationCodes: string
+      queryProcedures: string
+      queryMedications: string
+      getActiveMedicationList: string
+      queryAllergies: string
+      queryImmunizations: string
+      searchMedicalLiterature: string
+    }
+    importantNote: string
+    icdCodeCaveat: string
+    groundingSelfCheck: string
+    anonymizationNote: string
+    usageGuidelines: string
+    prioritizeClinicalData: string
+    useToolsWhenNeeded: string
+    useToolsDirectly: string
+    noAuthNeeded: string
+    mustExplainResults: string
+    provideAnalysis: string
+    indicateNoRecords: string
+    literatureKeywords: string
+    helpWithClinicalData: string
+    helpWithTools: string
+  }
+}
+
+export class BuildAgentSystemPromptUseCase {
+  execute(input: BuildAgentSystemPromptInput): string {
+    const { baseSystemPrompt, clinicalContext, hasPatient, mode = 'live', hasPerplexityKey, translations: t } = input
+
+    const hasClinicalData = clinicalContext.trim().length > 0
+    const isLocalMode = mode === 'local'
+
+    // Build patient context section. In local-bundle mode the patient ID is
+    // implicit (single patient per bundle), so the warning about needing one
+    // is misleading — swap it for a local-mode notice.
+    const scopeContract = input.turnDataScope === 'auto'
+      ? `**Turn Data Scope: Automatic**
+- Decide from the user's question whether patient-record tools, current-literature search, both, or neither are needed.
+- Use the fewest relevant tools. Do not query patient data merely because it is available.`
+      : input.turnDataScope === 'general'
+      ? `**Turn Data Scope: General medical knowledge**
+- No patient record is available or authorized for this turn.
+- Do not use, request, mention, or infer any loaded patient's FHIR data.`
+      : input.turnDataScope === 'patient-literature'
+        ? `**Turn Data Scope: Current patient + current literature**
+- You may use the exposed patient-record and literature tools.
+- Keep patient-record claims grounded in this turn's tool results and literature claims grounded in returned sources.`
+        : `**Turn Data Scope: Current patient record**
+- You may use the exposed patient-record tools.
+- No current literature source is authorized for this turn; do not imply that one was searched.`
+
+    const patientSection = input.turnDataScope === 'general'
+      ? ''
+      : hasPatient
+      ? `**${t.currentPatient}**
+- ${t.hasPermission}`
+      : isLocalMode
+        ? `**${t.currentPatient}**
+- Reading from locally-imported FHIR bundle — patient ID is implicit.
+- FHIR query tools operate on the in-memory bundle, not a live server.`
+        : `**${t.currentPatient}**
+- No patient context available
+- FHIR query tools will not work without patient ID`
+
+    // Build clinical data section (only if available)
+    const clinicalDataSection = hasClinicalData
+      ? `**${t.organizedClinicalData}**
+${t.organizedClinicalDataDesc}
+
+${clinicalContext}
+
+---`
+      : ''
+
+    // Build tools list — grouped by clinical concern, matching the left-panel
+    // tabs so the LLM picks the right tool for each kind of question.
+    const available = input.availableToolNames ? new Set(input.availableToolNames) : null
+    const toolLine = (name: keyof typeof t.toolDescriptions) =>
+      available && !available.has(name) ? null : `- ${name} — ${t.toolDescriptions[name]}`
+    const toolSection = (heading: string, names: Array<keyof typeof t.toolDescriptions>) => {
+      const lines = names.map(toolLine).filter((line): line is string => Boolean(line))
+      return lines.length > 0 ? `**${heading}**\n${lines.join('\n')}` : null
+    }
+    const toolsList = [
+      toolSection('Patient & Overview', ['queryPatientInfo', 'getDataOverview']),
+      toolSection('Visits', ['queryEncounters', 'getRecentVisits', 'getEncounterDetails', 'listEncounterDepartments', 'searchEncountersByDiagnosis']),
+      toolSection('Diagnoses & Conditions', ['queryConditions']),
+      toolSection('Reports / Labs / Imaging / Procedures', [
+        'queryDiagnosticReports',
+        'queryLabResultsByCategory',
+        'queryImagingRecords',
+        'queryObservations',
+        'searchObservationByName',
+        'listAvailableObservationCodes',
+        'queryProcedures',
+      ]),
+      toolSection('Medications & Allergies', [
+        'queryMedications',
+        'getActiveMedicationList',
+        'queryAllergies',
+        'queryImmunizations',
+      ]),
+      hasPerplexityKey ? toolSection('Literature', ['searchMedicalLiterature']) : null,
+    ].filter((section): section is string => Boolean(section)).join('\n\n')
+
+    // Build usage guidelines
+    const usageGuidelines = hasClinicalData
+      ? `- ${t.prioritizeClinicalData}
+- ${t.useToolsWhenNeeded}`
+      : `- ${t.useToolsDirectly}`
+
+    const outputLanguageRule = input.locale === 'zh-TW'
+      ? 'Write all explanatory prose, headings, table labels, and safety wording in Taiwanese Traditional Chinese (zh-TW). Never use Simplified Chinese or Mainland-China medical wording. For example, write「突變、四環素、腸、門」, never「突变、四环素、肠、门」. Preserve source fields exactly only where the grounding rules below require verbatim copying.'
+      : 'Write all explanatory prose, headings, table labels, and safety wording in English. Do not switch to Chinese merely because clinical records or tool results contain Chinese text. Preserve source fields exactly only where the grounding rules below require verbatim copying.'
+    const missingValueText = input.locale === 'zh-TW' ? '「資料未提供」' : '"Not provided"'
+    const missingNormalityText = input.locale === 'zh-TW'
+      ? '「資料未提供正常／異常判定」'
+      : '"Normal/abnormal assessment not provided"'
+
+    const safetyContract = `# NON-NEGOTIABLE CLINICAL OUTPUT CONTRACT
+These rules override every later style instruction. An answer that violates any rule is invalid and must be rewritten before returning.
+1. ${outputLanguageRule}
+2. Copy medication names, dose text, and frequency exactly from tool output. Do not translate, expand, normalize, or guess them. Unless the user explicitly asks for a drug explanation, list only the medication fields returned by tools and omit any ingredient / purpose / drug-class column.
+3. Never infer a medication ingredient, drug class, indication, formulation, or treatment target from a brand name. Use an ingredient only when terminologyStatus is "matched". Use a class only from the same matched object's medicationIdentity / terminology fields, or from that row's sourceAtcClassification when terminologyStatus is "source-atc-only". Never transfer fields between rows or choose one ambiguous candidate. If the tool did not provide a field, write ${missingValueText}.
+4. For laboratory results, use only tool-provided normalityStatus and referenceRange. Never add customary ranges, diagnose conditions such as anemia, infer a cause, or call an unassessed value stable/normal. If normalityStatus is "Not provided", write ${missingNormalityText}.
+5. Every diagnosis, medication, laboratory value, status, range, and date must be grounded in tool output. Do not recommend treatment changes. Ask the user to discuss clinically important findings with their physician.
+Before returning, scan the complete answer once for the wrong output language, unsupported medication explanations, invented ranges or diagnoses, and internal contradictions; rewrite any violation.`
+
+    const currentEvidenceContract = input.currentEvidenceUnavailable
+      ? `# CURRENT-EVIDENCE LIMITATION
+No current literature-search tool is available for this turn. Do not claim that your training knowledge represents the latest guideline or update. Explicitly tell the user that you cannot verify the current version, then recommend checking the relevant official guideline or using a literature-enabled model.`
+      : ''
+
+    // Put the safety contract first because smaller local models obey early,
+    // concise constraints more reliably than rules appended after long schemas.
+    const finalPrompt = `${safetyContract}
+
+${currentEvidenceContract}
+
+${baseSystemPrompt}
+
+${t.deepModeIntro}
+
+${scopeContract}
+
+${patientSection}
+
+${clinicalDataSection}
+
+**${t.availableTools}**
+${hasClinicalData ? t.availableToolsPrefix : ''}${t.availableToolsSuffix}
+
+${toolsList}
+
+${t.importantNote}
+
+${t.anonymizationNote}
+
+${t.icdCodeCaveat}
+
+**${t.usageGuidelines}**
+${usageGuidelines}
+- TOOL EXECUTION CONTRACT: use the fewest relevant tools. Never invent a date range or filter the user did not request; omit optional filters by default. If a self-chosen filter returns zero records, retry without that filter before concluding absence. Stop calling tools once the requested facts are available. In the final answer, include the exact requested dates and values, but do not expose internal resource identifiers.
+- ${t.noAuthNeeded}
+- ${t.mustExplainResults}
+- ${t.provideAnalysis}
+- ${t.indicateNoRecords}
+${hasPerplexityKey ? `\n${t.literatureKeywords}` : ''}
+
+${hasClinicalData ? t.helpWithClinicalData : t.helpWithTools}
+
+${t.groundingSelfCheck}`
+
+    return finalPrompt
+  }
+}
+
+export const buildAgentSystemPromptUseCase = new BuildAgentSystemPromptUseCase()

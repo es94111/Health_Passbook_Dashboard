@@ -1,6 +1,18 @@
 {
-  "currentVersion": "2.7.2",
+  "currentVersion": "3.0.0",
   "releases": [
+    {
+      "version": "3.0.0",
+      "date": "2026-11-15",
+      "title": "匯入 MediPrisma mediprisma-app 本地複製（舊資料不變）",
+      "type": "feature",
+      "changes": [
+        {
+          "tag": "new",
+          "text": "匯入 https://github.com/MediPrisma/mediprisma-app 最新版（master @ 313fe14、Apache-2.0）完整程式碼至 mediprisma-app/ 子資料夾：2,394 檔與上游位元組一致，保留 LICENSE、NOTICE 與 vendor/ 第三方歸屬聲明；舊專案檔案完全不變，修改僅進本 repo、不會回傳 MediPrisma GitHub"
+        }
+      ]
+    },
     {
       "version": "2.7.2",
       "date": "2026-11-15",

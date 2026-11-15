@@ -1,0 +1,135 @@
+/**
+ * Proxy Fetch Interceptor
+ * Intercepts fetch requests to add proxy headers and transform request body
+ */
+
+import { openAIRequestTransformer } from '../transformers/openai-request.transformer'
+import { getProxyIdToken } from '@/src/infrastructure/ai/utils/proxy-auth'
+import { getAppCheckToken } from '@/src/infrastructure/ai/utils/app-check'
+import { guardOpenAiResponsesProxyStream } from './openai-responses-stream.guard'
+
+export interface ProxyFetchConfig {
+  proxyUrl: string
+  proxyClientKey?: string
+  isGemini: boolean
+  isClaude?: boolean
+  modelId: string
+}
+
+export class ProxyFetchInterceptor {
+  /**
+   * Create custom fetch function for proxy requests
+   */
+  createProxyFetch(config: ProxyFetchConfig): typeof fetch {
+    const originalFetch = globalThis.fetch
+
+    return async (url, init) => {
+      const headers = new Headers(init?.headers)
+      
+      // Remove API keys - proxy will use its own
+      headers.delete('authorization')
+      headers.delete('x-goog-api-key')
+      headers.delete('x-api-key')
+      
+      // Add proxy client key if available
+      if (config.proxyClientKey) {
+        headers.set('x-proxy-key', config.proxyClientKey)
+      }
+
+      // Proxy requires a signed-in user (audit A6): Authorization now carries
+      // the Firebase ID token in place of the deleted provider key.
+      const idToken = await getProxyIdToken()
+      if (idToken) {
+        headers.set('Authorization', `Bearer ${idToken}`)
+      } else {
+        // No session token even after waiting for the guest session to come up.
+        // Sending the request anyway 401s ambiguously (or hangs mid-stream),
+        // which on iOS surfaced as a silent "思考中" spinner. Fail fast with a
+        // mappable message instead. This path is never reached when the user
+        // supplies their own API key — that bypasses the proxy entirely.
+        throw new Error(
+          'proxy session unavailable: could not obtain a guest sign-in token (sign-in required)'
+        )
+      }
+
+      // App Check attestation (anti-abuse). Best-effort: when App Check isn't
+      // configured (local dev / emulator) this is null and the header is omitted;
+      // the proxy runs log-only until enforcement is switched on server-side.
+      const appCheckToken = await getAppCheckToken()
+      if (appCheckToken) {
+        headers.set('X-Firebase-AppCheck', appCheckToken)
+      }
+
+      let body = init?.body
+
+      if (config.isClaude) {
+        // Anthropic messages payloads pass through verbatim — the Claude proxy
+        // forwards them to /v1/messages unchanged
+      } else if (config.isGemini) {
+        // Pass the native Gemini body through (contents/tools/etc) instead of
+        // flattening to {role, content:string}. The old transform dropped
+        // functionCall/functionResponse parts (no `.text`), so multi-step
+        // agent tool loops lost their results and Gemini gave up. The proxy
+        // forwards it to Google verbatim; we only inject routing markers
+        // (model is allowlisted server-side; streaming is signalled by the SDK URL).
+        body = this.markGeminiPassthrough(body, String(url), config.modelId)
+      } else {
+        // Transform OpenAI request format
+        body = this.transformOpenAIRequest(body)
+      }
+
+      const response = await originalFetch(config.proxyUrl, { ...init, headers, body })
+      const isOpenAiResponsesRequest =
+        !config.isGemini
+        && !config.isClaude
+        && /\/responses(?:[/?#]|$)/.test(String(url))
+
+      return isOpenAiResponsesRequest
+        ? guardOpenAiResponsesProxyStream(response)
+        : response
+    }
+  }
+
+  /**
+   * Pass the AI SDK's native Gemini body through, injecting only routing
+   * markers the proxy strips before forwarding to Google.
+   */
+  private markGeminiPassthrough(body: BodyInit | null | undefined, requestUrl: string, modelId: string): string | undefined {
+    if (!body || typeof body !== 'string') {
+      return body as string | undefined
+    }
+    try {
+      const parsed = JSON.parse(body)
+      // The SDK puts the model in its URL, which the single proxy URL replaces.
+      // Send the selected id explicitly so the backend can apply its allowlist.
+      parsed.model = modelId
+      // The SDK targets :streamGenerateContent for streaming, :generateContent otherwise
+      parsed.__proxyStreaming = requestUrl.includes('streamGenerateContent')
+      return JSON.stringify(parsed)
+    } catch {
+      return body
+    }
+  }
+
+  /**
+   * Transform OpenAI request: convert "developer" role to "system"
+   * AI SDK uses "developer" for newer OpenAI models, but OpenAI API expects "system"
+   */
+  private transformOpenAIRequest(body?: BodyInit | null): string | undefined {
+    if (!body || typeof body !== 'string') {
+      return body as string | undefined
+    }
+
+    try {
+      const parsed = JSON.parse(body)
+      const transformed = openAIRequestTransformer.transform(parsed)
+      return JSON.stringify(transformed)
+    } catch {
+      // Keep original body if parsing fails
+    }
+
+    return body
+  }
+}
+
+export const proxyFetchInterceptor = new ProxyFetchInterceptor()

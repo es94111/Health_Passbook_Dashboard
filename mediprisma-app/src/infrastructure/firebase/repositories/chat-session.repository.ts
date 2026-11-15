@@ -1,0 +1,293 @@
+import { 
+  collection, 
+  doc, 
+  getDoc, 
+  getDocs, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc,
+  query, 
+  where, 
+  orderBy, 
+  limit as firestoreLimit,
+  onSnapshot,
+  Timestamp,
+  type Unsubscribe
+} from 'firebase/firestore'
+import { db } from '@/src/shared/config/firebase.config'
+import type { IChatSessionRepository } from '@/src/core/interfaces/repositories/chat-session.repository.interface'
+import type { 
+  ChatSessionEntity, 
+  ChatSessionMetadata,
+  CreateChatSessionDto,
+  UpdateChatSessionDto 
+} from '@/src/core/entities/chat-session.entity'
+
+// Sentinel used in place of a real FHIR server URL when the user is in
+// local-bundle mode (see use-fhir-context.hook.ts).
+const LOCAL_BUNDLE_KEY = 'local-bundle'
+// Older builds wrote local-mode sessions under the auto-save fallback string.
+// Keep reading them here so existing chat history doesn't vanish post-rename.
+const LEGACY_LOCAL_KEYS = ['no-fhir-server']
+
+/** Return the set of fhirServerUrl values that should be queried together. */
+function resolveFhirServerKeys(fhirServerUrl: string): string[] {
+  if (fhirServerUrl === LOCAL_BUNDLE_KEY) {
+    return [fhirServerUrl, ...LEGACY_LOCAL_KEYS]
+  }
+  // Scoped local imports are intentionally exact-match only. Even if two
+  // hospitals reuse Patient/1, their independently-open tabs must not share a
+  // conversation partition.
+  if (fhirServerUrl.startsWith(`${LOCAL_BUNDLE_KEY}:`)) return [fhirServerUrl]
+  return [fhirServerUrl]
+}
+
+export class FirestoreChatSessionRepository implements IChatSessionRepository {
+  private readonly COLLECTION_NAME = 'chats'
+
+  private toFirestoreDoc(entity: ChatSessionEntity) {
+    // Ensure all required fields are not undefined
+    if (!entity.userId || !entity.fhirServerUrl || !entity.patientId) {
+      throw new Error('Missing required fields for chat session')
+    }
+    
+    // Clean messages to remove any undefined values
+    // Only store thumbnails for images, not full-size data
+    const cleanMessages = (entity.messages || []).map(msg => {
+      const cleanMsg: any = {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+      }
+      
+      if (msg.modelId) cleanMsg.modelId = msg.modelId
+      if (msg.modelExecution) cleanMsg.modelExecution = msg.modelExecution
+      if (msg.agentStates) cleanMsg.agentStates = msg.agentStates
+      if (msg.replyTo) cleanMsg.replyTo = msg.replyTo
+      if (msg.dataScope) cleanMsg.dataScope = msg.dataScope
+      
+      // DO NOT store images in Firestore (too large, not needed for history)
+      // Images are only used for sending to AI API, not for storage
+      // If we need to show "user sent N images" in history, add a simple counter instead
+      
+      return cleanMsg
+    })
+    
+    const doc: any = {
+      userId: entity.userId,
+      fhirServerUrl: entity.fhirServerUrl,
+      patientId: entity.patientId,
+      title: entity.title || 'New Conversation',
+      messages: cleanMessages,
+      createdAt: Timestamp.fromDate(entity.createdAt),
+      updatedAt: Timestamp.fromDate(entity.updatedAt),
+      tags: entity.tags ?? [],
+      messageCount: entity.messageCount || 0,
+    }
+    
+    // Only add summary if it's not undefined and not null
+    if (entity.summary !== undefined && entity.summary !== null) {
+      doc.summary = entity.summary
+    }
+    
+    return doc
+  }
+
+  private toEntity(id: string, data: any): ChatSessionEntity {
+    return {
+      id,
+      userId: data.userId,
+      fhirServerUrl: data.fhirServerUrl,
+      patientId: data.patientId,
+      title: data.title,
+      summary: data.summary || undefined,
+      messages: data.messages || [],
+      createdAt: data.createdAt?.toDate() || new Date(),
+      updatedAt: data.updatedAt?.toDate() || new Date(),
+      messageCount: data.messageCount || data.messages?.length || 0,
+      tags: data.tags || [],
+    }
+  }
+
+  private toMetadata(id: string, data: any): ChatSessionMetadata {
+    return {
+      id,
+      userId: data.userId,
+      fhirServerUrl: data.fhirServerUrl,
+      patientId: data.patientId,
+      title: data.title,
+      summary: data.summary || undefined,
+      createdAt: data.createdAt?.toDate() || new Date(),
+      updatedAt: data.updatedAt?.toDate() || new Date(),
+      messageCount: data.messageCount || data.messages?.length || 0,
+      tags: data.tags || [],
+    }
+  }
+
+  async create(dto: CreateChatSessionDto): Promise<ChatSessionEntity> {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatRef = doc(collection(db, 'users', dto.userId, this.COLLECTION_NAME))
+    const now = new Date()
+    
+    const entity: ChatSessionEntity = {
+      id: chatRef.id,
+      userId: dto.userId,
+      fhirServerUrl: dto.fhirServerUrl,
+      patientId: dto.patientId,
+      title: dto.title || this.generateDefaultTitle(dto.messages, dto.locale),
+      summary: undefined,
+      messages: dto.messages,
+      createdAt: now,
+      updatedAt: now,
+      tags: undefined,
+      messageCount: dto.messages.length,
+    }
+
+    const firestoreDoc = this.toFirestoreDoc(entity)
+
+    await setDoc(chatRef, firestoreDoc)
+    return entity
+  }
+
+  async updateTitle(chatId: string, userId: string, title: string): Promise<void> {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatRef = doc(db, 'users', userId, this.COLLECTION_NAME, chatId)
+    // Don't update updatedAt when only changing title
+    // Title changes are cosmetic and shouldn't affect sort order
+    await updateDoc(chatRef, {
+      title,
+    })
+  }
+
+  async update(chatId: string, userId: string, dto: UpdateChatSessionDto): Promise<void> {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatRef = doc(db, 'users', userId, this.COLLECTION_NAME, chatId)
+    const updateData: any = {}
+
+    // Only update updatedAt if skipUpdatedAt is not true
+    if (!dto.skipUpdatedAt) {
+      updateData.updatedAt = Timestamp.now()
+    }
+
+    if (dto.messages !== undefined && dto.messages !== null) {
+      // Clean messages to remove any undefined values
+      const cleanMessages = dto.messages.map(msg => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        ...(msg.modelId && { modelId: msg.modelId }),
+        ...(msg.modelExecution && { modelExecution: msg.modelExecution }),
+        ...(msg.agentStates && { agentStates: msg.agentStates }),
+        ...(msg.replyTo && { replyTo: msg.replyTo }),
+        ...(msg.dataScope && { dataScope: msg.dataScope }),
+      }))
+      updateData.messages = cleanMessages
+      updateData.messageCount = cleanMessages.length
+    }
+    if (dto.title !== undefined && dto.title !== null) {
+      updateData.title = dto.title
+    }
+    if (dto.summary !== undefined && dto.summary !== null) {
+      updateData.summary = dto.summary
+    }
+    if (dto.tags !== undefined && dto.tags !== null) {
+      updateData.tags = dto.tags
+    }
+
+    await updateDoc(chatRef, updateData)
+  }
+
+  async getById(chatId: string, userId: string): Promise<ChatSessionEntity | null> {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatRef = doc(db, 'users', userId, this.COLLECTION_NAME, chatId)
+    const snapshot = await getDoc(chatRef)
+
+    if (!snapshot.exists()) return null
+    return this.toEntity(snapshot.id, snapshot.data())
+  }
+
+  async listByPatient(
+    userId: string,
+    patientId: string,
+    fhirServerUrl: string
+  ): Promise<ChatSessionMetadata[]> {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatsRef = collection(db, 'users', userId, this.COLLECTION_NAME)
+    const keys = resolveFhirServerKeys(fhirServerUrl)
+    const q = query(
+      chatsRef,
+      where('patientId', '==', patientId),
+      where('fhirServerUrl', 'in', keys),
+      orderBy('updatedAt', 'desc')
+    )
+
+    const snapshot = await getDocs(q)
+    return snapshot.docs.map(doc => this.toMetadata(doc.id, doc.data()))
+  }
+
+  async listByUser(userId: string, limit: number = 50): Promise<ChatSessionMetadata[]> {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatsRef = collection(db, 'users', userId, this.COLLECTION_NAME)
+    const q = query(
+      chatsRef,
+      orderBy('updatedAt', 'desc'),
+      firestoreLimit(limit)
+    )
+
+    const snapshot = await getDocs(q)
+    return snapshot.docs.map(doc => this.toMetadata(doc.id, doc.data()))
+  }
+
+  async delete(chatId: string, userId: string): Promise<void> {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatRef = doc(db, 'users', userId, this.COLLECTION_NAME, chatId)
+    await deleteDoc(chatRef)
+  }
+
+  subscribe(
+    userId: string,
+    patientId: string,
+    fhirServerUrl: string,
+    callback: (sessions: ChatSessionMetadata[]) => void
+  ): Unsubscribe {
+    if (!db) throw new Error('Firestore not initialized')
+
+    const chatsRef = collection(db, 'users', userId, this.COLLECTION_NAME)
+    const keys = resolveFhirServerKeys(fhirServerUrl)
+    const q = query(
+      chatsRef,
+      where('patientId', '==', patientId),
+      where('fhirServerUrl', 'in', keys),
+      orderBy('updatedAt', 'desc')
+    )
+
+    return onSnapshot(q, (snapshot) => {
+      const sessions = snapshot.docs.map(doc => this.toMetadata(doc.id, doc.data()))
+      callback(sessions)
+    })
+  }
+
+  private generateDefaultTitle(messages: any[], locale?: string): string {
+    if (messages.length === 0) return 'New Conversation'
+    
+    const firstUserMessage = messages.find(m => m.role === 'user')
+    if (!firstUserMessage) return 'New Conversation'
+    
+    const { content } = firstUserMessage
+    
+    // Use different max length based on user's language preference (matching ChatGPT UX)
+    // Chinese: 20 chars, English: 40 chars
+    const isChinese = locale === 'zh-TW'
+    const maxLength = isChinese ? 20 : 40
+    return content.length > maxLength ? content.substring(0, maxLength) + '...' : content
+  }
+}

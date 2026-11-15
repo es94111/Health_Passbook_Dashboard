@@ -1,0 +1,262 @@
+// The expanded body of a visit (diagnoses / tests / meds / procedures / linked
+// documents). Extracted from VisitItem so the SAME content can render either
+// inline (向下展開) or in the right-pane detail slot (向右展開).
+"use client"
+
+import { useMemo } from "react"
+import { EncounterObservationCard } from "./EncounterObservationCard"
+import { ProcedureRow, DiagnosisTag } from "./EncounterCards"
+import { AnalyteTrendRow } from "./AnalyteTrendRow"
+import { MedTrendRow } from "./MedTrendRow"
+import { EncounterSection } from "./EncounterSection"
+import { DocumentDetailDialog } from "@/features/clinical-summary/document-summary/components/DocumentDetailDialog"
+import { ReportRow as ClinicalReportRow } from "@/features/clinical-summary/reports/components/ReportRow"
+import { useDocumentSummaryStrings, makeResolveSectionLabel, type DocSummaryStrings } from "@/features/clinical-summary/document-summary/utils/strings"
+import { getDocumentPlainText } from "@/features/clinical-summary/document-summary/utils/document-text"
+import type { DocumentEntry } from "@/features/clinical-summary/document-summary/types"
+import type { EncounterDetails } from "../hooks/useEncounterDetails"
+import { useLanguage } from "@/src/application/providers/language.provider"
+import { MedicationItem } from "@/features/clinical-summary/medications/components/MedicationItem"
+
+// Auto-collapse thresholds — counts above these flip the section to closed by
+// default. Tuned for the typical inpatient stay (50+ labs, 10+ meds) while
+// keeping short outpatient visits visible without an extra click.
+const COLLAPSE_THRESHOLDS = {
+  diagnoses: 6,
+  tests: 20,
+  medications: 10,
+  reports: 6,
+  procedures: 3,
+} as const
+
+interface VisitDetailContentProps {
+  details?: EncounterDetails
+  documents?: DocumentEntry[]
+  abnormalCount?: number
+  /** Show exact source-reported execution dates for inpatient orders. */
+  showMedicationExecutionPeriods?: boolean
+}
+
+/** True when this visit has anything worth expanding. */
+export function visitHasDetails(details?: EncounterDetails, documents?: DocumentEntry[]): boolean {
+  const docs = documents ?? []
+  return !!(docs.length > 0 || (details && (
+    details.diagnoses.length > 0 ||
+    details.medications.length > 0 ||
+    details.tests.length > 0 ||
+    details.reports.length > 0 ||
+    details.procedures.length > 0
+  )))
+}
+
+export function VisitDetailContent({
+  details,
+  documents,
+  abnormalCount = 0,
+  showMedicationExecutionPeriods = false,
+}: VisitDetailContentProps) {
+  const { t, locale } = useLanguage()
+  const docStrings = useDocumentSummaryStrings()
+  const resolveDocSectionLabel = makeResolveSectionLabel(docStrings)
+  const categoryLabel = (id: string): string =>
+    (t.reports.cumulativeCategories as Record<string, string>)[id] || id
+  const docs = documents ?? []
+
+  if (!visitHasDetails(details, documents)) {
+    return <div className="text-xs text-muted-foreground">{t.visitHistory.noDetailsExpanded}</div>
+  }
+
+  return (
+    <div className="min-w-0 max-w-full space-y-4 overflow-hidden">
+      {/* Linked documents. Header says 「出院病摘」 only when a linked doc really
+          is a discharge summary (LOINC 18842-5); otherwise the generic 「病摘」 so
+          a TW-PAS 事前審查申請病摘 / IPS / outpatient note isn't mislabelled. The
+          popout opens the full text in the shared DocumentDetailDialog. */}
+      {docs.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {docs.some((d) => d.isDischargeSummary) ? docStrings.dischargeBadge : docStrings.documentBadge}
+          </div>
+          <div className="grid gap-2">
+            {docs.map((doc) => (
+              <VisitLinkedDocumentRow
+                key={doc.id}
+                doc={doc}
+                docStrings={docStrings}
+                resolveSectionLabel={resolveDocSectionLabel}
+                locale={locale}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {details?.diagnoses.length ? (
+        <EncounterSection
+          title={t.visitHistory.diagnoses}
+          count={details.diagnoses.length}
+          collapseThreshold={COLLAPSE_THRESHOLDS.diagnoses}
+        >
+          <div className="grid gap-2 mt-2">
+            {details.diagnoses.map((dx) => (
+              <DiagnosisTag key={dx.id} diagnosis={dx} />
+            ))}
+          </div>
+        </EncounterSection>
+      ) : null}
+
+      {details?.testGroups.length ? (
+        <EncounterSection
+          title={t.visitHistory.tests}
+          count={details.tests.length}
+          collapseThreshold={COLLAPSE_THRESHOLDS.tests}
+          rightBadges={
+            abnormalCount > 0 ? (
+              <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-1.5 py-0 text-[0.625rem] font-medium text-red-700 normal-case dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                {(t.visitHistory as any).abnormal ?? 'Abnormal'} {abnormalCount}
+              </span>
+            ) : undefined
+          }
+        >
+          <div className="space-y-2 mt-1.5">
+            {details.testGroups.map((group, gi) => (
+              <div key={group.categoryId ?? `other-${gi}`} className="space-y-1">
+                <div className="px-0.5 text-[0.6875rem] font-medium text-muted-foreground/80">
+                  {group.categoryId ? categoryLabel(group.categoryId) : categoryLabel('other')}
+                </div>
+                {details.isMultiDay && group.testSeries.length > 0 ? (
+                  <div className="space-y-0">
+                    {group.testSeries.map((series) => (
+                      <AnalyteTrendRow key={series.id} series={series} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-0">
+                    {group.tests.map((test) => (
+                      <EncounterObservationCard
+                        key={test.id}
+                        observation={test}
+                        showDate={details.isMultiDay}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </EncounterSection>
+      ) : null}
+
+      {details?.reports.length ? (
+        <EncounterSection
+          title={t.visitHistory.examReports}
+          count={details.reports.length}
+          collapseThreshold={COLLAPSE_THRESHOLDS.reports}
+        >
+          <div className="grid min-w-0 max-w-full gap-0 mt-2 overflow-hidden">
+            {details.reports.map((report) => (
+              <div key={report.id} className="min-w-0 max-w-full overflow-hidden">
+                <ClinicalReportRow row={report.row} defaultOpen={[]} />
+              </div>
+            ))}
+          </div>
+        </EncounterSection>
+      ) : null}
+
+      {details?.medications.length ? (
+        <EncounterSection
+          title={t.visitHistory.medications}
+          count={details.medications.length}
+          collapseThreshold={COLLAPSE_THRESHOLDS.medications}
+        >
+          <div className="@container mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)] divide-y divide-border/70 overflow-hidden rounded-md border border-border/80 bg-card/45 dark:bg-card/55">
+            {details.isMultiDay && details.medSeries.length > 0 ? (
+              details.medSeries.map((s) => (
+                <MedTrendRow
+                  key={s.id}
+                  series={s}
+                  showExecutionPeriods={showMedicationExecutionPeriods}
+                  grouped
+                />
+              ))
+            ) : (
+              details.medications.map((med) => (
+                <MedicationItem
+                  key={med.id}
+                  medication={med}
+                  executionPeriods={
+                    showMedicationExecutionPeriods && med.executionPeriod
+                      ? [med.executionPeriod]
+                      : undefined
+                  }
+                  grouped
+                />
+              ))
+            )}
+          </div>
+        </EncounterSection>
+      ) : null}
+
+      {details?.procedures.length ? (
+        <EncounterSection
+          title={t.visitHistory.procedures}
+          count={details.procedures.length}
+          collapseThreshold={COLLAPSE_THRESHOLDS.procedures}
+        >
+          <div className="mt-1.5 divide-y divide-border/70 overflow-hidden rounded-md border bg-background dark:bg-card/35">
+            {details.procedures.map((procedure) => (
+              <ProcedureRow key={procedure.id} procedure={procedure} />
+            ))}
+          </div>
+        </EncounterSection>
+      ) : null}
+    </div>
+  )
+}
+
+interface VisitLinkedDocumentRowProps {
+  doc: DocumentEntry
+  docStrings: DocSummaryStrings
+  resolveSectionLabel: (i18nKey: string) => string | null
+  locale: string
+}
+
+function VisitLinkedDocumentRow({
+  doc,
+  docStrings,
+  resolveSectionLabel,
+  locale,
+}: VisitLinkedDocumentRowProps) {
+  const docPlainText = useMemo(() => getDocumentPlainText(doc), [doc])
+  const canInterpret = docPlainText.trim().length > 0
+  const sourceId = `doc:${doc.id}`
+
+  return (
+    <div className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 shadow-sm">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold text-foreground">{doc.typeLabel}</div>
+        {(doc.subtitle || doc.institution) && (
+          <div className="truncate text-xs text-muted-foreground">
+            {doc.subtitle || doc.institution}
+          </div>
+        )}
+      </div>
+      <DocumentDetailDialog
+        entry={doc}
+        locale={locale}
+        strings={docStrings}
+        resolveSectionLabel={resolveSectionLabel}
+        interpretation={
+          canInterpret
+            ? {
+                reportId: sourceId,
+                reportText: docPlainText,
+                reportTitle: doc.typeLabel,
+                mode: doc.isDischargeSummary ? 'long-document' : 'standard',
+              }
+            : undefined
+        }
+      />
+    </div>
+  )
+}
