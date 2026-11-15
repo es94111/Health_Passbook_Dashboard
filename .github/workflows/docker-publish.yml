@@ -40,6 +40,17 @@ jobs:
         with:
           node-version: 22
 
+      # 選填：映像發佈憑證改由 OpenBao 讀取（vars.OPENBAO_ADDR 設定才啟用）。
+      # 未設定時沿用 GitHub Secrets 的 DOCKERHUB_USERNAME/DOCKERHUB_TOKEN，
+      # 行為與原本完全一致。以 GitHub OIDC 交換 OpenBao JWT，不落長效憑證。
+      - name: Fetch registry credentials from OpenBao (optional)
+        if: ${{ vars.OPENBAO_ADDR != '' }}
+        env:
+          OPENBAO_ADDR: ${{ vars.OPENBAO_ADDR }}
+          OPENBAO_AUTH_METHOD: jwt
+          OPENBAO_JWT_ROLE: ${{ vars.OPENBAO_JWT_ROLE || 'github-actions' }}
+        run: node scripts/openbao/fetch-secrets.mjs --path kv/ci/dockerhub --env-prefix OPENBAO_ --github-env
+
       # 標籤發版前先確認 changelog.json／SRS.md 已同步，避免發佈沒有紀錄的版本。
       - name: Verify release version
         if: github.ref_type == 'tag'
@@ -53,7 +64,7 @@ jobs:
           set -euo pipefail
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           ghcr_image="ghcr.io/${owner}/${IMAGE_NAME}"
-          dockerhub_username="${DOCKERHUB_USERNAME:-}"
+          dockerhub_username="${DOCKERHUB_USERNAME:-${OPENBAO_DOCKERHUB_USERNAME:-}}"
           dockerhub_image=""
           if [ -n "$dockerhub_username" ]; then
             dockerhub_image="${dockerhub_username}/${IMAGE_NAME}"
@@ -92,8 +103,8 @@ jobs:
         if: github.event_name != 'pull_request' && steps.images.outputs.dockerhub_enabled == 'true'
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME || env.OPENBAO_DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN || env.OPENBAO_DOCKERHUB_TOKEN }}
 
       - name: Login to GitHub Container Registry
         if: github.event_name != 'pull_request'
