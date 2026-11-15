@@ -29,6 +29,9 @@ COPY --from=build /app/public ./public
 # Version history for release tooling / ops inspection (secrets-free)
 COPY changelog.json ./changelog.json
 
+# OpenBao integration layer (fetch/rotate/entrypoint; plain Node, no deps)
+COPY --from=build /app/scripts/openbao ./scripts/openbao
+
 # Opt in to Watchtower's label filter; Watchtower still needs to be running
 # with WATCHTOWER_LABEL_ENABLE=true to update this container.
 LABEL com.centurylinklabs.watchtower.enable="true"
@@ -39,4 +42,6 @@ USER app
 
 EXPOSE 3001
 
-CMD ["node", "server.js"]
+# Entrypoint resolves OpenBao runtime secrets (when OPENBAO_ADDR is set) and
+# then starts the standalone server.
+CMD ["node", "scripts/openbao/entrypoint.mjs"]

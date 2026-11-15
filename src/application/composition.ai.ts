@@ -2,6 +2,7 @@
 // concrete AI transports. Hooks/features depend on these factories/facades,
 // while credentials are captured fresh at each request boundary.
 import { useAiConfigStore } from '@/src/application/stores/ai-config.store'
+import { effectiveAiProfiles } from '@/src/shared/config/ai-self.config'
 import { QueryAiUseCase } from '@/src/core/use-cases/ai/query-ai.use-case'
 import { GenerateSmartTitleUseCase } from '@/src/core/use-cases/chat/generate-smart-title.use-case'
 import {
@@ -41,7 +42,7 @@ export function captureAiRuntimeConfig(): AiRuntimeConfig {
     openAiApiKey: state.apiKey,
     geminiApiKey: state.geminiKey,
     claudeApiKey: state.claudeKey,
-    openAiCompatibleProfiles: state.openAiCompatibleProfiles,
+    openAiCompatibleProfiles: effectiveAiProfiles(state.openAiCompatibleProfiles),
   }
 }
 

@@ -7,6 +7,7 @@
  * shared ModelPicker and key-gated at read time.
  */
 
+import { effectiveAiProfiles } from '@/src/shared/config/ai-self.config'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
@@ -1470,7 +1471,7 @@ export const useGeminiKey = () => useAiConfigStore(selectGeminiKey)
 export const usePerplexityKey = () => useAiConfigStore(selectPerplexityKey)
 export const useClaudeKey = () => useAiConfigStore(selectClaudeKey)
 export const useOpenAiCompatibleConfig = () => useAiConfigStore(selectOpenAiCompatible)
-export const useOpenAiCompatibleProfiles = () => useAiConfigStore(selectOpenAiCompatibleProfiles)
+export const useOpenAiCompatibleProfiles = () => effectiveAiProfiles(useAiConfigStore(selectOpenAiCompatibleProfiles))
 
 // Use useShallow to prevent infinite loops from object reference changes
 export const useAllApiKeys = () => useAiConfigStore(
@@ -1480,6 +1481,6 @@ export const useAllApiKeys = () => useAiConfigStore(
     perplexityKey: state.perplexityKey,
     claudeKey: state.claudeKey,
     openAiCompatible: state.openAiCompatible,
-    openAiCompatibleProfiles: state.openAiCompatibleProfiles,
+    openAiCompatibleProfiles: effectiveAiProfiles(state.openAiCompatibleProfiles),
   }))
 )

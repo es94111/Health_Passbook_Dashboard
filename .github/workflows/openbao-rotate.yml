@@ -1,0 +1,49 @@
+name: OpenBao Key Rotation
+
+# 自動輪換自產金鑰（依需求「金鑰使用 OpenBao 管理，要可以自動輪換金鑰」）。
+# 預設停用：設定 repo 變數 OPENBAO_ROTATION_ENABLED=true 且
+# OPENBAO_ROTATE_FIELDS="path:field,path:field"（例：
+# "apps/mediprisma:APP_SESSION_KEY"）後才會執行；未設定時排程自動跳過，
+# 不影響任何既有流程。
+on:
+  schedule:
+    - cron: '0 3 1 * *'   # 每月 1 日 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  rotate:
+    if: ${{ vars.OPENBAO_ROTATION_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Rotate self-issued secrets
+        env:
+          OPENBAO_ADDR: ${{ vars.OPENBAO_ADDR }}
+          OPENBAO_AUTH_METHOD: jwt
+          OPENBAO_JWT_ROLE: ${{ vars.OPENBAO_JWT_ROLE || 'github-actions' }}
+          ROTATE_FIELDS: ${{ vars.OPENBAO_ROTATE_FIELDS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ROTATE_FIELDS:-}" ]; then
+            echo "未設定 OPENBAO_ROTATE_FIELDS，跳過輪換。"
+            exit 0
+          fi
+          IFS=',' read -ra items <<< "${ROTATE_FIELDS}"
+          for item in "${items[@]}"; do
+            path="${item%%:*}"
+            field="${item##*:}"
+            echo "→ 輪換 ${path} 的 ${field}"
+            node scripts/openbao/rotate-secret.mjs --path "kv/${path}" --field "${field}"
+          done

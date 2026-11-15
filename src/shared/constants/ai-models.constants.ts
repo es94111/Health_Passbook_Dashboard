@@ -457,7 +457,7 @@ export const MODEL_ROLE_IDS: Readonly<Record<ModelRole, string>> = Object.freeze
   'followup-suggestions': modelIdForRole('followup-suggestions'),
 })
 
-export const DEFAULT_MODEL_ID: ModelId = MODEL_ROLE_IDS.default as GeminiModelId
+export const DEFAULT_MODEL_ID: ModelId = MODEL_ROLE_IDS.default as CustomModelId
 export const SMART_TITLE_MODEL_ID = MODEL_ROLE_IDS['smart-title']
 
 export function modelRequiresUserKey(model: string | ModelDefinition): boolean {
