@@ -2,7 +2,7 @@
 
 台灣健保健康存摺（NHI）個人健康資料視覺化儀表板。
 
-**開發版本：3.0.1 — README 增補專案來源與修改聲明；3.0.0 匯入 MediPrisma mediprisma-app 最新版（master @ 313fe14、Apache-2.0）完整程式碼至 mediprisma-app/ 子資料夾（2,394 檔與上游位元組一致，舊專案檔案完全不變）；2.7.2 相依套件更新至最新版本（postcss 8.5.33、tailwindcss 4.3.5、vite 8.3.8、@vitejs/plugin-react 6.3.0、jsdom 31.0.1、google-auth-library 11.3.4、stream-json 3.9.0、eslint 10.15、typescript-eslint 8.72.2 等）並修正全部 7 個 lint 錯誤，建置與測試全數通過；2.7.1 相依套件全面更新至最新版本（react 19.3.1、react-router 8.5.1、jsdom 31、vite 8.3.6、vitest 5.1.0、eslint 10.14、typescript-eslint 8.72.1 等），建置與測試全數通過；2.7.0 匯入前先顯示資料日期範圍、各類筆數、FHIR 資源組成與影像／附件摘要（含無法預覽的格式），確認後才加密上傳，可隨時取消且不寫入任何資料；2.6.1 修正影像報告附件未顯示（附件改從任何報告資源的 presentedForm、content、media[].link 與 image[] 解析，無法預覽的格式會列出格式，並新增 GIF／BMP 支援）；2.6.0 起管理員可從網頁觸發 Watchtower 更新 Docker image，並改善前端載入（分頁與設定頁按需載入、圖表獨立 chunk）與後端傳輸（gzip／Brotli 壓縮、hash 靜態資源長期快取）；2.5.0 起支援加密個人健康資料（自我量測、健康檔案、看診摘要、領藥提醒、檢驗個人目標值）；2.4.0 起的「影像報告」分頁（檢查類型、部位、系列與影像張數）；大檔匯入（單檔上限 4 GiB、病歷文字索引上限 8 GiB，皆以加密分塊保存）；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
+**開發版本：3.0.2 — mediprisma-app 相依套件更新 9 項（Dependabot #82）並同步來源聲明；3.0.1 README 增補專案來源與修改聲明；3.0.0 匯入 MediPrisma mediprisma-app 最新版（master @ 313fe14、Apache-2.0）完整程式碼至 mediprisma-app/ 子資料夾（2,394 檔與上游位元組一致，舊專案檔案完全不變）；2.7.2 相依套件更新至最新版本（postcss 8.5.33、tailwindcss 4.3.5、vite 8.3.8、@vitejs/plugin-react 6.3.0、jsdom 31.0.1、google-auth-library 11.3.4、stream-json 3.9.0、eslint 10.15、typescript-eslint 8.72.2 等）並修正全部 7 個 lint 錯誤，建置與測試全數通過；2.7.1 相依套件全面更新至最新版本（react 19.3.1、react-router 8.5.1、jsdom 31、vite 8.3.6、vitest 5.1.0、eslint 10.14、typescript-eslint 8.72.1 等），建置與測試全數通過；2.7.0 匯入前先顯示資料日期範圍、各類筆數、FHIR 資源組成與影像／附件摘要（含無法預覽的格式），確認後才加密上傳，可隨時取消且不寫入任何資料；2.6.1 修正影像報告附件未顯示（附件改從任何報告資源的 presentedForm、content、media[].link 與 image[] 解析，無法預覽的格式會列出格式，並新增 GIF／BMP 支援）；2.6.0 起管理員可從網頁觸發 Watchtower 更新 Docker image，並改善前端載入（分頁與設定頁按需載入、圖表獨立 chunk）與後端傳輸（gzip／Brotli 壓縮、hash 靜態資源長期快取）；2.5.0 起支援加密個人健康資料（自我量測、健康檔案、看診摘要、領藥提醒、檢驗個人目標值）；2.4.0 起的「影像報告」分頁（檢查類型、部位、系列與影像張數）；大檔匯入（單檔上限 4 GiB、病歷文字索引上限 8 GiB，皆以加密分塊保存）；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
 
 ## 專案來源與修改聲明
 
@@ -12,7 +12,8 @@
 - 目前相對上游的修改：
   1. repo 根目錄新增 `.gitleaks.toml`（Gitleaks 誤報白名單，排除 12 個已判定誤報，不減損掃描能力）
   2. 版號文件同步（`changelog.json`、`SRS.md`、本 README）
-  3. `mediprisma-app/` 程式碼目前與上游 `313fe14` 相同；**後續修改將只維護於本 repo**
+  3. 相依套件更新（Dependabot PR #82）：`mediprisma-app/` 9 項 npm 套件升級——`next` 16.3.6→16.4.1、`@ai-sdk/provider-utils` 4.0.30→4.0.66、`js-yaml` 4.2.0→4.3.2、`nanoid` 3.3.16→3.3.20、`sharp` 0.35.4→0.35.5、`browserslist` 4.28.2→4.29.5、`brace-expansion` 1.1.15→1.1.22、`baseline-browser-mapping` 2.10.38→2.11.37、`source-map-js` 1.2.1→1.2.2；僅更動 `package.json`／`package-lock.json`（另連動 `dashboard/.lint-toolchain/package-lock.json`）
+  4. `mediprisma-app/` 原始碼（`.ts`／`.tsx` 等）仍與上游 `313fe14` 一致；**後續修改將只維護於本 repo**
 - 依 Apache-2.0 條款使用上游原始碼；上游版權歸 MediPrisma Contributors，原作者與貢獻者署名見 [`mediprisma-app/NOTICE`](mediprisma-app/NOTICE)，授權全文見 [`mediprisma-app/LICENSE`](mediprisma-app/LICENSE)。
 - 執行匯入的應用：`cd mediprisma-app && npm install && npm run dev`（詳見 [`mediprisma-app/README.md`](mediprisma-app/README.md)）。
 
