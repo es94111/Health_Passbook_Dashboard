@@ -28,12 +28,6 @@ jobs:
         package:
           - name: root
             path: .
-          - name: dashboard
-            path: dashboard
-          - name: dashboard-lint-toolchain
-            path: dashboard/.lint-toolchain
-          - name: server
-            path: server
     steps:
       - name: Checkout
         uses: actions/checkout@v7
