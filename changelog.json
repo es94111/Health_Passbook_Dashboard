@@ -1,6 +1,22 @@
 {
-  "currentVersion": "2.7.2",
+  "currentVersion": "3.0.0",
   "releases": [
+    {
+      "version": "3.0.0",
+      "date": "2026-11-15",
+      "title": "匯入 MediPrisma mediprisma-app 本地複製（舊資料不變）",
+      "type": "feature",
+      "changes": [
+        {
+          "tag": "new",
+          "text": "匯入 https://github.com/MediPrisma/mediprisma-app 最新版（master @ 313fe14、Apache-2.0）完整程式碼至 mediprisma-app/ 子資料夾：2,394 檔與上游位元組一致，保留 LICENSE、NOTICE 與 vendor/ 第三方歸屬聲明；舊專案檔案完全不變，修改僅進本 repo、不會回傳 MediPrisma GitHub"
+        },
+        {
+          "tag": "fixed",
+          "text": "新增 .gitleaks.toml 白名單排除 12 個已人工判定之 Gitleaks 誤報（臨床事實鍵常數 ×7、測試冪等鍵 ×1、測試加密封包固定向量 ×2、FHIR map key 組字串 ×1、上游內建 MedCloud 解密常數 ×1；以行級精確比對排除，不減損掃描能力），通過 Security Checks 之 Gitleaks secret scan；並同步修正 SRS.md 1.2 過期版號參照（2.7.0 → 3.0.0）"
+        }
+      ]
+    },
     {
       "version": "2.7.2",
       "date": "2026-11-15",

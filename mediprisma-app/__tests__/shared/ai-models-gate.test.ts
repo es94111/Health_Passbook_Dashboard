@@ -1,0 +1,83 @@
+// gateModel is the single graceful-degradation rule every AI call relies on:
+// a key-required model the user has no key for must downgrade to the free,
+// proxy-eligible default model — never dead-end with "API key is missing".
+import {
+  gateModel,
+  gateModelForAgentSupport,
+  gateModelForKeys,
+  DEFAULT_MODEL_ID,
+  CUSTOM_OPENAI_MODEL_ID,
+} from '@/src/shared/constants/ai-models.constants'
+
+describe('gateModel — downgrade stranded premium models', () => {
+  it('leaves a free (proxy-eligible) model untouched, with or without a key', () => {
+    expect(gateModel('gemini-3.1-flash-lite', false)).toBe('gemini-3.1-flash-lite')
+    expect(gateModel('gemini-3.1-flash-lite', true)).toBe('gemini-3.1-flash-lite')
+    // Gemini 3 Flash Preview is now a second free (proxy-eligible) Gemini tier
+    expect(gateModel('gemini-3-flash-preview', false)).toBe('gemini-3-flash-preview')
+    expect(gateModel('gemini-3-flash-preview', true)).toBe('gemini-3-flash-preview')
+    expect(gateModel('gemini-3.8-flash', false)).toBe('gemini-3.8-flash')
+    expect(gateModel('gemini-3.8-flash', true)).toBe('gemini-3.8-flash')
+  })
+
+  it('keeps a key-required model when the user HAS the provider key', () => {
+    expect(gateModel('gemini-3.1-pro-preview', true)).toBe('gemini-3.1-pro-preview')
+    expect(gateModel('gpt-5.6-terra', true)).toBe('gpt-5.6-terra')
+  })
+
+  it('downgrades a key-required model to the free default when no key', () => {
+    // every stranded premium pick lands on the one free default, regardless of
+    // its original provider — a single predictable fallback.
+    expect(gateModel('gemini-3.1-pro-preview', false)).toBe(DEFAULT_MODEL_ID)
+    expect(gateModel('gpt-5.6-terra', false)).toBe(DEFAULT_MODEL_ID)
+    expect(gateModel('claude-opus-5', false)).toBe(DEFAULT_MODEL_ID)
+  })
+
+  it('falls back to the default for an unknown model id', () => {
+    expect(gateModel('totally-made-up', false)).toBe(DEFAULT_MODEL_ID)
+    expect(gateModel('totally-made-up', false, 'gpt-5.4-nano')).toBe('gpt-5.4-nano')
+  })
+})
+
+// gateModelForKeys is what agent chat calls: it owns the user's three provider
+// keys and must downgrade exactly like the shared stream adapter does.
+describe('gateModelForKeys — provider-key-aware gate (agent chat)', () => {
+  it('downgrades a key-required model to the free default when no matching key', () => {
+    expect(gateModelForKeys('claude-opus-5', {})).toBe(DEFAULT_MODEL_ID)
+    expect(gateModelForKeys('gemini-3.1-pro-preview', {})).toBe(DEFAULT_MODEL_ID)
+    expect(gateModelForKeys('gpt-5.6-terra', {})).toBe(DEFAULT_MODEL_ID)
+  })
+
+  it('keeps a key-required model when the matching provider key IS present', () => {
+    expect(gateModelForKeys('claude-opus-5', { claudeKey: 'k' })).toBe('claude-opus-5')
+    expect(gateModelForKeys('gemini-3.1-pro-preview', { geminiKey: 'k' })).toBe('gemini-3.1-pro-preview')
+    expect(gateModelForKeys('gpt-5.6-terra', { openAiKey: 'k' })).toBe('gpt-5.6-terra')
+  })
+
+  it('falls back for a retired GPT model even if an OpenAI key still exists', () => {
+    expect(gateModelForKeys('gpt-5.5', { openAiKey: 'k' })).toBe(DEFAULT_MODEL_ID)
+  })
+
+  it('a key for a DIFFERENT provider does not rescue the pick', () => {
+    // Opus needs a Claude key; Gemini/OpenAI keys must not keep it on Opus.
+    expect(gateModelForKeys('claude-opus-5', { geminiKey: 'k', openAiKey: 'k' })).toBe(DEFAULT_MODEL_ID)
+  })
+
+  it('leaves a free (proxy-eligible) model untouched regardless of keys', () => {
+    expect(gateModelForKeys('gemini-3-flash-preview', {})).toBe('gemini-3-flash-preview')
+    expect(gateModelForKeys('gemini-3.8-flash', {})).toBe('gemini-3.8-flash')
+    expect(gateModelForKeys('gemini-3.8-flash', { geminiKey: 'k' })).toBe('gemini-3.8-flash')
+    expect(gateModelForKeys('gemini-3.1-flash-lite', { claudeKey: 'k' })).toBe('gemini-3.1-flash-lite')
+  })
+
+  it('keeps a hospital-model choice fail-closed instead of falling back to a proxy model', () => {
+    expect(gateModelForKeys(CUSTOM_OPENAI_MODEL_ID, {})).toBe(CUSTOM_OPENAI_MODEL_ID)
+  })
+})
+
+describe('gateModelForAgentSupport — tool-calling compatibility', () => {
+  it('keeps a supported model and rejects an unknown persisted id', () => {
+    expect(gateModelForAgentSupport('gemini-3-flash-preview')).toBe('gemini-3-flash-preview')
+    expect(gateModelForAgentSupport('removed-model')).toBe(DEFAULT_MODEL_ID)
+  })
+})

@@ -1,0 +1,30 @@
+title = "Health_Passbook_Dashboard Gitleaks 設定"
+
+# 繼承 gitleaks 內建預設規則；本檔只附加精確白名單，不減損任何偵測能力。
+[extend]
+useDefault = true
+
+# ─────────────────────────────────────────────────────────────
+# 全域白名單（regexTarget = "line"：以整行內容比對；各字串皆唯一）
+#
+# 背景：mediprisma-app/ 為 MediPrisma/mediprisma-app（Apache-2.0）的逐位元組
+# 匯入副本。下列 12 個 generic-api-key 告警已逐一人工檢視判定為誤報：
+#   7× 臨床事實鍵字串（sglt2Therapy／cvBenefitGlp1Therapy）— CDSS 領域常數
+#   1× FB-20260915-ABCDEF12 — 測試冪等鍵固定資料
+#   2× a256gcm.v1.AAECAwQ… — 測試加密封包固定向量（IV 為 RFC 測試值 000102…）
+#   1× 'Observation/' + observation.id — FHIR Map key 組字串
+#   1× T3oVibAh… — 上游公開程式碼內建之 MedCloud 啟動解密常數（非本 repo
+#      引入之秘密；如停用 MedCloud 整合可改以環境變數取代並移除此項）
+# ─────────────────────────────────────────────────────────────
+
+[allowlist]
+description = "mediprisma-app 匯入副本之已人工判定誤報（逐項說明見上方）"
+regexTarget = "line"
+regexes = [
+  '''sglt2Therapy''',
+  '''cvBenefitGlp1Therapy''',
+  '''FB-20260915-ABCDEF12''',
+  '''a256gcm\.v1\.AAECAwQFBgcICQoL''',
+  '''const key = 'Observation/' \+ observation\.id''',
+  '''T3oVibAh8qDaZlxykiWSEewbSh9kj4naOHWABviM5Fg''',
+]

@@ -1,0 +1,125 @@
+// Perplexity API Service - Direct API calls with user-provided key
+import { ENV_CONFIG } from '@/src/shared/config/env.config'
+import { getProxyAuthHeaders } from '@/src/infrastructure/ai/utils/proxy-auth'
+import { beginCollectorObservation } from '@/src/infrastructure/telemetry/collector'
+
+/** Matches the 60s ceiling the OpenAI/Gemini services already enforce. */
+const PERPLEXITY_TIMEOUT_MS = 60_000
+
+export class PerplexityService {
+  async searchLiterature(
+    query: string, 
+    apiKey: string | null,
+    searchDepth: 'basic' | 'advanced' = 'basic'
+  ): Promise<{
+    success: boolean
+    content: string
+    citations?: string[]
+    error?: string
+  }> {
+    // Every call goes through the owner's Firebase proxy. Browser-direct calls
+    // to api.perplexity.ai are blocked at Perplexity's CDN (Cloudflare
+    // bot-mitigation) — even though the API itself returns
+    // `Access-Control-Allow-Origin: *`, a real browser request gets challenged
+    // and the response carries no CORS header, so a client-side fetch fails with
+    // an opaque CORS/connection error. The proxy runs server-side (no CDN
+    // challenge). When the user supplied their own key we forward it so the
+    // proxy bills THAT key and skips the daily quota; otherwise the proxy uses
+    // the server key under the per-uid quota.
+    return this.searchViaProxy(query, searchDepth, apiKey)
+  }
+
+  /**
+   * Search via Firebase Cloud Function proxy
+   * Uses environment variable NEXT_PUBLIC_PERPLEXITY_PROXY_URL
+   */
+  private async searchViaProxy(
+    query: string,
+    searchDepth: 'basic' | 'advanced',
+    userKey: string | null = null,
+  ): Promise<{
+    success: boolean
+    content: string
+    citations?: string[]
+    error?: string
+  }> {
+    const proxyUrl = ENV_CONFIG.perplexityProxyUrl
+    const collector = beginCollectorObservation({ feature: 'literature', modelId: 'provider-managed',
+      provider: 'perplexity', sampleKind: 'request', mode: 'search' })
+    let httpStatus: number | undefined
+    let phase: 'request' | 'parse' = 'request'
+
+    if (!proxyUrl) {
+      collector.finish({ outcome: 'validation_failed', phase: 'validation', responseComplete: false })
+      return {
+        success: false,
+        content: '',
+        error: 'Perplexity proxy URL not configured. Please set NEXT_PUBLIC_PERPLEXITY_PROXY_URL in .env.local'
+      }
+    }
+
+    // The OpenAI/Gemini services already abort after 60s; this one did not, so
+    // a literature lookup on a stalled connection hung the agent turn forever.
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), PERPLEXITY_TIMEOUT_MS)
+    try {
+      const response = await fetch(proxyUrl, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(ENV_CONFIG.proxyClientKey ? {'x-proxy-key': ENV_CONFIG.proxyClientKey} : {}),
+          ...(await getProxyAuthHeaders()),
+        },
+        body: JSON.stringify({
+          query,
+          searchDepth,
+          // Forward the user's own key (BYO) so the proxy bills it and skips the
+          // daily quota. Omitted entirely when absent → proxy uses server key.
+          ...(userKey ? { perplexityKey: userKey } : {}),
+        })
+      })
+
+      httpStatus = response.status
+      phase = 'parse'
+      const data = await response.json().catch(() => null)
+
+      // The proxy returns the real upstream reason in `error` even on non-2xx
+      // (e.g. "Perplexity API error: Invalid API key…" for a bad BYO key, or a
+      // quota-exceeded message). Surface THAT instead of a generic status so the
+      // user/agent learns the actual cause rather than failing silently.
+      if (!response.ok || !data || data.success === false) {
+        collector.finish({ outcome: !response.ok ? 'upstream' : !data ? 'parse_failed' : 'error',
+          phase: !response.ok ? 'request' : 'parse', httpStatus, responseComplete: true })
+        return {
+          success: false,
+          content: '',
+          error: (data && data.error) || `Proxy error: ${response.status} ${response.statusText}`,
+        }
+      }
+
+      // Try different possible response structures
+      const result = data.result || data.data || data
+      collector.finish({ outcome: 'ok', phase: 'parse', httpStatus, responseComplete: true, modelSource: 'unreported' })
+
+      return {
+        success: true,
+        content: result.content || '',
+        citations: result.citations || [],
+      }
+    } catch (error) {
+      collector.finish({ outcome: controller.signal.aborted ? 'timeout' : 'network', phase, httpStatus, responseComplete: false })
+      return {
+        success: false,
+        content: '',
+        error: controller.signal.aborted
+          ? `Literature search timed out after ${PERPLEXITY_TIMEOUT_MS / 1000}s.`
+          : error instanceof Error ? error.message : 'Proxy call failed'
+      }
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+}
+
+export const perplexityService = new PerplexityService()

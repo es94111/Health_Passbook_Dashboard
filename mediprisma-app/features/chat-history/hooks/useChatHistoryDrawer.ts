@@ -1,0 +1,182 @@
+// Chat History Drawer State Management Hook
+import { useState } from 'react'
+import { toast } from 'sonner'
+import { useLanguage } from '@/src/application/providers/language.provider'
+import { useChatHistory } from '@/src/application/hooks/chat/use-chat-history.hook'
+import { useChatSession } from '@/src/application/hooks/chat/use-chat-session.hook'
+import { useAutoSaveChat } from '@/src/application/hooks/chat/use-auto-save-chat.hook'
+import { useChatStore } from '@/src/application/stores/chat.store'
+
+interface UseChatHistoryDrawerOptions {
+  /**
+   * Firestore persistence is a destination-level privacy decision. Custom
+   * endpoint conversations keep the drawer available for starting a fresh
+   * local chat, but must never use its independent force-save path.
+   */
+  persistenceEnabled?: boolean
+}
+
+export function useChatHistoryDrawer(
+  patientId?: string,
+  fhirServerUrl?: string,
+  options: UseChatHistoryDrawerOptions = {},
+) {
+  const persistenceEnabled = options.persistenceEnabled ?? true
+  const { t } = useLanguage()
+  const [open, setOpen] = useState(false)
+  const [showAuthDialog, setShowAuthDialog] = useState(false)
+  const [showStreamingConfirm, setShowStreamingConfirm] = useState(false)
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null)
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const { sessions, isLoading, deleteSession } = useChatHistory(patientId, fhirServerUrl)
+  const { loadSession, startNewSession } = useChatSession()
+  const { forceSave } = useAutoSaveChat({
+    patientId,
+    fhirServerUrl,
+    enabled: persistenceEnabled,
+  })
+  const messages = useChatStore(state => state.messages)
+
+  // Check if there's an active streaming (last message is from assistant and might be incomplete)
+  const hasCurrentSessionStreaming = () => {
+    if (messages.length === 0) return false
+    const lastMessage = messages[messages.length - 1]
+    // Check if last message is from assistant and has minimal content (likely still streaming)
+    return lastMessage.role === 'assistant' && lastMessage.content.length < 50
+  }
+
+  const handleLoadSession = async (sessionId: string) => {
+    // Only check if CURRENT session has active streaming
+    if (hasCurrentSessionStreaming()) {
+      // Show confirmation dialog
+      setPendingSessionId(sessionId)
+      setShowStreamingConfirm(true)
+      return
+    }
+    
+    // No active streaming in current session, proceed directly
+    await performLoadSession(sessionId)
+  }
+
+  const performLoadSession = async (sessionId: string) => {
+    try {
+      // A custom-endpoint conversation is browser-local. Do not even invoke an
+      // old drawer save callback while its persistence boundary is closed.
+      if (persistenceEnabled) {
+        await forceSave()
+      }
+      
+      await loadSession(sessionId)
+      setOpen(false)
+    } catch (error) {
+      console.error('Failed to load session:', error)
+      // Keep the drawer open — the user picked a conversation and nothing
+      // happened, so say why instead of leaving them tapping a dead row.
+      toast.error(t.chatHistory.loadFailed)
+    }
+  }
+
+  const handleConfirmSwitch = async () => {
+    setShowStreamingConfirm(false)
+    if (pendingSessionId === '__new_chat__') {
+      await performNewChat()
+    } else if (pendingSessionId) {
+      await performLoadSession(pendingSessionId)
+    }
+    setPendingSessionId(null)
+  }
+
+  const handleCancelSwitch = () => {
+    setShowStreamingConfirm(false)
+    setPendingSessionId(null)
+  }
+
+  // Deleting is irreversible — route through a confirm dialog instead of
+  // firing on the (hover-revealed) trash click
+  const handleDeleteSession = (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setPendingDeleteId(sessionId)
+  }
+
+  // The dialog used to close on click, BEFORE the delete resolved: the row
+  // stayed in the list for a moment and a failure arrived with nothing on
+  // screen to explain it. Hold the dialog (with a pending state) until the
+  // delete settles, and keep it open on failure so retry is one tap away.
+  const confirmDeleteSession = async () => {
+    const sessionId = pendingDeleteId
+    if (!sessionId || isDeleting) return
+    setIsDeleting(true)
+    try {
+      await deleteSession(sessionId)
+      setPendingDeleteId(null)
+    } catch (error) {
+      console.error('Failed to delete session:', error)
+      toast.error(t.chatHistory.deleteFailed)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const cancelDeleteSession = () => {
+    if (isDeleting) return
+    setPendingDeleteId(null)
+  }
+
+  const handleNewChat = async () => {
+    // Only check if CURRENT session has active streaming
+    if (hasCurrentSessionStreaming()) {
+      // Show confirmation dialog with special flag for new chat
+      setPendingSessionId('__new_chat__')
+      setShowStreamingConfirm(true)
+      return
+    }
+    
+    // No active streaming in current session, proceed directly
+    await performNewChat()
+  }
+
+  const performNewChat = async () => {
+    try {
+      // Force save only for cloud conversations. The hook-level `enabled`
+      // option is a second fail-closed guard inside forceSave itself.
+      if (persistenceEnabled) {
+        await forceSave()
+      }
+      
+      startNewSession(patientId ? 'patient' : 'general')
+      setOpen(false)
+    } catch (error) {
+      console.error('Failed to save before new chat:', error)
+      // The save is what makes starting over safe. Discarding an unsaved
+      // conversation because the save failed is exactly the data loss the
+      // force-save exists to prevent — keep the conversation, say so, and let
+      // the user press 新對話 again once the connection is back.
+      toast.error(t.chatHistory.saveBeforeNewChatFailed)
+    }
+  }
+
+  const handleOpenAuthDialog = () => {
+    setShowAuthDialog(true)
+  }
+
+  return {
+    open,
+    setOpen,
+    showAuthDialog,
+    setShowAuthDialog,
+    showStreamingConfirm,
+    sessions,
+    isLoading,
+    handleLoadSession,
+    handleDeleteSession,
+    pendingDeleteId,
+    isDeleting,
+    confirmDeleteSession,
+    cancelDeleteSession,
+    handleNewChat,
+    handleOpenAuthDialog,
+    handleConfirmSwitch,
+    handleCancelSwitch,
+  }
+}

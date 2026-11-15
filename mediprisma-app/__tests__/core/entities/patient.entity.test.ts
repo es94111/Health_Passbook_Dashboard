@@ -1,0 +1,272 @@
+// Unit Tests: Patient Entity Helper Functions
+import { calculateAge, getPatientDisplayName } from '@/src/core/entities/patient.entity'
+import type { PatientEntity } from '@/src/core/entities/patient.entity'
+
+describe('Patient Entity Helper Functions', () => {
+  describe('calculateAge', () => {
+    beforeEach(() => {
+      jest.useFakeTimers()
+      jest.setSystemTime(new Date('2024-06-15'))
+    })
+
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    it('should calculate age correctly for a birth date', () => {
+      const age = calculateAge('1990-01-15')
+      expect(age).toBe(34)
+    })
+
+    it('should calculate age correctly when birthday has not occurred this year', () => {
+      const age = calculateAge('1990-07-15')
+      expect(age).toBe(33)
+    })
+
+    it('should calculate age correctly when birthday is today', () => {
+      const age = calculateAge('1990-06-15')
+      expect(age).toBe(34)
+    })
+
+    it('should calculate age correctly for someone born yesterday', () => {
+      const age = calculateAge('2024-06-14')
+      expect(age).toBe(0)
+    })
+
+    it('should return null for undefined birth date', () => {
+      const age = calculateAge(undefined)
+      expect(age).toBeNull()
+    })
+
+    it('should return null for null birth date', () => {
+      const age = calculateAge(null)
+      expect(age).toBeNull()
+    })
+
+    it('should return null for invalid date string', () => {
+      const age = calculateAge('invalid-date')
+      expect(age).toBeNull()
+    })
+
+    it('should return null for empty string', () => {
+      const age = calculateAge('')
+      expect(age).toBeNull()
+    })
+
+    it('should handle leap year births correctly', () => {
+      const age = calculateAge('2000-02-29')
+      expect(age).toBe(24)
+    })
+
+    it('should return null for future birth dates', () => {
+      const age = calculateAge('2025-01-01')
+      expect(age).toBeNull()
+    })
+
+    it('should calculate age for very old person', () => {
+      const age = calculateAge('1920-01-01')
+      expect(age).toBe(104)
+    })
+
+    it('should handle birth date at end of month', () => {
+      const age = calculateAge('1990-01-31')
+      expect(age).toBe(34)
+    })
+
+    it('should handle birth date at start of year', () => {
+      const age = calculateAge('1990-01-01')
+      expect(age).toBe(34)
+    })
+
+    it('should handle birth date at end of year', () => {
+      const age = calculateAge('1989-12-31')
+      expect(age).toBe(34)
+    })
+  })
+
+  describe('getPatientDisplayName', () => {
+    it('should format full name with given and family names', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ given: ['John', 'Michael'], family: 'Doe' }]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('John Michael Doe')
+    })
+
+    it('should format name with only given name', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ given: ['John'] }]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('John')
+    })
+
+    it('should format name with only family name', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ family: 'Doe' }]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('Doe')
+    })
+
+    it('should return Unknown Patient for null patient', () => {
+      const name = getPatientDisplayName(null)
+      expect(name).toBe('Unknown Patient')
+    })
+
+    it('should return Unknown Patient for patient without name', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient'
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('Unknown Patient')
+    })
+
+    it('should return Unknown Patient for patient with empty name array', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: []
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('Unknown Patient')
+    })
+
+    it('should return Unknown Patient for patient with empty name object', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{}]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('Unknown Patient')
+    })
+
+    it('should trim whitespace from names', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ given: ['  John  '], family: '  Doe  ' }]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('John Doe')
+    })
+
+    it('should handle multiple given names', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ given: ['John', 'Paul', 'George'], family: 'Smith' }]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('John Paul George Smith')
+    })
+
+    it('should handle empty given names array', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ given: [], family: 'Doe' }]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('Doe')
+    })
+
+    it('should use first name entry when multiple exist', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [
+          { given: ['John'], family: 'Doe' },
+          { given: ['Jane'], family: 'Smith' }
+        ]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('John Doe')
+    })
+
+    it('should handle name with only whitespace', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ given: ['   '], family: '   ' }]
+      }
+      const name = getPatientDisplayName(patient)
+      expect(name).toBe('Unknown Patient')
+    })
+
+    // Regression: a text-only name (TW Core / IPS local-script convention, and
+    // what our own IPS export emits) must NOT collapse to "Unknown Patient" —
+    // that was the round-trip data-loss bug (IPS_Unknown_Patient_*.json).
+    it('uses name[0].text when there is no given/family (TW Core 中文名)', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ use: 'official', text: '楊雅霖' }]
+      }
+      expect(getPatientDisplayName(patient)).toBe('楊雅霖')
+    })
+
+    it('prefers text (中文) over given/family (Pinyin) when both are present', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ text: '楊雅霖', given: ['Yalin'], family: 'Yang' }]
+      }
+      expect(getPatientDisplayName(patient)).toBe('楊雅霖')
+    })
+
+    it('uses an explicitly supplied Romanized name in the English locale', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ text: '楊雅霖', given: ['Yalin'], family: 'Yang' }]
+      }
+      expect(getPatientDisplayName(patient, 'en')).toBe('Yalin Yang')
+      expect(getPatientDisplayName(patient, 'zh-TW')).toBe('楊雅霖')
+    })
+
+    it('keeps the original name when no English representation was supplied', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ text: '楊雅霖', given: ['雅霖'], family: '楊' }]
+      }
+      expect(getPatientDisplayName(patient, 'en')).toBe('楊雅霖')
+    })
+
+    it('finds a dedicated Latin text entry in the English locale', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ text: '楊雅霖' }, { text: 'Yalin Yang' }]
+      }
+      expect(getPatientDisplayName(patient, 'en')).toBe('Yalin Yang')
+    })
+
+    it('finds a text entry even when it is not the first name entry', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ given: ['Yalin'], family: 'Yang' }, { text: '楊雅霖' }]
+      }
+      expect(getPatientDisplayName(patient)).toBe('楊雅霖')
+    })
+
+    it('trims and ignores a blank text, falling back to given/family', () => {
+      const patient: PatientEntity = {
+        id: 'patient-1',
+        resourceType: 'Patient',
+        name: [{ text: '   ', given: ['John'], family: 'Doe' }]
+      }
+      expect(getPatientDisplayName(patient)).toBe('John Doe')
+    })
+  })
+})

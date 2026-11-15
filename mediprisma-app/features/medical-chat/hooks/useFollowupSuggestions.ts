@@ -1,0 +1,88 @@
+"use client"
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useUnifiedAi } from "@/src/application/hooks/ai/use-unified-ai.hook"
+import { useLanguage } from "@/src/application/providers/language.provider"
+import { useAudience } from "@/src/application/providers/audience.provider"
+import {
+  generateFollowupSuggestionsUseCase,
+  FOLLOWUP_MODEL_ID,
+  type FollowupSuggestion,
+} from "@/src/core/use-cases/chat/generate-followup-suggestions.use-case"
+import { usePatient } from "@/src/application/hooks/patient/use-patient-query.hook"
+import { buildPatientTextLiterals } from "@/src/shared/utils/pii-text-scrub"
+import { BUNDLE_CHANGED_EVENT } from '@/src/shared/utils/reset-on-bundle-change'
+
+/**
+ * Generates "next step" suggestion chips after a chat answer completes.
+ *
+ * Uses a DEDICATED useUnifiedAi instance (so its loading/error never touches the
+ * chat UI) and a cheap model via the same proxy/key path the rest of the app
+ * uses. Fails closed: any error → no chips, never blocks chat. Stale-guarded so
+ * a newer request always wins.
+ */
+export function useFollowupSuggestions(modelId?: string) {
+  const { locale } = useLanguage()
+  const { audience } = useAudience()
+  const ai = useUnifiedAi()
+  const { patient } = usePatient()
+  const piiLiterals = useMemo(() => buildPatientTextLiterals(patient), [patient])
+  // Keep the (identity-unstable) stream fn behind a ref so `generate` stays
+  // stable and the trigger effect in MedicalChat doesn't churn.
+  const streamRef = useRef(ai.stream)
+  useEffect(() => { streamRef.current = ai.stream }, [ai.stream])
+  const stopRef = useRef(ai.stop)
+  useEffect(() => { stopRef.current = ai.stop }, [ai.stop])
+
+  const [suggestions, setSuggestions] = useState<FollowupSuggestion[]>([])
+  const reqRef = useRef(0)
+
+  const generate = useCallback(async (
+    lastUser: string,
+    lastAssistant: string,
+    opts?: { recentUserMessages?: string[]; isDeepMode?: boolean },
+  ) => {
+    if (!lastUser?.trim() || !lastAssistant?.trim()) return
+    const reqId = ++reqRef.current
+    setSuggestions([])
+    try {
+      const messages = generateFollowupSuggestionsUseCase.buildMessages({
+        lastUser,
+        lastAssistant,
+        locale,
+        audience,
+        isDeepMode: opts?.isDeepMode,
+        recentUserMessages: opts?.recentUserMessages,
+        piiLiterals,
+      })
+      const full = await streamRef.current(messages, {
+        // Hospital/private mode keeps this auxiliary generation on the same
+        // endpoint instead of leaking the exchange to the owner-funded helper.
+        modelId: modelId || FOLLOWUP_MODEL_ID,
+        temperature: 0.7,
+        diagnosticFeature: 'chat-followup-suggestions',
+      })
+      if (reqId !== reqRef.current) return // a newer request superseded us
+      setSuggestions(generateFollowupSuggestionsUseCase.parse(full))
+    } catch {
+      // Fail closed — suggestions are a nice-to-have, never surface an error.
+      if (reqId === reqRef.current) setSuggestions([])
+    }
+  }, [locale, audience, modelId, piiLiterals])
+
+  const clear = useCallback(() => {
+    reqRef.current++ // invalidate any in-flight request
+    stopRef.current()
+    setSuggestions([])
+  }, [])
+
+  // A same-tab Bundle replacement invalidates the transcript these suggestions
+  // came from. Separate MediPrisma tabs have separate window events, so A may
+  // keep running while B opens elsewhere.
+  useEffect(() => {
+    window.addEventListener(BUNDLE_CHANGED_EVENT, clear)
+    return () => window.removeEventListener(BUNDLE_CHANGED_EVENT, clear)
+  }, [clear])
+
+  return { suggestions, generate, clear }
+}

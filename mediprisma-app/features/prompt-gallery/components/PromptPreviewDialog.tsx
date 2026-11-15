@@ -1,0 +1,545 @@
+/**
+ * Prompt Preview Dialog Component
+ * Shows detailed preview of a prompt: the prompt text beside the author's
+ * example output on desktop, stacked on phones. Bringing the prompt into the
+ * workspace stays the single primary action; copy is secondary.
+ */
+
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Calendar, TrendingUp, Trash2, Loader2, Copy, RotateCcw, Pencil } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { applyTemplateVariables, extractTemplateVariables, missingTemplateVariables } from '../utils/template-variables.utils'
+import { coerceTemplateVersion, type PromptType, type SharedPrompt } from '../types/prompt.types'
+import { useLanguage } from '@/src/application/providers/language.provider'
+import { useAuth } from '@/src/application/providers/auth.provider'
+import { deleteSharedPrompt, loadSharedPromptContent } from '@/features/prompt-gallery/services/prompt-gallery.service'
+import { deleteTenantPrompt } from '@/features/prompt-gallery/services/tenant-prompts.service'
+import { useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
+import { LoginRequiredDialog } from './LoginRequiredDialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { ChevronDown } from 'lucide-react'
+import { cn } from '@/src/shared/utils/cn.utils'
+import { guidedPreviewEvents, GUIDED_PREVIEW_DIALOG_CLASSES } from '@/features/right-feature-tour/guided-preview'
+import { coerceInsightOutputFormat } from '@/src/shared/constants/clinical-insights.constants'
+import { getPromptSource } from '../constants/prompt-source'
+import { useDesktopLayout } from '../hooks/useDesktopLayout'
+import { formatPromptDate } from '../utils/prompt-filter.utils'
+import { FavoriteButton } from './FavoriteButton'
+import { PromptSourceBadge } from './PromptSourceBadge'
+import { PromptVisibilityBadge } from './PromptVisibilityBadge'
+
+interface PromptPreviewDialogProps {
+  prompt: SharedPrompt | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onUse: (prompt: SharedPrompt, useAs?: PromptType) => void
+  useMode?: PromptType | 'all'
+  onShare?: (prompt: SharedPrompt) => void
+  onDelete?: () => void
+  guidedPreview?: boolean
+  onRestoreFocus?: () => void
+  isFavorite?: boolean
+  onToggleFavorite?: (prompt: SharedPrompt) => void
+  /** The gallery source is newer than the saved copy being previewed. */
+  sourceUpdated?: boolean
+  /** Viewer may retire this department template (owner/builder) even without authoring it. */
+  canManage?: boolean
+}
+
+export function PromptPreviewDialog({
+  prompt,
+  open,
+  onOpenChange,
+  onUse,
+  useMode = 'all',
+  onShare,
+  onDelete,
+  guidedPreview = false,
+  onRestoreFocus,
+  isFavorite = false,
+  onToggleFavorite,
+  sourceUpdated = false,
+  canManage = false,
+}: PromptPreviewDialogProps) {
+  const { t } = useLanguage()
+  const { user } = useAuth()
+  const isDesktop = useDesktopLayout()
+  const [deleting, setDeleting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [showLoginDialog, setShowLoginDialog] = useState(false)
+  const [pendingAction, setPendingAction] = useState<{ prompt: SharedPrompt; useAs?: PromptType } | null>(null)
+  const [content, setContent] = useState<{ source: SharedPrompt; value?: SharedPrompt; error?: boolean }>()
+  const [retry, setRetry] = useState(0)
+  // Template fill-in values belong to one prompt in this dialog session only (FR-09: never persisted).
+  const [valuesFor, setValuesFor] = useState<{ id: string; values: Record<string, string>; showMissing: boolean; pendingUseAs?: PromptType }>()
+  useEffect(() => {
+    let active = true
+    if (open && prompt?.body) {
+      loadSharedPromptContent(prompt).then(
+        value => { if (active) setContent({ source: prompt, value }) },
+        () => { if (active) setContent({ source: prompt, error: true }) },
+      )
+    }
+    return () => { active = false }
+  }, [open, prompt, retry])
+
+  const resolved = prompt ? (prompt.body ? (content?.source === prompt ? content.value : undefined) : prompt) : undefined
+  const variables = useMemo(() => resolved ? extractTemplateVariables(resolved.prompt) : [], [resolved])
+  const fill = valuesFor?.id === prompt?.id ? valuesFor : undefined
+  const variableValues = useMemo(() => fill?.values ?? {}, [fill])
+  const filledPrompt = useMemo(() => resolved ? applyTemplateVariables(resolved.prompt, variableValues, variables) : '', [resolved, variableValues, variables])
+  const missing = missingTemplateVariables(variableValues, variables)
+  if (!prompt) return null
+  const updateFill = (patch: Partial<{ values: Record<string, string>; showMissing: boolean; pendingUseAs?: PromptType }>) =>
+    setValuesFor({ id: prompt.id, values: variableValues, showMissing: fill?.showMissing ?? false, pendingUseAs: fill?.pendingUseAs, ...patch })
+  const contentError = content?.source === prompt && content.error && !resolved
+
+  const isAuthor = !!user?.uid && prompt.authorId === user.uid
+  const canDelete = isAuthor || (!!prompt.tenantId && canManage)
+  const canEdit = isAuthor && !prompt.tenantId && !!onShare
+  const source = getPromptSource(prompt, user?.uid)
+  const isPatientOnly = prompt.audience.includes('patient') && !prompt.audience.includes('medical')
+  const outputFormat = coerceInsightOutputFormat(prompt.outputFormat)
+  const outputFormatLabel = outputFormat === 'plain-text'
+    ? t.settings.outputFormatPlain
+    : outputFormat === 'html'
+      ? t.settings.outputFormatHtml
+      : t.settings.outputFormatMarkdown
+
+  const getTypeLabel = (type: string) => {
+    switch (type) {
+      case 'chat':
+        return t.promptGallery.typeChat
+      case 'summary':
+        return t.promptGallery.typeSummary
+      default:
+        return type
+    }
+  }
+
+  const getCategoryLabel = (category: string) => {
+    return t.promptGallery.categories[category as keyof typeof t.promptGallery.categories] || category
+  }
+
+  const formatDate = (date: Date) => {
+    return new Intl.DateTimeFormat('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(date)
+  }
+
+  const handleUse = (useAs?: PromptType, ignoreMissing = false) => {
+    if (guidedPreview || !resolved) return
+    // Placeholders left empty: point at the fields first; the user may still bring the raw template in.
+    if (missing.length > 0 && !ignoreMissing) {
+      updateFill({ showMissing: true, pendingUseAs: useAs })
+      return
+    }
+    const filled = filledPrompt === resolved.prompt ? resolved : { ...resolved, prompt: filledPrompt }
+    // Check if user is logged in
+    if (!user) {
+      // Store the pending action and show login dialog
+      setPendingAction({ prompt: filled, useAs })
+      setShowLoginDialog(true)
+      return
+    }
+
+    // User is logged in, proceed with the action
+    onUse(filled, useAs)
+    onOpenChange(false)
+  }
+
+  const handleLoginSuccess = () => {
+    if (guidedPreview) return
+    // Execute the pending action after successful login
+    if (pendingAction) {
+      onUse(pendingAction.prompt, pendingAction.useAs)
+      setPendingAction(null)
+      onOpenChange(false)
+    }
+  }
+
+  const handleCopy = async () => {
+    if (guidedPreview || !resolved) return
+    try {
+      await navigator.clipboard.writeText(filledPrompt)
+      toast.success(t.common.copied)
+    } catch {
+      toast.error(t.promptGallery.shareError)
+    }
+  }
+
+  const handleDeleteClick = () => {
+    if (guidedPreview) return
+    setShowDeleteConfirm(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (guidedPreview) return
+    setShowDeleteConfirm(false)
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      if (prompt.tenantId) await deleteTenantPrompt(prompt.id)
+      else await deleteSharedPrompt(prompt.id)
+      onOpenChange(false)
+      if (onDelete) {
+        onDelete()
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : t.promptGallery.deleteErrorMessage
+      setDeleteError(errorMessage)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const promptContent = (
+    <div className="space-y-2">
+      <h4 className="font-medium text-sm">{t.promptGallery.promptContent}</h4>
+      <div className="rounded-lg bg-muted p-4">
+        {contentError ? (
+          <div role="alert" className="space-y-2 text-sm">
+            <p>{t.promptGallery.contentLoadError}</p>
+            <Button variant="outline" onClick={() => { setContent(undefined); setRetry(value => value + 1) }}>{t.promptGallery.retry}</Button>
+          </div>
+        ) : resolved ? (
+          <pre className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm font-mono">{filledPrompt}</pre>
+        ) : <div role="status" className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />{t.common.loading}</div>}
+      </div>
+    </div>
+  )
+
+  const templateFill = variables.length > 0 && resolved ? (
+    <div className="space-y-2 rounded-lg border border-border p-3" data-testid="template-fill">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="text-sm font-medium">{t.promptGallery.templateFillTitle}</h4>
+        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" disabled={guidedPreview || !Object.values(variableValues).some((value) => value?.trim())}
+          onClick={() => updateFill({ values: {}, showMissing: false })}>
+          <RotateCcw className="mr-1 h-3 w-3" aria-hidden="true" />
+          {t.promptGallery.templateFillReset}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">{t.promptGallery.templateFillHint}</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {variables.map((variable) => {
+          const invalid = !!fill?.showMissing && !variableValues[variable.name]?.trim()
+          const inputId = `template-var-${variable.name}`
+          return (
+            <div key={variable.name} className="space-y-1">
+              <Label htmlFor={inputId} className="text-xs">{variable.name} *</Label>
+              <Input
+                id={inputId}
+                value={variableValues[variable.name] ?? ''}
+                onChange={(event) => updateFill({ values: { ...variableValues, [variable.name]: event.target.value } })}
+                aria-invalid={invalid || undefined}
+                aria-describedby={invalid ? `${inputId}-error` : undefined}
+                disabled={guidedPreview}
+                autoComplete="off"
+                className="h-8 text-sm shadow-none"
+              />
+              {invalid && <p id={`${inputId}-error`} className="text-xs text-destructive">{t.promptGallery.templateFillRequired}</p>}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  ) : null
+
+  const exampleOutput = (
+    <div className="space-y-2">
+      <h4 className="font-medium text-sm">{t.promptGallery.exampleOutputLabel}</h4>
+      {prompt.exampleOutput ? (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <pre className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm">{prompt.exampleOutput}</pre>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">{t.promptGallery.noExampleOutput}</p>
+          <p className="mt-1">{t.promptGallery.noExampleOutputDesc}</p>
+        </div>
+      )}
+    </div>
+  )
+
+  const metadata = (
+    <>
+      {/* Metadata */}
+      {!isPatientOnly && (
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="secondary">{getCategoryLabel(prompt.category)}</Badge>
+          {prompt.specialty.map((spec) => (
+            <Badge key={spec} variant="outline">
+              {t.promptGallery.specialties[spec as keyof typeof t.promptGallery.specialties] || spec}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      {/* Tags */}
+      {prompt.tags.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {prompt.tags.map((tag) => (
+            <span key={tag} className="text-sm text-muted-foreground">
+              #{tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {(prompt.outputFormat || prompt.types.includes('summary')) && (
+        <dl className="flex flex-wrap gap-x-2 text-sm">
+          <dt className="text-muted-foreground">{t.promptGallery.outputFormatLabel}</dt>
+          <dd>{outputFormatLabel}</dd>
+        </dl>
+      )}
+
+      {/* Stats */}
+      <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
+        {!prompt.isAnonymous && prompt.authorName && (
+          <div className="flex items-center gap-1">
+            <span>作者：{prompt.authorName}</span>
+          </div>
+        )}
+        {prompt.isAnonymous && (
+          <div className="flex items-center gap-1">
+            <span>作者：匿名</span>
+          </div>
+        )}
+        <div className="flex items-center gap-1">
+          <TrendingUp className="h-4 w-4" />
+          <span>
+            {t.promptGallery.usageCount}: {prompt.usageCount || 0}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Calendar className="h-4 w-4" />
+          <span>
+            {t.promptGallery.createdAt}: {formatDate(prompt.createdAt)}
+          </span>
+        </div>
+      </div>
+    </>
+  )
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(next) => { if (!guidedPreview) onOpenChange(next) }} modal={!guidedPreview}>
+      <DialogContent
+        data-tour="gallery-preview"
+        className={cn("flex min-w-0 max-w-5xl max-h-[90vh] w-[calc(100vw-2rem)] flex-col overflow-hidden", guidedPreview && GUIDED_PREVIEW_DIALOG_CLASSES)}
+        {...guidedPreviewEvents(guidedPreview)}
+        onCloseAutoFocus={(event) => {
+          if (guidedPreview) event.preventDefault()
+          else if (onRestoreFocus) { event.preventDefault(); onRestoreFocus() }
+        }}
+      >
+        <DialogHeader className="min-w-0 shrink-0">
+          <div className="flex flex-wrap items-start justify-between gap-3 pr-6">
+            <div className="flex min-w-0 items-center gap-2">
+              <DialogTitle className="min-w-0 break-words text-xl">{prompt.title}</DialogTitle>
+              {onToggleFavorite && (
+                <FavoriteButton active={isFavorite} disabled={guidedPreview} tooltip={false} onToggle={() => onToggleFavorite(prompt)} />
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {prompt.types.map((type) => (
+                <Badge key={type} variant="outline">{getTypeLabel(type)}</Badge>
+              ))}
+            </div>
+          </div>
+          <DialogDescription className={prompt.description ? "text-base [overflow-wrap:anywhere]" : "sr-only"}>
+            {prompt.description || t.promptGallery.promptDetails}
+          </DialogDescription>
+          {/* Source is secondary information: it says where the prompt comes from, not that saving it grants editing. */}
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <PromptSourceBadge source={source} tenantName={prompt.tenantName} />
+            {isAuthor && !prompt.tenantId && (
+              <PromptVisibilityBadge isPublic={prompt.isPublic} />
+            )}
+            {sourceUpdated && (
+              <Badge className="h-4 shrink-0 border-0 bg-accent px-1.5 py-0 text-[0.5625rem] text-accent-foreground" title={t.promptGallery.sourceUpdatedHint}>
+                {t.promptGallery.sourceUpdated}
+              </Badge>
+            )}
+            <span className="tabular-nums">V{coerceTemplateVersion(prompt.version)}</span>
+            <span aria-hidden="true">·</span>
+            <span className="tabular-nums">{t.promptGallery.updatedAt} {formatPromptDate(prompt.updatedAt)}</span>
+            {isFavorite && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{sourceUpdated ? t.promptGallery.sourceUpdatedHint : t.promptGallery.savedCopyHint}</span>
+              </>
+            )}
+          </div>
+        </DialogHeader>
+
+        {isDesktop ? (
+          <div className="grid min-h-0 min-w-0 w-full shrink grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-4">
+            <ScrollArea viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': t.promptGallery.promptContent }} className="h-[55vh] min-h-0 min-w-0 pr-4 [&_[data-slot=scroll-area-viewport]>div]:!block">
+              <div className="min-w-0 space-y-4">
+                {metadata}
+                {templateFill}
+                {promptContent}
+              </div>
+            </ScrollArea>
+            <ScrollArea viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': t.promptGallery.exampleOutputLabel }} className="h-[55vh] min-h-0 min-w-0 pr-4 [&_[data-slot=scroll-area-viewport]>div]:!block">
+              <div className="min-w-0">{exampleOutput}</div>
+            </ScrollArea>
+          </div>
+        ) : (
+          <ScrollArea viewportProps={{ tabIndex: 0, role: 'region', 'aria-label': t.promptGallery.promptContent }} className="h-[50vh] min-h-0 min-w-0 w-full shrink pr-4 [&_[data-slot=scroll-area-viewport]>div]:!block">
+            <div className="min-w-0 space-y-4">
+              {metadata}
+              {templateFill}
+              {promptContent}
+              {exampleOutput}
+            </div>
+          </ScrollArea>
+        )}
+
+        {deleteError && (
+          <div className="rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+            {deleteError}
+          </div>
+        )}
+
+        {fill?.showMissing && missing.length > 0 && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <span>{t.promptGallery.templateFillMissing.replace('{names}', missing.join('、'))}</span>
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleUse(fill.pendingUseAs, true)}>
+              {t.promptGallery.templateFillUseAnyway}
+            </Button>
+          </div>
+        )}
+
+        <DialogFooter data-tour="gallery-preview-actions" className="min-w-0 shrink-0">
+          <div className="flex w-full flex-wrap justify-between gap-2">
+            <div>
+              {canDelete && (
+                <Button
+                  variant="destructive"
+                  onClick={handleDeleteClick}
+                  disabled={guidedPreview || deleting}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  {deleting ? t.common.deleting : t.common.delete}
+                </Button>
+              )}
+            </div>
+            <div className="ml-auto flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                {t.common.close}
+              </Button>
+              {canEdit && (
+                <Button
+                  variant="outline"
+                  disabled={guidedPreview || !resolved}
+                  onClick={() => {
+                    if (!resolved) return
+                    onShare(resolved)
+                    onOpenChange(false)
+                  }}
+                >
+                  <Pencil className="mr-2 h-4 w-4" aria-hidden="true" />
+                  {t.promptGallery.editTemplate}
+                </Button>
+              )}
+              <Button variant="outline" disabled={guidedPreview || !resolved} onClick={handleCopy}>
+                <Copy className="h-4 w-4 mr-2" />
+                {t.promptGallery.copyPrompt}
+              </Button>
+              {useMode === 'all' && prompt.types.length > 1 ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button disabled={guidedPreview || !resolved}>
+                      {t.promptGallery.use}
+                      <ChevronDown className="h-4 w-4 ml-2" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {prompt.types.includes('chat') && (
+                      <DropdownMenuItem onClick={() => handleUse('chat')}>
+                        {t.promptGallery.useInChat}
+                      </DropdownMenuItem>
+                    )}
+                    {prompt.types.includes('summary') && (
+                      <DropdownMenuItem onClick={() => handleUse('summary')}>
+                        {t.promptGallery.addToSummary}
+                      </DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button disabled={guidedPreview || !resolved} onClick={() => handleUse(useMode === 'all' ? prompt.types[0] : useMode)}>
+                  {useMode === 'chat'
+                    ? t.promptGallery.useInChat
+                    : useMode === 'summary'
+                      ? t.promptGallery.addToSummary
+                      : t.promptGallery.use}
+                </Button>
+              )}
+            </div>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>確定要刪除這個 Prompt 嗎？</AlertDialogTitle>
+            <AlertDialogDescription>
+              此操作無法復原。刪除後，這個 Prompt 將永久從範本庫中移除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              確定刪除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Login Required Dialog */}
+      <LoginRequiredDialog
+        open={showLoginDialog}
+        onOpenChange={setShowLoginDialog}
+        title={t.promptGallery.usePromptLoginRequired}
+        description={t.promptGallery.usePromptLoginDesc}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    </>
+  )
+}

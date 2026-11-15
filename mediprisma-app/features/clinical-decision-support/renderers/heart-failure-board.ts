@@ -1,0 +1,571 @@
+/**
+ * The heart-failure status board: what the module list is read through.
+ *
+ * A heart-failure visit asks three questions in order — can I adjust
+ * foundational therapy today (the safety inputs), is anything on the
+ * prescription list dangerous (the safety scan), and which of the four pillars
+ * is this patient on (the gap) — and the generic module table answered all
+ * three only after the reader had opened half the rows. This model pulls those
+ * answers out of the pack's own output so the view can put them first.
+ *
+ * Nothing here is a clinical rule. Every status, title, next step, and
+ * evidence value is the pack's; this file only decides which of the pack's
+ * facts sit where. The one interpretation it makes — that a therapy fact
+ * beginning 「目前用藥中」 means the class is being taken — reads the adapter's
+ * fixed wording for that state, not the medication record.
+ */
+import type {
+  CdssFact,
+  CdssLocale,
+  CdssPatientProfile,
+  CdssRecommendation,
+  CdssResult,
+  CdssStatus,
+  ClinicalEvidence,
+} from '../types'
+import { CLINIC_ENTRY_PATTERN } from '../utils/apply-clinic-vitals'
+import { buildCareTimeline, type CareTimelineModel } from './care-timeline'
+
+export const HEART_FAILURE_PACK_ID = 'heart-failure-cdss'
+
+const PHENOTYPE_MODULE_ID = 'heart-failure-phenotype'
+const FMT_SAFETY_MODULE_ID = 'heart-failure-fmt-safety'
+const GDMT_MODULE_ID = 'heart-failure-hfref-gdmt'
+const HFPEF_TREATMENT_MODULE_ID = 'heart-failure-hfpef-treatment'
+const HFPEF_DIAGNOSIS_MODULE_ID = 'heart-failure-hfpef-diagnosis'
+
+/**
+ * The four foundational classes, in the order the guideline lists them.
+ *
+ * `therapyFactKeys` are the adapter's medication-class facts for the pillar,
+ * read when the pack produced no module for it — on the HFrEF pathway the pack
+ * can leave a pillar unevaluated while the clinician still wants to see what
+ * the patient is on. A tile built that way carries no judgement and says so.
+ *
+ * `lvefIndependent` marks the two ESC 2026 Recommendation Table 5 recommends
+ * 「independent of LVEF」 — an SGLT2 inhibitor and an MRA. The other two name
+ * 「symptomatic HFrEF」, so they are not the HFpEF patient's checklist and are
+ * not shown on that pathway: a strip of four tiles headed 「四大 FMT 支柱」
+ * reads as a list of what is missing, whatever caveat sits above it.
+ */
+const PILLAR_MODULES = [
+  { id: 'heart-failure-ras-inhibition', zh: 'ARNI／ACEI／ARB', en: 'ARNI / ACEI / ARB', therapyFactKeys: ['arniTherapy', 'aceArbTherapy'], lvefIndependent: false },
+  { id: 'heart-failure-beta-blocker', zh: '實證 β 阻斷劑', en: 'Evidence-based β-blocker', therapyFactKeys: ['hfEvidenceBetaBlockerTherapy'], lvefIndependent: false },
+  { id: 'heart-failure-mra', zh: 'MRA', en: 'MRA', therapyFactKeys: ['mraTherapy'], lvefIndependent: true },
+  { id: 'heart-failure-sglt2', zh: 'SGLT2i', en: 'SGLT2i', therapyFactKeys: ['sglt2Therapy'], lvefIndependent: true },
+] as const
+
+/**
+ * Which set of foundational classes this patient's pathway is read against.
+ *
+ * `none` is not an empty board: it is a patient the pack opened no treatment
+ * pathway for — nobody has said they suspect heart failure, or the phenotype
+ * is not settled — and a therapy checklist for them would be answering a
+ * question that was never asked.
+ */
+export type HeartFailurePillarScope = 'hfref-four' | 'lvef-independent' | 'none'
+
+export type HeartFailureMetricKind = 'lab' | 'measure'
+
+/**
+ * The inputs every FMT decision reads, in the order a clinician scans them.
+ * `kind` says how a missing one is obtained, which is the only thing a reader
+ * can do about it.
+ */
+const STATUS_METRICS: readonly {
+  factKey: string
+  zh: string
+  en: string
+  kind: HeartFailureMetricKind
+  /** Evidence-table rows that carry this measurement when no fact does. */
+  evidenceItemIds?: readonly string[]
+}[] = [
+  { factKey: 'bloodPressure', zh: '血壓', en: 'BP', kind: 'measure' },
+  { factKey: 'heartRate', zh: '心率', en: 'HR', kind: 'measure' },
+  { factKey: 'oxygenSaturation', zh: 'SpO₂', en: 'SpO₂', kind: 'measure' },
+  { factKey: 'potassium', zh: 'K', en: 'K', kind: 'lab' },
+  { factKey: 'eGFR', zh: 'eGFR', en: 'eGFR', kind: 'lab' },
+  { factKey: 'sodium', zh: 'Na', en: 'Na', kind: 'lab' },
+  { factKey: 'hemoglobin', zh: 'Hb', en: 'Hb', kind: 'lab' },
+  { factKey: 'bodyWeight', zh: '體重', en: 'Weight', kind: 'measure' },
+  { factKey: 'bodyHeight', zh: '身高', en: 'Height', kind: 'measure' },
+  {
+    factKey: 'NTproBNP',
+    zh: 'NT-proBNP',
+    en: 'NT-proBNP',
+    kind: 'lab',
+    evidenceItemIds: ['congestion:nt-probnp'],
+  },
+]
+
+const UNIT_PATTERN = /\s*(?:mmHg|bpm|mmol\/L|mEq\/L|mL\s*\/\s*min\s*\/\s*1\.73\s*m(?:²|\^?2)|mg\/dL|g\/dL|pg\/mL|ng\/L|kg|cm)(?![A-Za-z])/gi
+/** The parenthetical `agedFactEvidence` appends to a value past its window. */
+const STALE_NOTE_PATTERN = /[（(][^（()）]*(?:已 \d+ 天|\d+ d old|超過 \d+ 天窗|past the \d+-day window)[^（()）]*[）)]/
+const TAKING_PATTERN = /^(?:目前用藥中|Currently taking)/
+
+export interface HeartFailureMetric {
+  factKey: string
+  label: string
+  kind: HeartFailureMetricKind
+  /** The measurement without its unit or stale note; undefined when absent. */
+  value?: string
+  /** The evidence value as the pack wrote it, for the tooltip. */
+  fullValue?: string
+  unit?: string
+  date?: string
+  ageDays?: number
+  /** The pack marked the value as past its monitoring window. */
+  stale: boolean
+  /** Entered in the room this visit rather than read from the record. */
+  entered: boolean
+  /**
+   * A pack module carried this value this visit. `false` when the record holds
+   * the value but no module ran that reads it — a patient outside the HFrEF
+   * pathway gets the phenotype card alone, which names LVEF and NT-proBNP and
+   * nothing else — so the tile shows the measurement without a judgement
+   * behind it. The distinction matters: 「未取得」 asks the clinician to order
+   * a test the laboratory already ran.
+   */
+  evaluated: boolean
+  /** Where the value came from, for the source link. */
+  evidence?: ClinicalEvidence
+}
+
+export interface HeartFailurePillar {
+  id: string
+  label: string
+  /**
+   * The pack's module for this pillar. Absent when the pack did not evaluate
+   * it for this phenotype; the tile then shows the therapy fact alone.
+   */
+  recommendation?: CdssRecommendation
+  status?: CdssStatus
+  /** `false` when the tile is read from the record without a pack judgement. */
+  evaluated: boolean
+  /** The class is being taken, read from the adapter's therapy fact. */
+  taking: boolean
+  /** 「Valsartan 80mg」 — the names after 「目前用藥中：」 when taking. */
+  medicationNames?: string
+  /** The therapy fact as written, shown when the class is not being taken. */
+  therapyText?: string
+  therapyDate?: string
+  therapyEvidence?: ClinicalEvidence
+  nextAction?: string
+}
+
+/**
+ * One of the sentences that open the board: the pack's own next step for a
+ * module that needs the clinician today, with the module it came from so the
+ * reader can open it.
+ */
+export interface HeartFailureHeadline {
+  recommendation: CdssRecommendation
+  /** The pack's first next action — the sentence, never rephrased. */
+  action: string
+  /** Why: the module's title, which states the finding the action rests on. */
+  reason: string
+  moduleName: string
+}
+
+export interface HeartFailureBoardModel {
+  phenotype?: CdssRecommendation
+  /**
+   * What to do today, at most three, in the order the clinician should read
+   * them: actionable before data-needed, higher priority first, then the
+   * pack's module order. Empty when the visit needs nothing — the silent state.
+   */
+  headlines: readonly HeartFailureHeadline[]
+  /** How many modules the pack judged this visit, for the silent line. */
+  evaluatedCount: number
+  /** Modules per status, for the counts line under today's sentences. */
+  statusCounts: Readonly<Record<CdssStatus, number>>
+  lvef?: HeartFailureMetric
+  metrics: readonly HeartFailureMetric[]
+  fmtSafety?: CdssRecommendation
+  /** Safety modules the pack marked actionable: read before anything else. */
+  alerts: readonly CdssRecommendation[]
+  gdmt?: CdssRecommendation
+  /**
+   * DP-01b, when the pack built it. The board reads it for the one action a
+   * clinician came to this screen to take — confirming the diagnosis — and puts
+   * that action where it can be seen. The card itself stays in the list, so it
+   * is not in `consumedIds`: the criteria are read there, in full.
+   */
+  hfpEfDiagnosis?: CdssRecommendation
+  /**
+   * The course behind today: the LVEF trajectory, when HF was coded, and what
+   * the patient was prescribed across it. Absent when the record dates fewer
+   * than two of them — one point is a label, not a trajectory.
+   */
+  timeline?: CareTimelineModel
+  /** Which foundational classes the tiles below stand for, and why. */
+  pillarScope: HeartFailurePillarScope
+  pillars: readonly HeartFailurePillar[]
+  /** Module ids the board renders itself, so the list does not repeat them. */
+  consumedIds: ReadonlySet<string>
+}
+
+function latestSourceDate(evidence: ClinicalEvidence | undefined): string | undefined {
+  const dates = (evidence?.sources ?? [])
+    .map((source) => source.date)
+    .filter((date): date is string => Boolean(date))
+    .sort()
+  return dates.at(-1)
+}
+
+export function daysBetween(fromIsoDate: string, now: Date): number | undefined {
+  const from = new Date(fromIsoDate.length === 10 ? `${fromIsoDate}T00:00:00` : fromIsoDate)
+  if (Number.isNaN(from.getTime())) return undefined
+  const days = Math.floor((now.getTime() - from.getTime()) / 86_400_000)
+  return days < 0 ? 0 : days
+}
+
+/**
+ * The evidence row for one fact. Modules print the same measurement with and
+ * without the stale annotation, so the annotated row wins when one exists:
+ * the board must not show a value as current because the first module that
+ * mentioned it happened not to date it.
+ */
+function findEvidence(
+  recommendations: readonly CdssRecommendation[],
+  factKey: string,
+): ClinicalEvidence | undefined {
+  const exact = recommendations.flatMap((recommendation) => (
+    recommendation.patientEvidence.filter((item) => (
+      item.factKeys.length === 1 && item.factKeys[0] === factKey
+    ))
+  ))
+  const loose = exact.length > 0
+    ? exact
+    : recommendations.flatMap((recommendation) => (
+      recommendation.patientEvidence.filter((item) => item.factKeys.includes(factKey))
+    ))
+  return loose.find((item) => STALE_NOTE_PATTERN.test(item.value)) ?? loose[0]
+}
+
+/**
+ * The collection date the adapter prints inside the value —
+ * 「142/84 mmHg（2026-04-18）」 — or, for a value entered in the room,
+ * the date with its provenance note: 「142/84 mmHg（2026-09-05 門診輸入）」.
+ */
+const INLINE_DATE_PATTERN = /\s*[（(]\s*(\d{4}-\d{2}-\d{2})(?:[,，\s]+[^（()）]*)?[）)]/
+
+function compactValue(value: string): {
+  value: string
+  unit?: string
+  stale: boolean
+  inlineDate?: string
+} {
+  const stale = STALE_NOTE_PATTERN.test(value)
+  const withoutNote = value.replace(STALE_NOTE_PATTERN, '').trim()
+  const inlineDate = withoutNote.match(INLINE_DATE_PATTERN)?.[1]
+  const withoutDate = withoutNote.replace(INLINE_DATE_PATTERN, '').trim()
+  const unit = withoutDate.match(UNIT_PATTERN)?.[0]?.trim()
+  const compact = withoutDate.replace(UNIT_PATTERN, '').replace(/\s+(?=[（(])/g, '').trim()
+  return { value: compact || withoutDate, unit, stale, inlineDate }
+}
+
+function metricFromEvidence(
+  config: (typeof STATUS_METRICS)[number],
+  evidence: ClinicalEvidence | undefined,
+  isEnglish: boolean,
+  now: Date,
+): HeartFailureMetric {
+  const label = isEnglish ? config.en : config.zh
+  if (!evidence) {
+    return { factKey: config.factKey, label, unit: config.factKey === 'hemoglobin' ? 'g/dL' : undefined, kind: config.kind, stale: false, entered: false, evaluated: false }
+  }
+  const compact = compactValue(evidence.value)
+  const date = latestSourceDate(evidence) ?? compact.inlineDate
+  return {
+    factKey: config.factKey,
+    label,
+    kind: config.kind,
+    value: compact.value,
+    fullValue: evidence.value,
+    unit: compact.unit,
+    date,
+    ageDays: date ? daysBetween(date, now) : undefined,
+    stale: compact.stale,
+    entered: CLINIC_ENTRY_PATTERN.test(evidence.value),
+    evaluated: true,
+    evidence,
+  }
+}
+
+function metricFromEvidenceTable(
+  config: (typeof STATUS_METRICS)[number],
+  recommendations: readonly CdssRecommendation[],
+  isEnglish: boolean,
+  now: Date,
+): HeartFailureMetric | undefined {
+  const ids = config.evidenceItemIds ?? []
+  if (ids.length === 0) return undefined
+  for (const recommendation of recommendations) {
+    for (const table of recommendation.evidenceTables ?? []) {
+      const item = table.items.find((candidate) => ids.includes(candidate.id) && candidate.value)
+      if (!item?.value) continue
+      const compact = compactValue(item.value)
+      const date = item.date ?? compact.inlineDate
+      return {
+        factKey: config.factKey,
+        label: isEnglish ? config.en : config.zh,
+        kind: config.kind,
+        value: compact.value,
+        fullValue: item.value,
+        unit: compact.unit,
+        date,
+        ageDays: date ? daysBetween(date, now) : undefined,
+        stale: compact.stale,
+        entered: CLINIC_ENTRY_PATTERN.test(item.value),
+        evaluated: true,
+        evidence: {
+          label: isEnglish ? item.label.en : item.label.zh,
+          value: item.value,
+          factKeys: [config.factKey],
+          sources: item.sources,
+        },
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * A safety input no module carried, read from the adapter's fact. The fact's
+ * own wording — 「2.8 mmol/L（2026-08-20）」 — is kept as the value so the
+ * tooltip and source link read the same as a module-carried one; only
+ * `evaluated` says that no rule looked at it this visit.
+ */
+function metricFromFact(
+  config: (typeof STATUS_METRICS)[number],
+  facts: CdssPatientProfile['facts'] | undefined,
+  isEnglish: boolean,
+  now: Date,
+): HeartFailureMetric | undefined {
+  const fact = facts?.[config.factKey] as CdssFact | undefined
+  if (!fact) return undefined
+  const text = isEnglish ? fact.en : fact.zh
+  if (!text?.trim()) return undefined
+  const compact = compactValue(text)
+  const evidence: ClinicalEvidence = {
+    label: isEnglish ? config.en : config.zh,
+    value: text,
+    factKeys: [config.factKey],
+    sources: fact.sources,
+  }
+  const date = fact.date ?? latestSourceDate(evidence) ?? compact.inlineDate
+  return {
+    factKey: config.factKey,
+    label: isEnglish ? config.en : config.zh,
+    kind: config.kind,
+    value: compact.value,
+    fullValue: text,
+    unit: compact.unit ?? fact.unit,
+    date,
+    ageDays: date ? daysBetween(date, now) : undefined,
+    stale: compact.stale,
+    entered: CLINIC_ENTRY_PATTERN.test(text),
+    evaluated: false,
+    evidence,
+  }
+}
+
+function pillarFromRecommendation(
+  config: (typeof PILLAR_MODULES)[number],
+  recommendation: CdssRecommendation,
+  isEnglish: boolean,
+): HeartFailurePillar {
+  const therapyKey = recommendation.overviewEvidenceFactKey
+  const therapyEvidence = therapyKey
+    ? recommendation.patientEvidence.find((item) => item.factKeys.includes(therapyKey))
+    : undefined
+  const therapyText = therapyEvidence?.value
+  const taking = therapyText !== undefined && TAKING_PATTERN.test(therapyText)
+  const medicationNames = taking
+    ? therapyText.replace(TAKING_PATTERN, '').replace(/^[：:]\s*/, '').trim() || undefined
+    : undefined
+  return {
+    id: config.id,
+    label: isEnglish ? config.en : config.zh,
+    recommendation,
+    status: recommendation.status,
+    evaluated: true,
+    taking,
+    medicationNames,
+    therapyText,
+    therapyDate: latestSourceDate(therapyEvidence),
+    therapyEvidence,
+    nextAction: recommendation.nextActions[0],
+  }
+}
+
+/**
+ * A pillar the pack did not evaluate, read from the adapter's therapy facts.
+ * For a pillar with two classes (ARNI or ACEI/ARB) the class being taken
+ * wins; otherwise the first fact the record holds.
+ */
+function pillarFromFacts(
+  config: (typeof PILLAR_MODULES)[number],
+  facts: CdssPatientProfile['facts'] | undefined,
+  isEnglish: boolean,
+): HeartFailurePillar | undefined {
+  if (!facts) return undefined
+  const candidates = (config.therapyFactKeys as readonly string[])
+    .map((key) => ({ key, fact: facts[key] as CdssFact | undefined }))
+    .filter((entry): entry is { key: string; fact: CdssFact } => Boolean(entry.fact))
+  if (candidates.length === 0) return undefined
+  const textOf = (fact: CdssFact) => (isEnglish ? fact.en : fact.zh)
+  const chosen = candidates.find((entry) => TAKING_PATTERN.test(textOf(entry.fact))) ?? candidates[0]
+  const therapyText = textOf(chosen.fact)
+  const taking = TAKING_PATTERN.test(therapyText)
+  const therapyEvidence: ClinicalEvidence = {
+    label: isEnglish ? config.en : config.zh,
+    value: therapyText,
+    factKeys: [chosen.key],
+    sources: chosen.fact.sources,
+  }
+  return {
+    id: config.id,
+    label: isEnglish ? config.en : config.zh,
+    evaluated: false,
+    taking,
+    medicationNames: taking
+      ? therapyText.replace(TAKING_PATTERN, '').replace(/^[：:]\s*/, '').trim() || undefined
+      : undefined,
+    therapyText,
+    therapyDate: latestSourceDate(therapyEvidence) ?? chosen.fact.date,
+    therapyEvidence,
+  }
+}
+
+/**
+ * Reads the board out of a result. `undefined` for any pack that is not the
+ * heart-failure pack, so every other pathway keeps the generic module table.
+ */
+export function buildHeartFailureBoard(
+  result: CdssResult,
+  locale: CdssLocale,
+  now: Date = new Date(),
+  /**
+   * The profile the pack read, for pillars the pack produced no module for and
+   * safety inputs no module carried.
+   */
+  profileFacts?: CdssPatientProfile['facts'],
+): HeartFailureBoardModel | undefined {
+  if (result.packId !== HEART_FAILURE_PACK_ID) return undefined
+  const isEnglish = locale === 'en'
+  const recommendations = [
+    ...result.recommendations,
+    ...(result.automatedChecks ?? [])
+      .map((check) => check.recommendation)
+      .filter((item): item is CdssRecommendation => Boolean(item)),
+  ]
+  const visibleRecommendations = recommendations.filter((item) => item.id !== HFPEF_TREATMENT_MODULE_ID)
+  const byId = new Map(recommendations.map((item) => [item.id, item]))
+
+  const phenotype = byId.get(PHENOTYPE_MODULE_ID)
+  const lvefEvidence = findEvidence(recommendations, 'LVEF')
+  const lvef = lvefEvidence
+    ? metricFromEvidence({ factKey: 'LVEF', zh: 'LVEF', en: 'LVEF', kind: 'lab' }, lvefEvidence, isEnglish, now)
+    : undefined
+
+  const metrics = STATUS_METRICS.map((config) => {
+    const evidence = findEvidence(recommendations, config.factKey)
+    if (evidence) return metricFromEvidence(config, evidence, isEnglish, now)
+    return metricFromEvidenceTable(config, recommendations, isEnglish, now)
+      ?? metricFromFact(config, profileFacts, isEnglish, now)
+      ?? metricFromEvidence(config, undefined, isEnglish, now)
+  })
+
+  const alerts = visibleRecommendations.filter((item) => (
+    item.domain === 'safety' && item.status === 'actionable'
+  ))
+  const priorityRank: Readonly<Record<CdssRecommendation['priority'], number>> = { high: 0, medium: 1, routine: 2 }
+  const statusRank: Readonly<Partial<Record<CdssStatus, number>>> = { actionable: 0, 'needs-data': 1 }
+  const headlines: HeartFailureHeadline[] = visibleRecommendations
+    .filter((item) => item.status === 'actionable' || item.status === 'needs-data')
+    .filter((item) => item.nextActions[0])
+    .sort((a, b) => (
+      (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9)
+      || priorityRank[a.priority] - priorityRank[b.priority]
+      || (a.moduleOrder ?? Number.MAX_SAFE_INTEGER) - (b.moduleOrder ?? Number.MAX_SAFE_INTEGER)
+    ))
+    .slice(0, 3)
+    .map((item) => ({
+      recommendation: item,
+      action: item.nextActions[0],
+      reason: item.title,
+      moduleName: item.moduleName ?? item.id,
+    }))
+  // Which pathway the pack actually opened, read from the modules it built
+  // rather than from the phenotype card's wording: a board that matched on
+  // 「HFrEF」 in a title would break the first time the title is reworded.
+  const pillarScope: HeartFailurePillarScope = byId.has(GDMT_MODULE_ID)
+    ? 'hfref-four'
+    : byId.has(HFPEF_TREATMENT_MODULE_ID)
+      ? 'lvef-independent'
+      : 'none'
+  const pillarConfigs = pillarScope === 'hfref-four'
+    ? PILLAR_MODULES
+    : pillarScope === 'lvef-independent'
+      ? PILLAR_MODULES.filter((config) => config.lvefIndependent)
+      : []
+  const pillars = pillarConfigs.flatMap((config) => {
+    const recommendation = byId.get(config.id)
+    const pillar = recommendation
+      ? pillarFromRecommendation(config, recommendation, isEnglish)
+      : pillarFromFacts(config, profileFacts, isEnglish)
+    return pillar ? [pillar] : []
+  })
+  const evaluatedPillars = pillars.filter((pillar) => pillar.evaluated)
+
+  const consumedIds = new Set<string>([
+    ...alerts.map((item) => item.id),
+    ...pillars.map((item) => item.id),
+    // The dedicated diagnosis panel and calculator already present this
+    // evidence and the confirmation control; do not repeat a read-only card.
+    ...(byId.has(HFPEF_TREATMENT_MODULE_ID) ? [HFPEF_TREATMENT_MODULE_ID] : []),
+    // The pillar heading is the GDMT module's own title, so its row would say
+    // the same thing twice; it stays reachable from the heading.
+    ...(evaluatedPillars.length > 0 && byId.has(GDMT_MODULE_ID) ? [GDMT_MODULE_ID] : []),
+  ])
+
+  const statusCounts: Record<CdssStatus, number> = { actionable: 0, 'needs-data': 0, review: 0, 'no-action': 0 }
+  visibleRecommendations.forEach((item) => { statusCounts[item.status] += 1 })
+
+  return {
+    phenotype,
+    headlines,
+    evaluatedCount: visibleRecommendations.length,
+    statusCounts,
+    lvef,
+    metrics,
+    fmtSafety: byId.get(FMT_SAFETY_MODULE_ID),
+    alerts,
+    gdmt: evaluatedPillars.length > 0 ? byId.get(GDMT_MODULE_ID) : undefined,
+    hfpEfDiagnosis: byId.get(HFPEF_DIAGNOSIS_MODULE_ID),
+    timeline: buildCareTimeline(profileFacts, isEnglish),
+    pillarScope,
+    pillars,
+    consumedIds,
+  }
+}
+
+/**
+ * The reading order for what the board did not consume: what to do, then
+ * what to fetch, then what to judge, then what is done. Status carries the
+ * order; priority breaks ties; the pack's own module order settles the rest.
+ */
+export const HEART_FAILURE_LIST_STATUS_ORDER: readonly CdssStatus[] = [
+  'actionable',
+  'needs-data',
+  'review',
+  'no-action',
+]
+
+export function formatMetricDate(date: string | undefined, now: Date): string | undefined {
+  if (!date) return undefined
+  const sameYear = date.slice(0, 4) === String(now.getFullYear())
+  return sameYear && date.length >= 10 ? date.slice(5, 10) : date
+}

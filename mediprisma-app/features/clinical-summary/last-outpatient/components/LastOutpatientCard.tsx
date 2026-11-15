@@ -1,0 +1,833 @@
+"use client"
+
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { ChevronDown, ChevronLeft, ChevronRight, Filter, X } from "lucide-react"
+import { isAbnormalInterpretationLabel } from "@voho0000/clinical-lab-normalization/interpretation"
+import { FeatureCard } from "@/src/shared/components"
+import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { ReportRow } from "@/features/clinical-summary/reports/components/ReportRow"
+import { ObservationLongitudinalAction } from "@/features/clinical-summary/reports/components/ObservationLongitudinalAction"
+import type { EncounterObservation } from "@/features/clinical-summary/visit-history/components/EncounterObservationCard"
+import { useLanguage } from "@/src/application/providers/language.provider"
+import { cn } from "@/src/shared/utils/cn.utils"
+import { useLastOutpatient, type HospitalOutpatientVisit, type VisitScope } from "../hooks/useLastOutpatient"
+import { isSameClinician, type PriorLabValue } from "../utils/last-outpatient"
+
+type LabResult = { interpretationLabel?: string; refRangeAbnormal?: boolean }
+
+// The app's one abnormal rule (as in the reports tab): the source's
+// interpretation decides when present; the reference range only when absent.
+function isAbnormal(result: LabResult): boolean {
+  return result.interpretationLabel
+    ? isAbnormalInterpretationLabel(result.interpretationLabel)
+    : !!result.refRangeAbnormal
+}
+
+function hasAbnormal(test: EncounterObservation): boolean {
+  return isAbnormal(test) || test.components.some(isAbnormal)
+}
+
+// A short source flag beside the value, so an abnormal result never reads by
+// colour alone.
+const FLAG_CODES: Record<string, string> = {
+  High: 'H',
+  'Critical High': 'HH',
+  Low: 'L',
+  'Critical Low': 'LL',
+  Abnormal: 'A',
+  Positive: '+',
+}
+
+function fill(template: string, values: Record<string, string | number>): string {
+  return template.replace(/\{(\w+)\}/g, (_, key) => String(values[key] ?? ''))
+}
+
+function visitDay(iso: string): string {
+  return iso.slice(0, 10).replace(/-/g, '/')
+}
+
+/**
+ * The visit list only needs the clinic itself: 北榮 sends 「003(心臟內科上午)」,
+ * and the room code and session would otherwise take most of a chip. The full
+ * text stays in the chip's tooltip and in the selected visit's header.
+ */
+function clinicLabel(department: string | undefined): string {
+  if (!department) return ''
+  const match = department.trim().match(/^[0-9A-Za-z]+\s*[(（]\s*(.+?)\s*(?:上午|下午|晚上|夜間)?\s*[)）]$/)
+  return match?.[1] || department.trim()
+}
+
+function resultDay(result: { effectiveDateTime?: string }): string {
+  return result.effectiveDateTime?.slice(0, 10) ?? ''
+}
+
+/** The day most of these results fall on, so a column names it once in its
+ *  heading instead of repeating it under every value. */
+function mostCommonDay(days: string[]): string {
+  const counts = new Map<string, number>()
+  for (const day of days) if (day) counts.set(day, (counts.get(day) ?? 0) + 1)
+  let best = ''
+  for (const [day, count] of counts) if (count > (counts.get(best) ?? 0)) best = day
+  return best
+}
+
+/** MM/DD for this year; YY/MM/DD for any other, as the overview does. */
+function OtherDay({ day }: { day: string }) {
+  return <span className="whitespace-nowrap text-[0.6875rem] tabular-nums text-muted-foreground">{shortDay(day)}</span>
+}
+
+function shortDay(day: string): string {
+  const monthDay = day.slice(5).replace('-', '/')
+  return day.slice(0, 4) === String(new Date().getFullYear()) ? monthDay : `${day.slice(2, 4)}/${monthDay}`
+}
+
+const COLLAPSED_KEY = 'mediprisma:last-outpatient:visit-list-collapsed'
+
+function readCollapsed(): boolean {
+  try { return window.localStorage.getItem(COLLAPSED_KEY) === '1' } catch { return false }
+}
+
+function writeCollapsed(collapsed: boolean) {
+  try { window.localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0') } catch { /* private mode */ }
+}
+
+type VisitListStrings = {
+  label: string
+  youTemplate: string
+  noResults: string
+  noOrders: string
+  pending: string
+  itemCount: string
+  awaitingCount: string
+  visitCount: string
+  visitCountShort: string
+  collapse: string
+  expand: string
+  filterLabel: string
+  filterAll: string
+  filterClear: string
+}
+
+type PhysicianOption = { name: string; visits: number; yours: boolean }
+
+/** Each physician on the list once, with how many visits: the clinician's own
+ *  name first, then by visits, most first. */
+function physicianOptions(visits: HospitalOutpatientVisit[], clinicianName: string | null): PhysicianOption[] {
+  const counts = new Map<string, number>()
+  for (const visit of visits) if (visit.physician) counts.set(visit.physician, (counts.get(visit.physician) ?? 0) + 1)
+  return [...counts]
+    .map(([name, count]) => ({ name, visits: count, yours: isSameClinician(name, clinicianName) }))
+    .sort((a, b) => Number(b.yours) - Number(a.yours) || b.visits - a.visits)
+}
+
+const ALL_PHYSICIANS = '__all__'
+
+/** Narrows the visit list to one physician; every visit shows by default. */
+function PhysicianFilter({
+  options,
+  value,
+  totalVisits,
+  strings,
+  onChange,
+}: {
+  options: PhysicianOption[]
+  value: string | null
+  totalVisits: number
+  strings: VisitListStrings
+  onChange: (physician: string | null) => void
+}) {
+  const label = (option: PhysicianOption) => option.yours ? strings.youTemplate.replace('{name}', option.name) : option.name
+  const current = options.find((option) => option.name === value)
+  return (
+    <div className="flex shrink-0 items-center gap-1 @[44rem]/lo:mb-1.5 @[44rem]/lo:w-full">
+      <Select value={current?.name ?? ALL_PHYSICIANS} onValueChange={(next) => onChange(next === ALL_PHYSICIANS ? null : next)}>
+        <SelectTrigger
+          size="sm"
+          aria-label={strings.filterLabel}
+          className={cn('h-8 min-w-0 gap-1.5 text-xs @[44rem]/lo:flex-1', current && 'border-primary text-primary')}
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate">
+            <Filter className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <SelectValue>{current ? label(current) : strings.filterAll}</SelectValue>
+          </span>
+        </SelectTrigger>
+        <SelectContent align="start">
+          <SelectItem value={ALL_PHYSICIANS} textValue={strings.filterAll}>
+            <span>{strings.filterAll}</span>
+            <span className="ml-2 text-xs tabular-nums text-muted-foreground">{totalVisits}</span>
+          </SelectItem>
+          {options.map((option) => (
+            <SelectItem key={option.name} value={option.name} textValue={option.name}>
+              <span>{label(option)}</span>
+              <span className="ml-2 text-xs tabular-nums text-muted-foreground">{option.visits}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {current && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 shrink-0"
+          aria-label={strings.filterClear}
+          title={strings.filterClear}
+          onClick={() => onChange(null)}
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/** Every hospital outpatient visit, newest first, any physician: pick one to
+ *  read what it ordered. In a wide panel it is a column down the left, by
+ *  year, that folds to a narrow rail; in a narrow one it is a row of chips.
+ *  A visit with nothing linked yet is muted, once the reports are imported. */
+function VisitList({
+  visits,
+  totalVisits,
+  physicians,
+  physician,
+  onPhysicianChange,
+  selectedId,
+  gatheredIds,
+  itemCounts,
+  awaitingCounts,
+  withoutOrders,
+  clinicianName,
+  reportsPending,
+  collapsed,
+  onCollapsedChange,
+  strings,
+  onSelect,
+}: {
+  /** The visits listed: every one, or one physician's. */
+  visits: HospitalOutpatientVisit[]
+  totalVisits: number
+  physicians: PhysicianOption[]
+  physician: string | null
+  onPhysicianChange: (physician: string | null) => void
+  selectedId: string
+  /** Visits whose results the selected own visit is showing with its own. */
+  gatheredIds: ReadonlySet<string>
+  itemCounts: Map<string, number>
+  /** Orders with no report yet, by visit. */
+  awaitingCounts: Map<string, number>
+  /** Visits that wrote no examination order: empty, not missing a report. */
+  withoutOrders: ReadonlySet<string>
+  clinicianName: string | null
+  /** Reports still importing: no visit can be called empty yet. */
+  reportsPending: boolean
+  collapsed: boolean
+  onCollapsedChange: (collapsed: boolean) => void
+  strings: VisitListStrings
+  onSelect: (id: string) => void
+}) {
+  const selectedRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [selectedId])
+  const countLabel = strings.visitCount.replace('{count}', String(totalVisits))
+  return (
+    <>
+      {/* Folded (wide panels only): a rail that opens the column again. */}
+      {collapsed && (
+        <div className="hidden shrink-0 flex-col items-center gap-2 border-r border-border pr-2 @[44rem]/lo:flex">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9"
+            aria-label={strings.expand}
+            title={strings.expand}
+            onClick={() => onCollapsedChange(false)}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          </Button>
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{strings.visitCountShort.replace('{count}', String(totalVisits))}</span>
+        </div>
+      )}
+      <nav
+        aria-label={strings.label}
+        className={cn(
+          'min-w-0 @[44rem]/lo:w-60 @[44rem]/lo:shrink-0 @[44rem]/lo:border-r @[44rem]/lo:border-border @[44rem]/lo:pr-3',
+          collapsed && '@[44rem]/lo:hidden',
+        )}
+      >
+        <div className="mb-1 hidden items-center justify-between gap-2 @[44rem]/lo:flex">
+          <span className="text-xs font-semibold text-muted-foreground">{countLabel}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            aria-label={strings.collapse}
+            title={strings.collapse}
+            onClick={() => onCollapsedChange(true)}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          </Button>
+        </div>
+        <div className="flex items-start gap-2 @[44rem]/lo:block">
+        {physicians.length > 1 && (
+          <PhysicianFilter
+            options={physicians}
+            value={physician}
+            totalVisits={totalVisits}
+            strings={strings}
+            onChange={onPhysicianChange}
+          />
+        )}
+        <div
+          role="group"
+          aria-label={strings.label}
+          className="-mx-1 flex min-w-0 flex-1 gap-2 overflow-x-auto px-1 pb-1 @[44rem]/lo:mx-0 @[44rem]/lo:max-h-[34rem] @[44rem]/lo:flex-col @[44rem]/lo:gap-0.5 @[44rem]/lo:overflow-y-auto @[44rem]/lo:overflow-x-visible @[44rem]/lo:px-0"
+        >
+          {visits.map((candidate, index) => {
+            const selected = candidate.id === selectedId
+            const count = itemCounts.get(candidate.id) ?? 0
+            const awaiting = awaitingCounts.get(candidate.id) ?? 0
+            // Nothing back yet, but the visit did order something.
+            const empty = !reportsPending && count === 0 && awaiting === 0
+            const physician = candidate.physician && isSameClinician(candidate.physician, clinicianName)
+              ? strings.youTemplate.replace('{name}', candidate.physician)
+              : candidate.physician
+            const year = candidate.date.slice(0, 4)
+            const newYear = index === 0 || visits[index - 1].date.slice(0, 4) !== year
+            const emptyLabel = withoutOrders.has(candidate.id) ? strings.noOrders : strings.noResults
+            const status = reportsPending && count === 0
+              ? strings.pending
+              : empty ? emptyLabel
+                : count === 0 ? strings.awaitingCount.replace('{count}', String(awaiting))
+                  : strings.itemCount.replace('{count}', String(count))
+            return (
+              <Fragment key={candidate.id}>
+                {newYear && (
+                  <span className="hidden px-1.5 pb-1 pt-2.5 text-xs font-semibold text-muted-foreground @[44rem]/lo:block">
+                    {year}
+                  </span>
+                )}
+                <button
+                  ref={selected ? selectedRef : undefined}
+                  type="button"
+                  aria-pressed={selected}
+                  data-gathered={gatheredIds.has(candidate.id) || undefined}
+                  title={[visitDay(candidate.date), candidate.department, physician].filter(Boolean).join(' · ')}
+                  onClick={() => onSelect(candidate.id)}
+                  className={cn(
+                    'flex min-h-[44px] shrink-0 flex-col items-start rounded-md border px-2 py-1 text-left transition-colors @[44rem]/lo:w-full @[44rem]/lo:px-2.5 @[44rem]/lo:py-1.5',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    selected ? 'border-primary bg-accent text-accent-foreground'
+                      : gatheredIds.has(candidate.id) ? 'border-border bg-accent/40 hover:bg-accent/60 @[44rem]/lo:border-transparent'
+                        : 'border-border hover:bg-muted/60 @[44rem]/lo:border-transparent',
+                  )}
+                >
+                  <span className="flex w-full items-baseline justify-between gap-2">
+                    <span className={cn('text-sm font-semibold tabular-nums', empty && !selected && 'text-muted-foreground')}>
+                      {visitDay(candidate.date)}
+                    </span>
+                    <span className="hidden text-xs text-muted-foreground @[44rem]/lo:inline">{status}</span>
+                  </span>
+                  <span className="max-w-[7.5rem] truncate text-xs text-muted-foreground @[44rem]/lo:max-w-full">
+                    {[clinicLabel(candidate.department), physician].filter(Boolean).join(' · ')}
+                    {/* In the chip row the status shares the second line. */}
+                    {empty && <span className="@[44rem]/lo:hidden">{` · ${emptyLabel}`}</span>}
+                  </span>
+                </button>
+              </Fragment>
+            )
+          })}
+        </div>
+        </div>
+      </nav>
+    </>
+  )
+}
+
+function FlagLabel({ label }: { label?: string }) {
+  if (!label) return null
+  return (
+    <span className="shrink-0 text-[0.6875rem] font-semibold text-clinical-abnormal" title={label}>
+      {FLAG_CODES[label] ?? label}
+    </span>
+  )
+}
+
+type ComparisonStrings = { above: string; below: string; tooltip: string }
+
+type LabColumns = { item: string; current: string; range: string; previous: string }
+
+// One table for every category, so names, values, ranges and previous results
+// line up down the whole section; a category is a heading row, not a box.
+// A narrow panel drops the range column and shows the range under the value.
+const LAB_GRID = 'grid grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.7fr)] items-baseline gap-x-3 @[36rem]/labs:grid-cols-[minmax(0,1.3fr)_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,0.85fr)]'
+const RANGE_COLUMN = 'hidden @[36rem]/labs:block'
+
+// "12.6 g/dL" → number and unit, so the unit can recede beside the figure.
+function splitValue(value: string): { figure: string; unit: string } {
+  const match = value.match(/^([<>≤≥]?\s*[-+]?[\d.,]+)\s*(.*)$/)
+  return match ? { figure: match[1].replace(/\s+/g, ''), unit: match[2] } : { figure: value, unit: '' }
+}
+
+// The range as written, without the bracket chrome the source wraps it in.
+function rangeText(text?: string): string {
+  return (text ?? '').replace(/^\[(.*)\]$/, '$1').trim()
+}
+
+// A multi-clause range ("<0.03:normal;0.03~0.3:microalbuminuria;>0.3:overt
+// proteinuria", "Healthy: 4.8~5.9% , Diabetes: >=6.5%") has no spaces to wrap
+// at, so the narrow column split it mid-token. Break it at the source's own
+// clause separators instead: ";" and a comma that starts the next "label:".
+function rangeClauses(text: string): string[] {
+  return text
+    // Never the ";" that ends an HTML entity ("&lt;") older bundles still carry.
+    .split(/(?<!&(?:[a-z]+|#\d+|#x[\da-f]+))\s*;\s*/i)
+    .flatMap((part) => part.split(/\s*,\s*(?=[A-Za-z一-鿿][^,;:：]{0,30}[:：])/))
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function RangeText({ text }: { text: string }) {
+  const clauses = rangeClauses(text)
+  if (clauses.length < 2) return <>{text}</>
+  return <>{clauses.map((clause, i) => <span key={i} className="block">{clause}</span>)}</>
+}
+
+function ValueCell({
+  result,
+  comparison,
+  comparisonStrings,
+  range,
+}: {
+  result: LabResult & { value: string }
+  range: string
+  comparison?: 'high' | 'low'
+  comparisonStrings: ComparisonStrings
+}) {
+  const abnormal = isAbnormal(result)
+  const { figure, unit } = splitValue(result.value)
+  // Never colour alone: the source's flag, or ↑/↓ when only the range says so.
+  const flag = result.interpretationLabel && abnormal
+    ? <FlagLabel label={result.interpretationLabel} />
+    : !result.interpretationLabel && comparison
+      ? (
+        <span
+          className="text-[0.6875rem] font-semibold text-clinical-abnormal"
+          title={comparisonStrings.tooltip}
+          aria-label={comparison === 'high' ? comparisonStrings.above : comparisonStrings.below}
+        >
+          {comparison === 'high' ? '↑' : '↓'}
+        </span>
+      )
+      : null
+  return (
+    <span className="min-w-0">
+      <span className="whitespace-nowrap">
+        <span className={cn('font-semibold tabular-nums', abnormal ? 'text-clinical-abnormal' : 'text-foreground')}>{figure}</span>
+        {unit && <span className="ml-1 text-xs text-muted-foreground">{unit}</span>}
+        {flag && <span className="ml-1.5">{flag}</span>}
+      </span>
+      {range && <span className="block text-[0.6875rem] tabular-nums text-muted-foreground @[36rem]/labs:hidden"><RangeText text={range} /></span>}
+    </span>
+  )
+}
+
+function LabTable({
+  groups,
+  categoryLabel,
+  priorValues,
+  comparisons,
+  comparisonStrings,
+  columns,
+  sourceObservations,
+  mainDay,
+  mainPriorDay,
+  countStrings,
+}: {
+  groups: Array<{ categoryId: string | null; tests: EncounterObservation[] }>
+  countStrings: { items: string; abnormal: string }
+  mainDay: string
+  mainPriorDay: string
+  sourceObservations: Map<string, any>
+  categoryLabel: (id: string | null) => string
+  priorValues: Map<string, PriorLabValue>
+  comparisons: Map<string, 'high' | 'low'>
+  comparisonStrings: ComparisonStrings
+  columns: LabColumns
+}) {
+  const cell = 'min-w-0 break-words'
+  // Every category starts open; a folded one keeps its counts on the heading
+  // so an abnormal result is never hidden without a trace.
+  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set())
+  const toggle = (key: string) => setFolded((current) => {
+    const next = new Set(current)
+    if (!next.delete(key)) next.add(key)
+    return next
+  })
+  return (
+    <div role="table" aria-label={columns.item} className="@container/labs overflow-hidden rounded-md border border-border/80 bg-card text-sm">
+      <div role="row" className={cn(LAB_GRID, 'border-b border-border/80 bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground')}>
+        <span role="columnheader">{columns.item}</span>
+        <span role="columnheader">
+          {columns.current}
+          {mainDay && <span className="ml-1.5 font-normal tabular-nums">{shortDay(mainDay)}</span>}
+        </span>
+        <span role="columnheader" className={RANGE_COLUMN}>{columns.range}</span>
+        <span role="columnheader">
+          {columns.previous}
+          {mainPriorDay && <span className="ml-1.5 font-normal tabular-nums">{shortDay(mainPriorDay)}</span>}
+        </span>
+      </div>
+      {groups.map((group, index) => {
+        const key = group.categoryId ?? `other-${index}`
+        const isFolded = folded.has(key)
+        const abnormal = group.tests.filter(hasAbnormal).length
+        const Chevron = isFolded ? ChevronRight : ChevronDown
+        return (
+        <div role="rowgroup" key={key} className={cn(isFolded && 'border-b border-border/60 last:border-b-0')}>
+          <div role="row" className={cn('text-xs font-semibold text-muted-foreground', !isFolded && 'border-b border-border/60')}>
+            <span role="cell" className="block">
+              <button
+                type="button"
+                aria-expanded={!isFolded}
+                onClick={() => toggle(key)}
+                className="flex w-full items-center gap-1 px-2 pb-1.5 pt-2.5 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <Chevron className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>{categoryLabel(group.categoryId)}</span>
+                {isFolded && (
+                  <span className="ml-1.5 font-normal tabular-nums">
+                    {fill(countStrings.items, { count: group.tests.length })}
+                    {abnormal > 0 && (
+                      <>
+                        {' · '}
+                        <span className="font-medium text-clinical-abnormal">{fill(countStrings.abnormal, { count: abnormal })}</span>
+                      </>
+                    )}
+                  </span>
+                )}
+              </button>
+            </span>
+          </div>
+          {!isFolded && group.tests.map((test) => {
+            const prior = priorValues.get(test.id)
+            return (
+              <div key={test.id} className="border-b border-border/50 last:border-b-0">
+                <div role="row" className={cn(LAB_GRID, 'px-3 py-1.5')}>
+                  <span role="cell" className={cn(cell, 'flex items-center gap-1 font-medium')}>
+                    <span className="min-w-0 break-words">{test.title}</span>
+                    {/* The reports tab's own trend / history pane for this result. */}
+                    <ObservationLongitudinalAction
+                      observation={sourceObservations.get(test.id)}
+                      title={test.title}
+                      sourceId={`last-outpatient:observation-longitudinal:${test.id}`}
+                      className="shrink-0"
+                    />
+                  </span>
+                  <span role="cell" className={cn(cell, 'flex flex-wrap items-baseline gap-x-1.5')}>
+                    <ValueCell result={test} comparison={comparisons.get(test.id)} comparisonStrings={comparisonStrings} range={rangeText(test.referenceText)} />
+                    {/* The headings name the usual day; only a result from
+                        another day carries its own, on the same line. */}
+                    {resultDay(test) && resultDay(test) !== mainDay && <OtherDay day={resultDay(test)} />}
+                  </span>
+                  <span role="cell" className={cn(cell, RANGE_COLUMN, 'text-xs tabular-nums text-muted-foreground')}><RangeText text={rangeText(test.referenceText)} /></span>
+                  <span role="cell" className={cn(cell, 'flex flex-wrap items-baseline gap-x-1.5')}>
+                    {prior && (
+                      <>
+                        <span className="tabular-nums text-foreground/80">
+                          {prior.value}
+                          {prior.unit && <span className="ml-1 text-xs text-muted-foreground">{prior.unit}</span>}
+                        </span>
+                        {prior.date !== mainPriorDay && <OtherDay day={prior.date} />}
+                      </>
+                    )}
+                  </span>
+                </div>
+                {test.components.map((component) => (
+                  <div role="row" key={component.id} className={cn(LAB_GRID, 'px-3 py-1 pl-6 text-[0.8125rem]')}>
+                    <span role="cell" className={cn(cell, 'text-foreground/90')}>{component.title}</span>
+                    <span role="cell" className={cell}>
+                      <ValueCell result={component} comparison={comparisons.get(component.id)} comparisonStrings={comparisonStrings} range={rangeText(component.referenceText)} />
+                    </span>
+                    <span role="cell" className={cn(cell, RANGE_COLUMN, 'text-xs tabular-nums text-muted-foreground')}><RangeText text={rangeText(component.referenceText)} /></span>
+                    <span role="cell" />
+                  </div>
+                ))}
+              </div>
+            )
+          })}
+        </div>
+        )
+      })}
+    </div>
+  )
+}
+
+export function LastOutpatientCard() {
+  const { t } = useLanguage()
+  const strings = t.lastOutpatient
+  const [selectedVisitId, setSelectedVisitId] = useState<string | null>(null)
+  // Every physician's visits by default; not remembered across charts.
+  const [physician, setPhysician] = useState<string | null>(null)
+  const [onlyAbnormal, setOnlyAbnormal] = useState(false)
+  // What an own visit shows; kept while moving between visits.
+  const [scope, setScope] = useState<VisitScope>('since-all')
+  // Folded or not is remembered per browser. The card renders only once the
+  // chart is loaded in the browser, so storage is there to read.
+  const [listCollapsed, setListCollapsed] = useState(() => typeof window !== 'undefined' && readCollapsed())
+  const {
+    isLoading,
+    reportsPending,
+    clinicianName,
+    visits,
+    listedVisits,
+    itemCounts,
+    awaitingOrders,
+    withoutOrders,
+    visit,
+    sinceVisits,
+    details,
+    priorValues,
+    rangeComparisons,
+    sharedCount,
+    sourceObservations,
+  } = useLastOutpatient(selectedVisitId, physician, scope)
+
+  const categoryLabel = (id: string | null): string =>
+    (t.reports.cumulativeCategories as Record<string, string>)[id ?? 'other'] || id || ''
+
+  const tests = details?.tests ?? []
+  const reports = details?.reports ?? []
+  const abnormalCount = tests.filter(hasAbnormal).length
+  const groups = (details?.testGroups ?? [])
+    .map((group) => ({ ...group, tests: onlyAbnormal ? group.tests.filter(hasAbnormal) : group.tests }))
+    .filter((group) => group.tests.length > 0)
+  const isYours = !!visit && isSameClinician(visit.physician, clinicianName)
+  const mainDay = mostCommonDay(tests.map(resultDay))
+  const mainPriorDay = mostCommonDay(tests.map((test) => priorValues.get(test.id)?.date ?? ''))
+  const physicians = useMemo(() => physicianOptions(visits, clinicianName), [visits, clinicianName])
+  const gathered = sinceVisits.length > 1
+  const gatheredIds = useMemo(() => new Set(gathered ? sinceVisits.map((candidate) => candidate.id) : []), [gathered, sinceVisits])
+  // Each order with the visit that wrote it, named only when several are shown.
+  const awaiting = (gathered ? sinceVisits : visit ? [visit] : []).flatMap((candidate) =>
+    (awaitingOrders.get(candidate.id) ?? []).map((order) => ({
+      order,
+      from: gathered ? [clinicLabel(candidate.department), shortDay(candidate.date.slice(0, 10))].filter(Boolean).join(' · ') : '',
+    })))
+  const awaitingCounts = useMemo(
+    () => new Map([...awaitingOrders].map(([id, orders]) => [id, orders.length])),
+    [awaitingOrders],
+  )
+
+
+  return (
+    <FeatureCard
+      title={strings.title}
+      featureId="last-outpatient"
+      isLoading={isLoading}
+      isEmpty={!visit}
+      emptyMessage={strings.empty}
+    >
+      {visit && (
+        <div className="@container/lo" data-testid="last-outpatient">
+        <div className="flex flex-col gap-4 @[44rem]/lo:flex-row @[44rem]/lo:items-start">
+          {visits.length > 1 && (
+            <VisitList
+              visits={listedVisits}
+              totalVisits={visits.length}
+              physicians={physicians}
+              physician={listedVisits.length < visits.length ? physician : null}
+              onPhysicianChange={(next) => {
+                // Keep the visit on screen when the new list still shows it;
+                // otherwise open that list's newest visit.
+                setSelectedVisitId(!next || visit.physician === next ? visit.id : null)
+                setPhysician(next)
+              }}
+              selectedId={visit.id}
+              gatheredIds={gatheredIds}
+              itemCounts={itemCounts}
+              awaitingCounts={awaitingCounts}
+              withoutOrders={withoutOrders}
+              clinicianName={clinicianName}
+              reportsPending={reportsPending}
+              collapsed={listCollapsed}
+              onCollapsedChange={(next) => { setListCollapsed(next); writeCollapsed(next) }}
+              strings={{
+                label: strings.visitPicker,
+                youTemplate: strings.physicianYou,
+                noResults: strings.noResults,
+                noOrders: strings.noOrders,
+                pending: strings.visitPending,
+                itemCount: strings.visitItemCount,
+                awaitingCount: strings.visitAwaitingCount,
+                visitCount: strings.visitCount,
+                visitCountShort: strings.visitCountShort,
+                collapse: strings.collapseVisits,
+                expand: strings.expandVisits,
+                filterLabel: strings.physicianFilter,
+                filterAll: strings.physicianFilterAll,
+                filterClear: strings.physicianFilterClear,
+              }}
+              onSelect={setSelectedVisitId}
+            />
+          )}
+          <div className="min-w-0 flex-1 space-y-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="text-[max(15px,1rem)] font-semibold tabular-nums">{visitDay(visit.date)}</span>
+              {visit.department && <span className="font-medium">{visit.department}</span>}
+              {visit.physician && (
+                <span className="text-sm text-foreground/80">
+                  {isYours ? fill(strings.physicianYou, { name: visit.physician }) : visit.physician}
+                </span>
+              )}
+              {visit.institution && <span className="text-sm text-muted-foreground">{visit.institution}</span>}
+            </div>
+            {isYours && visits.length > 1 && (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-1">
+                <div className="flex gap-1" role="group" aria-label={strings.scopeLabel}>
+                  {([['since-all', strings.scopeSinceAll], ['since-own', strings.scopeSinceOwn], ['single', strings.scopeSingle]] as const).map(([value, label]) => (
+                    <Button
+                      key={value}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      aria-pressed={scope === value}
+                      onClick={() => setScope(value)}
+                      className={cn(
+                        'h-8 rounded-full px-3 text-xs',
+                        scope === value && 'border-primary bg-accent text-accent-foreground hover:bg-accent',
+                      )}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+                {gathered && (
+                  <span className="text-xs text-muted-foreground">{fill(strings.scopeGathered, { count: sinceVisits.length })}</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {tests.length === 0 && reports.length === 0 ? (
+            // With orders still awaiting a report, that section says why the visit is empty.
+            (reportsPending || awaiting.length === 0) && (
+              <p className="text-sm text-muted-foreground" role={reportsPending ? 'status' : undefined}>
+                {reportsPending ? strings.reportsPending : strings.empty}
+              </p>
+            )
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-muted-foreground">
+                  {fill(strings.summary, { count: tests.length + reports.length })}
+                  {abnormalCount > 0 && (
+                    <>
+                      {' · '}
+                      <span className="font-medium text-clinical-abnormal">
+                        {fill(strings.abnormalCount, { count: abnormalCount })}
+                      </span>
+                    </>
+                  )}
+                  {sharedCount > 0 && <> · {fill(strings.sharedCount, { count: sharedCount })}</>}
+                  {reportsPending && <> · {strings.reportsPending}</>}
+                </p>
+                {tests.length > 0 && (
+                  <div className="flex gap-1" role="group" aria-label={strings.filterLabel}>
+                    {([[true, strings.abnormal], [false, strings.all]] as const).map(([value, label]) => (
+                      <Button
+                        key={label}
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        aria-pressed={onlyAbnormal === value}
+                        onClick={() => setOnlyAbnormal(value)}
+                        className={cn(
+                          'h-8 rounded-full px-3 text-xs',
+                          onlyAbnormal === value && 'border-primary bg-accent text-accent-foreground hover:bg-accent',
+                        )}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {tests.length > 0 && (
+                <section className="space-y-2" aria-labelledby="last-outpatient-labs">
+                  <h3 id="last-outpatient-labs" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {strings.labs}
+                  </h3>
+                  {groups.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">{strings.noAbnormal}</p>
+                  ) : (
+                    <LabTable
+                      // Another visit opens with every category unfolded again.
+                      key={visit.id}
+                      countStrings={{ items: strings.visitItemCount, abnormal: strings.abnormalCount }}
+                      groups={groups}
+                      categoryLabel={categoryLabel}
+                      priorValues={priorValues}
+                      comparisons={rangeComparisons}
+                      comparisonStrings={t.reports.referenceComparison}
+                      columns={{ item: strings.labItem, current: strings.labCurrent, range: strings.labRange, previous: strings.previousLabel }}
+                      sourceObservations={sourceObservations}
+                      mainDay={mainDay}
+                      mainPriorDay={mainPriorDay}
+                    />
+                  )}
+                </section>
+              )}
+
+              {reports.length > 0 && (
+                <section className="space-y-2" aria-labelledby="last-outpatient-reports">
+                  <h3 id="last-outpatient-reports" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {strings.reports}
+                  </h3>
+                  <div className="grid min-w-0 max-w-full gap-0 overflow-hidden">
+                    {reports.map((report) => (
+                      <div key={report.id} className="min-w-0 max-w-full overflow-hidden">
+                        <ReportRow row={report.row} defaultOpen={[report.row.id]} />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+
+          {awaiting.length > 0 && (
+            <section className="space-y-2" aria-labelledby="last-outpatient-awaiting" data-testid="last-outpatient-awaiting">
+              <h3 id="last-outpatient-awaiting" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {strings.awaitingTitle}
+                <span className="ml-1.5 font-normal tabular-nums">{fill(strings.awaitingCount, { count: awaiting.length })}</span>
+              </h3>
+              {/* One order per row, like the lab table above it. */}
+              <ul className="overflow-hidden rounded-md border border-border/80 bg-card text-sm">
+                {awaiting.map(({ order, from }) => (
+                  <li key={order.id} className="flex min-w-0 items-baseline gap-2 border-b border-border/50 px-3 py-1.5 last:border-b-0">
+                    <span className="min-w-0 break-words font-medium">{order.label}</span>
+                    {from && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{from}</span>}
+                    {order.appointment && (
+                      <span className="shrink-0 rounded-sm border border-border px-1 text-[0.6875rem] text-muted-foreground">
+                        {strings.awaitingAppointment}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">{strings.awaitingNote}</p>
+            </section>
+          )}
+          </div>
+        </div>
+        </div>
+      )}
+    </FeatureCard>
+  )
+}

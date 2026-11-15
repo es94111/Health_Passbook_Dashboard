@@ -1,0 +1,194 @@
+/**
+ * Prompt Gallery Types
+ * Unified data structure for Chat templates and custom Summary modules.
+ */
+
+import type {
+  InsightLanguagePolicy,
+  InsightOutputFormat,
+} from '@/src/shared/constants/clinical-insights.constants'
+import type { TemplateTextReference } from '@/src/application/composition.template-text'
+
+export type PromptType = 'chat' | 'summary'
+
+/**
+ * The original gallery stored custom-summary templates as `insight` records.
+ * Keep the compatibility rule at the data boundary so the retired product
+ * term never leaks back into components or newly written Firestore records.
+ *
+ * The seeded citizen prompts predate custom modules in Medical Summary. They
+ * are all self-contained, record-grounded outputs, so they can safely serve
+ * both as chat shortcuts and as reusable summary modules. Adding `summary`
+ * here makes existing seeded documents upgrade without requiring a production
+ * Firestore migration before the refreshed gallery can render correctly.
+ */
+const BUILT_IN_SUMMARY_PROMPT_IDS = new Set([
+  'patient-explain-labs',
+  'patient-admission-for-family',
+  'patient-medication-info',
+  'patient-which-specialty',
+  'patient-questions-for-doctor',
+  'patient-lifestyle-diet',
+  'patient-warning-signs',
+  'patient-self-care-monitoring',
+  'medical-discharge',
+])
+
+export function normalizePromptTypes(promptId: string, rawTypes: unknown): PromptType[] {
+  const normalized: PromptType[] = []
+  const add = (type: PromptType) => {
+    if (!normalized.includes(type)) normalized.push(type)
+  }
+
+  if (Array.isArray(rawTypes)) {
+    for (const type of rawTypes) {
+      if (type === 'chat') add('chat')
+      if (type === 'summary' || type === 'insight') add('summary')
+    }
+  }
+
+  if (BUILT_IN_SUMMARY_PROMPT_IDS.has(promptId)) add('summary')
+  if (normalized.length === 0) add('chat')
+  return normalized
+}
+
+export type PromptAudience = 'medical' | 'patient'
+
+/** Legacy or malformed stored versions are displayed and compared as the V1 baseline. */
+export function coerceTemplateVersion(value: unknown): number {
+  return Number.isSafeInteger(value) && (value as number) >= 1 ? value as number : 1
+}
+
+export const PROMPT_CATEGORIES = ['soap', 'admission', 'discharge', 'safety', 'summary', 'progress', 'consult', 'procedure', 'other'] as const
+
+export type PromptCategory = 
+  | 'soap'           // SOAP notes
+  | 'admission'      // Admission notes
+  | 'discharge'      // Discharge summaries
+  | 'safety'         // Safety alerts
+  | 'summary'        // Clinical summaries
+  | 'progress'       // Progress notes
+  | 'consult'        // Consultation notes
+  | 'procedure'      // Procedure notes
+  | 'other'          // Other categories
+
+export type PromptSpecialty = 
+  | 'general'        // 一般科
+  | 'internal'       // 內科
+  | 'cardiology'     // 心臟內科
+  | 'gastroenterology' // 胃腸肝膽科
+  | 'pulmonology'    // 胸腔內科
+  | 'nephrology'     // 腎臟內科
+  | 'rheumatology'   // 風濕科
+  | 'immunology'     // 過敏免疫科
+  | 'hematology'     // 血液科
+  | 'medical_oncology' // 腫瘤內科
+  | 'endocrinology'  // 內分泌暨新陳代謝科
+  | 'infectious_diseases' // 感染科
+  | 'surgery'        // 外科
+  | 'neurosurgery'   // 神經外科
+  | 'emergency'      // 急診醫學科
+  | 'critical_care'  // 重症醫學科
+  | 'pediatrics'     // 兒科
+  | 'obstetrics'     // 婦產科
+  | 'psychiatry'     // 精神科
+  | 'neurology'      // 神經科
+  | 'rehabilitation' // 復健科
+  | 'anesthesiology' // 麻醉科
+  | 'ophthalmology'  // 眼科
+  | 'dermatology'    // 皮膚科
+  | 'urology'        // 泌尿科
+  | 'orthopedics'    // 骨科
+  | 'ent'            // 耳鼻喉頭頸外科
+  | 'radiology'      // 放射診斷科
+  | 'radiation_oncology' // 放射腫瘤科
+  | 'pathology'      // 病理科
+  | 'anatomic_pathology' // 解剖病理科
+  | 'clinical_pathology' // 臨床病理科
+  | 'nuclear_medicine' // 核子醫學科
+  | 'plastic_surgery' // 整形外科
+  | 'family_medicine' // 家庭醫學科
+  | 'occupational_medicine' // 職業醫學科
+  | 'other'          // 其他
+
+export interface SharedPrompt {
+  id: string
+  title: string
+  description?: string
+  prompt: string
+  /** When present, prompt is a list excerpt. Resolve before preview/use/share. */
+  body?: TemplateTextReference
+  
+  // Classification
+  types: PromptType[]
+  category: PromptCategory
+  specialty: PromptSpecialty[]
+  audience: PromptAudience[]  // Audiences this prompt is suitable for. Empty array treated as ['medical'] for backward compatibility.
+  tags: string[]
+  /** Summary-module rendering contract. Missing on legacy/chat-only records. */
+  outputFormat?: InsightOutputFormat
+  /** Summary-module language contract. Missing on legacy/chat-only records. */
+  languagePolicy?: InsightLanguagePolicy
+  /** Content revision; existing records without this field use the V1 baseline. */
+  version?: number
+  /** Author-supplied sample output generated from de-identified data. */
+  exampleOutput?: string
+  /** Public templates appear in the shared gallery. Private templates remain visible only to their author in My Prompts. */
+  isPublic?: boolean
+  /** Set on department templates (tenantPrompts); absent on public gallery prompts. */
+  tenantId?: string
+  /** Display name of the department, resolved from the viewer's membership. */
+  tenantName?: string
+  
+  // Metadata
+  createdAt: Date
+  updatedAt: Date
+  
+  // Optional: For future community features
+  authorId?: string
+  authorName?: string
+  isAnonymous?: boolean
+  usageCount?: number
+}
+
+export interface PromptGalleryFilter {
+  type?: PromptType
+  category?: PromptCategory
+  specialty?: PromptSpecialty
+  audience?: PromptAudience
+  searchQuery?: string
+  tags?: string[]
+}
+
+export interface PromptGallerySort {
+  field: 'createdAt' | 'updatedAt' | 'title' | 'usageCount'
+  direction: 'asc' | 'desc'
+}
+
+/** Where a gallery prompt comes from, relative to the current user. */
+export type PromptSource = 'mine' | 'system' | 'shared' | 'tenant'
+
+export type TenantRole = 'owner' | 'builder' | 'reviewer' | 'member'
+
+/** One of the signed-in account's active department memberships. */
+export interface TenantMembership {
+  tenantId: string
+  role: TenantRole
+  displayName: string
+  /** owner / builder may publish, edit and retire the department's templates. */
+  canPublish: boolean
+}
+
+/**
+ * A favorite keeps the user's own copy of the prompt at the time it was saved,
+ * so a source that is later edited or deleted never breaks the favorite.
+ */
+export interface PromptFavorite {
+  /** Source prompt id; also the favorite document id, so a prompt is saved at most once. */
+  id: string
+  /** Snapshot of the source with its full text resolved. */
+  prompt: SharedPrompt
+  savedAt: Date
+  /** `updatedAt` of the source when saved; a newer source means the copy is behind. */
+  sourceUpdatedAt: Date
+}

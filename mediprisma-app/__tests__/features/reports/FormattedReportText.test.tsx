@@ -1,0 +1,99 @@
+import { render, screen } from '@testing-library/react'
+import { FormattedReportText } from '@/features/clinical-summary/reports/components/FormattedReportText'
+
+describe('FormattedReportText', () => {
+  it('renders a flattened microbiology report as scannable source-faithful rows', () => {
+    const raw = '報告結果 開單日期:115/08/14 15:15 採檢日期:115/08/14 15:23 ' +
+      '檢驗項目:13021 抗生素敏感性試驗(MIC法)二菌種 檢體編號:11513025188 Specimen:Sputum ' +
+      '〔最終報告〕 報告日期:115/08/18 08:32 報告:---------------------------------------- ' +
+      ': Final report (最終報告) :Sputum Culture : Sample Type : Sputum ' +
+      ': ISOLATE 1 : Klebsiella pneumoniae subsp. pneumoniae, 3+ ' +
+      ': ISOLATE 2 : Streptococcus anginosus, 3+ ' +
+      ': -------------------- : |Susceptibility | 1 | 2 |'
+
+    render(<FormattedReportText text={raw} />)
+
+    expect(screen.getByText('開單日期:115/08/14 15:15')).toBeInTheDocument()
+    expect(screen.getByText('採檢日期:115/08/14 15:23')).toBeInTheDocument()
+    expect(screen.getByText('Final report (最終報告)')).toHaveClass('font-semibold')
+    expect(screen.getByText('Sputum Culture')).toHaveClass('font-semibold')
+    expect(screen.getByText('ISOLATE 1 : Klebsiella pneumoniae subsp. pneumoniae, 3+')).toBeInTheDocument()
+    expect(screen.getByText('ISOLATE 2 : Streptococcus anginosus, 3+')).toBeInTheDocument()
+    const table = screen.getByRole('table')
+    expect(table).toHaveTextContent('Susceptibility')
+    expect(table).toHaveTextContent('1')
+    expect(table).toHaveTextContent('2')
+  })
+})
+
+describe('echo report layout', () => {
+  it('renders only source values and leaves missing measurements blank', () => {
+    render(<FormattedReportText text={'DOPPLER ＆ ECHOCARDIOGRAPHIC REPORT: IVSd 1.0 (0.6~1.2)cm EF(biplane) (Normal≧55)% E/Sep e` Conclusion: ● Normal function ● mild AR'} />)
+    expect(screen.getByText('IVSd').tagName).toBe('DT')
+    expect(screen.getByText('1.0 (0.6~1.2)cm')).toBeInTheDocument()
+    expect(screen.queryByText('未填')).not.toBeInTheDocument()
+    expect(screen.getByText('E/Sep e`').nextElementSibling).toBeEmptyDOMElement()
+    expect(screen.getByText(/Normal≧55/, { selector: 'dd' }).textContent).toBe('(Normal≧55)%')
+    expect(screen.getByText('Normal function')).toBeInTheDocument()
+    expect(screen.getByText('mild AR')).toBeInTheDocument()
+  })
+})
+
+describe('original report disclosure', () => {
+  it('keeps the exact unformatted source in an initially closed disclosure', () => {
+    const raw = '  Findings:\n\n\n  A   0.5 cm lesion.\nImpression:1. Follow up.  '
+    const { container } = render(<FormattedReportText text={raw} />)
+    const details = container.querySelector('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('summary')).toHaveTextContent('顯示原始報告')
+    expect(details.querySelector('pre')?.textContent).toBe(raw)
+    expect(details.querySelector('pre')).not.toBeVisible()
+  })
+  it('renders source markup as text, never HTML', () => {
+    const raw = 'Findings: <img src=x onerror=alert(1)> & unchanged'
+    const { container } = render(<FormattedReportText text={raw} />)
+    expect(container.querySelector('pre')?.textContent).toBe(raw)
+    expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('bolds only the label of an inline label heading', () => {
+    render(<FormattedReportText text={'CT of chest shows:\nComparison: CT on 2026-5-19.'} />)
+    const label = screen.getByText('Comparison:')
+    expect(label).toHaveClass('font-semibold')
+    expect(label.parentElement?.textContent).toBe('Comparison: CT on 2026-5-19.')
+    expect(label.parentElement).not.toHaveClass('font-semibold')
+  })
+
+  it('keeps adjacent numbered column blocks as separate tables with their markers', () => {
+    const raw = [
+      '5. TOTAL TIME: ( 10 / 10 ) MIN:SEC  MAX ACHIEVED RATE: ( 160 )',
+      'MAX PREDICATED RATE: ( 180 )  PREDICATED RATE: ( 153 )',
+      '6. REST RATE: ( 80 )  PEAK RATE: ( 160 )',
+      'REST PRESSURE: ( 120 / 80 )  PEAK PRESSURE: ( 160 / 80 )',
+    ].join('\n')
+    const { container } = render(<FormattedReportText text={raw} />)
+    expect(container.querySelectorAll('table')).toHaveLength(2)
+    expect(screen.getByText('5.')).toBeInTheDocument()
+    expect(screen.getByText('6.')).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: 'PEAK PRESSURE: ( 160 / 80 )' })).toBeInTheDocument()
+  })
+
+  it('renders a space-separated source table as one table', () => {
+    const raw = [
+      'SPEED/GRADE(NPH/%)  MINUTES  BLOOD PRESSURE',
+      "(1.7/10)  ( 3' 0'' )  ( 140 / 70 )",
+      "(2.5/12)  ( 3' 0'' )  ( 160 / 72 )",
+    ].join('\n')
+    const { container } = render(<FormattedReportText text={raw} />)
+    expect(container.querySelectorAll('table')).toHaveLength(1)
+    expect(container.querySelectorAll('tr')).toHaveLength(3)
+    expect(screen.getByRole('cell', { name: '( 160 / 72 )' })).toBeInTheDocument()
+  })
+
+  it('renders a footer under the report body, above the raw-report toggle', () => {
+    render(<FormattedReportText text="Synthetic finding." footer={<p>判讀醫師：DOC0002B 林判讀</p>} />)
+    const footer = screen.getByText('判讀醫師：DOC0002B 林判讀')
+    const toggle = screen.getByText('顯示原始報告')
+    expect(footer.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})

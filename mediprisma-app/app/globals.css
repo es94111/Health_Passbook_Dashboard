@@ -1,0 +1,265 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Clinical text remains selectable even inside interactive controls. */
+body :where(button, [role="button"], [role="menuitem"], [role="option"], .select-none) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-panel: var(--panel);
+  --color-foreground: var(--foreground);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", ui-monospace, "Cascadia Code", "Roboto Mono", monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-clinical-abnormal: var(--clinical-abnormal);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.5rem;
+  --clinical-missing-data-pattern: repeating-linear-gradient(
+    135deg,
+    transparent 0,
+    transparent 5px,
+    color-mix(in oklab, var(--muted-foreground) 18%, transparent) 5px,
+    color-mix(in oklab, var(--muted-foreground) 18%, transparent) 7px
+  );
+  /* Frosted clinical blue: canvas → panel → card remain visibly layered. */
+  --background: oklch(0.955 0.014 250);
+  --panel: oklch(0.976 0.010 250);
+  --foreground: oklch(0.19 0.014 260);
+  --card: oklch(0.992 0.004 250);
+  --card-foreground: oklch(0.19 0.014 260);
+  --popover: oklch(0.996 0.003 250);
+  --popover-foreground: oklch(0.15 0.01 264);
+  /* Primary: Modern blue with depth */
+  --primary: oklch(0.55 0.18 250);
+  --primary-foreground: oklch(0.99 0 0);
+  /* Secondary and muted surfaces stay visibly distinct at clinical density. */
+  --secondary: oklch(0.938 0.015 250);
+  --secondary-foreground: oklch(0.22 0.014 260);
+  --muted: oklch(0.94 0.014 250);
+  --muted-foreground: oklch(0.45 0.018 260);
+  --accent: oklch(0.925 0.032 250);
+  --accent-foreground: oklch(0.42 0.14 250);
+  /* Destructive: Modern red */
+  --destructive: oklch(0.58 0.22 25);
+  /* Clinical abnormal values are data, not destructive actions. */
+  --clinical-abnormal: oklch(0.56 0.20 25);
+  /* Boundaries remain quiet, but no longer disappear on high-quality displays. */
+  --border: oklch(0.845 0.024 250);
+  --input: oklch(0.90 0.018 250);
+  --ring: oklch(0.55 0.18 250);
+  /* Charts: Vibrant and distinct */
+  --chart-1: oklch(0.65 0.20 250);
+  --chart-2: oklch(0.60 0.18 160);
+  --chart-3: oklch(0.70 0.16 50);
+  --chart-4: oklch(0.62 0.20 300);
+  --chart-5: oklch(0.68 0.18 30);
+  /* Sidebar */
+  --sidebar: oklch(0.976 0.010 250);
+  --sidebar-foreground: oklch(0.15 0.01 264);
+  --sidebar-primary: oklch(0.55 0.18 250);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.935 0.018 250);
+  --sidebar-accent-foreground: oklch(0.15 0.01 264);
+  --sidebar-border: oklch(0.845 0.024 250);
+  --sidebar-ring: oklch(0.55 0.18 250);
+}
+
+.dark {
+  color-scheme: dark;
+  /* UI/UX Pro Max: this is a long-session, data-dense healthcare workspace,
+     not an OLED entertainment surface. Lift the entire palette away from
+     black, keep chroma low, and reserve color for selection and clinical
+     meaning. The three structural levels remain quiet but perceptible. */
+  --background: oklch(0.235 0.012 245);
+  --panel: oklch(0.255 0.012 245);
+  --foreground: oklch(0.80 0.008 245);
+  --card: oklch(0.285 0.012 245);
+  --card-foreground: oklch(0.81 0.008 245);
+  --popover: oklch(0.315 0.014 245);
+  --popover-foreground: oklch(0.82 0.008 245);
+  /* Calm health blue. Dark ink on filled blue avoids luminous white-on-blue. */
+  --primary: oklch(0.66 0.105 240);
+  --primary-foreground: oklch(0.20 0.012 245);
+  --secondary: oklch(0.325 0.014 245);
+  --secondary-foreground: oklch(0.79 0.008 245);
+  --muted: oklch(0.305 0.012 245);
+  --muted-foreground: oklch(0.65 0.012 245);
+  --accent: oklch(0.325 0.024 240);
+  --accent-foreground: oklch(0.81 0.008 245);
+  --destructive: oklch(0.64 0.12 25);
+  /* Muted coral reads as clinical information rather than an emitted alarm. */
+  --clinical-abnormal: oklch(0.69 0.09 20);
+  /* Translucent-looking hairlines: enough for grouping, never a foreground. */
+  --border: oklch(0.33 0.013 245);
+  --input: oklch(0.345 0.014 245);
+  --ring: oklch(0.66 0.105 240);
+  --chart-1: oklch(0.66 0.13 240);
+  --chart-2: oklch(0.64 0.12 160);
+  --chart-3: oklch(0.68 0.12 55);
+  --chart-4: oklch(0.64 0.13 300);
+  --chart-5: oklch(0.67 0.12 25);
+  --sidebar: oklch(0.255 0.012 245);
+  --sidebar-foreground: oklch(0.80 0.008 245);
+  --sidebar-primary: oklch(0.66 0.105 240);
+  --sidebar-primary-foreground: oklch(0.20 0.012 245);
+  --sidebar-accent: oklch(0.325 0.014 245);
+  --sidebar-accent-foreground: oklch(0.81 0.008 245);
+  --sidebar-border: oklch(0.33 0.013 245);
+  --sidebar-ring: oklch(0.66 0.105 240);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  /* The app shell is a fixed-height workspace, never a scrolling document.
+     Without this, a downward drag that starts anywhere outside a scroll
+     container (header, tab strip, an already-at-top list) reaches the
+     document and Chrome Android runs pull-to-refresh — reloading the SPA
+     and discarding in-flight AI streams, chat drafts and unsaved input.
+     Per-container `overscroll-contain` cannot cover that case. */
+  html {
+    overscroll-behavior-y: none;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "kern" 1;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior-y: none;
+  }
+  /* Smooth scrolling */
+  html {
+    @apply scroll-smooth;
+  }
+  /* Better focus styles */
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+  button,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+::selection {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+}
+
+/* Keep the first preventive-report table column compact without asking
+   Tailwind to compile a pseudo-class inside an arbitrary selector. */
+.preventive-narrative col:first-child {
+  width: 36%;
+}
+
+/* Source narratives stay verbatim. Visually mark only truly empty table cells
+   with the same missing-data hatch used by the cumulative lab report. */
+.clinical-empty-cell-hatch td:empty {
+  background-color: color-mix(in oklab, var(--muted) 50%, transparent);
+  background-image: var(--clinical-missing-data-pattern);
+}
+
+/* Thin, persistent scrollbar — signals scrollability for regions that overflow
+   (e.g. the report detail's text / image areas). macOS overlay scrollbars stay
+   hidden until you scroll, so users miss that there's more content below.
+   NOTE: we intentionally do NOT set the standard scrollbar-width/scrollbar-color
+   here — when those are present, Chromium 121+ ignores ::-webkit-scrollbar and
+   falls back to a thin OVERLAY bar that still auto-hides. Styling only
+   ::-webkit-scrollbar keeps the legacy classic scrollbar, which reserves space
+   and stays visible whenever there IS overflow (and none when content fits,
+   since the regions use overflow-y-auto). */
+.scrollbar-thin-persistent::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.scrollbar-thin-persistent::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--border) 90%, transparent);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.scrollbar-thin-persistent::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--primary) 55%, transparent);
+}
+.scrollbar-thin-persistent::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Resource navigation flash — applied by useResourceAnchor when a cited
+   source lands on its card in the left panel. Violet ring that fades. */
+@keyframes resource-flash-fade {
+  0%, 55% {
+    box-shadow: 0 0 0 2px rgb(167 139 250), 0 0 0 6px rgb(167 139 250 / 0.25);
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent, 0 0 0 6px transparent;
+  }
+}
+.resource-flash {
+  animation: resource-flash-fade 2s ease-out forwards;
+  border-radius: 8px;
+}
+
+/* Horizontal-scroll affordance.
+   Phone strips (report sub-tabs, visit filters) hide their scrollbar for
+   density, which leaves no sign that a chip is parked off the right edge —
+   readers simply never find 「處置」. This is the classic layered-background
+   technique rather than a static gradient mask: the `local` cover layers
+   scroll away with the content, uncovering the `scroll`-attached shadow only
+   on the side that actually has more to reveal. A strip whose content fits
+   shows nothing at all, so nothing lies about hidden content. */
+.scroll-hint-x {
+  background-image:
+    linear-gradient(to right, var(--hint-surface, var(--panel)) 60%, transparent),
+    linear-gradient(to left, var(--hint-surface, var(--panel)) 60%, transparent),
+    linear-gradient(to right, color-mix(in oklab, var(--foreground) 16%, transparent), transparent),
+    linear-gradient(to left, color-mix(in oklab, var(--foreground) 16%, transparent), transparent);
+  background-position: left center, right center, left center, right center;
+  background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local, scroll, scroll;
+  /* Paint inside the content box, not the padding box. Strips that reserve
+     right-hand padding for an overlaid control (the reports 「展開」 button)
+     would otherwise draw the shadow underneath that control, where nobody
+     can see it. With no padding the two boxes coincide, so this costs the
+     other strips nothing. */
+  background-origin: content-box;
+}
