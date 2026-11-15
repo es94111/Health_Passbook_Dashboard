@@ -23,29 +23,3 @@ export function shouldAutoRunSummarySlot(input: {
     input.hydratedSlotKey === input.slotKey &&
     input.triggeredIdentity !== input.autoRunIdentity
 }
-
-/**
- * Demo snapshots are frozen, audited outputs for the frozen demo bundle. This
- * gate decides when the caller may install the audited output after the
- * selected slot has finished hydration. Ownership is deliberately handled by
- * the caller: only the canonical model receives it in a result slot; another
- * selected model may use it solely as a presentation fallback.
- */
-export function shouldSeedDemoSlot(input: {
-  hasDemoSeed: boolean
-  slotKey: string
-  hasResult: boolean
-  hydratedSlotKey: string | null
-  patientId: string
-  demoPatientId: string
-  locale: string
-  hasCatalog: boolean
-}) {
-  return input.hasDemoSeed &&
-    Boolean(input.slotKey) &&
-    !input.hasResult &&
-    input.hydratedSlotKey === input.slotKey &&
-    input.patientId === input.demoPatientId &&
-    (input.locale === 'zh-TW' || input.locale === 'en') &&
-    input.hasCatalog
-}

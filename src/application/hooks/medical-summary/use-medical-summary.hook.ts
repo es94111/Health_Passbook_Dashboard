@@ -57,13 +57,6 @@ import {
   MEDICAL_SUMMARY_MODULE_IDS,
 } from '@/src/core/entities/medical-summary.entity'
 import {
-  DEMO_MEDICAL_SUMMARY_GENERATION,
-  DEMO_SAFETY_SCAN_GENERATION,
-  demoMedicalSummarySnapshots,
-  demoSafetyScanSnapshots,
-  remapDemoSnapshotSourceKeys,
-} from '@/src/infrastructure/demo/demo-ai-snapshots'
-import {
   medicalSummaryStore,
   summaryCacheKey,
   SUMMARY_CACHE_MAX_AGE_MS,
@@ -72,7 +65,6 @@ import { useSummaryPrefsStore } from '@/src/application/stores/medical-summary-p
 import { useMedcloudLaunchStore } from '@/src/application/launch/medcloud-launch.store'
 import {
   useAiSlotGeneration,
-  type AiSlotDemoContext,
   type AiSlotRunContext,
 } from '@/src/application/hooks/ai-generation/use-ai-slot-generation.hook'
 import {
@@ -984,44 +976,6 @@ export function useMedicalSummary(): UseMedicalSummaryReturn {
     }
   }, [])
 
-  // Demo bundle: runs through the SAME parse → finalize pipeline as a live
-  // reply, so citations verify against the real catalog.
-  const demoSeed = useCallback((ctx: AiSlotDemoContext): MedicalSummaryResult | null => {
-    const demoAudience = ctx.audience === 'patient' ? 'patient' : 'medical'
-    const demoLocale = ctx.locale === 'zh-TW' ? 'zh-TW' : 'en'
-    const snapshot = remapDemoSnapshotSourceKeys(
-      demoMedicalSummarySnapshots[demoLocale][demoAudience],
-      ctx.catalog,
-    )
-    const parsed = generateMedicalSummaryUseCase.parseResult(JSON.stringify(snapshot))
-    if (!parsed) return null
-    const safetySnapshot = remapDemoSnapshotSourceKeys(
-      demoSafetyScanSnapshots[demoLocale][demoAudience],
-      ctx.catalog,
-    )
-    const safety = MEDICAL_SUMMARY_CARD_REGISTRY.safety.parseRetry(
-      JSON.stringify(safetySnapshot),
-      ctx.catalog,
-    )
-    const finalized = generateMedicalSummaryUseCase.finalizeResult(parsed, ctx.catalog, {
-      clinicalData: ctx.clinicalData,
-      audience: demoAudience,
-      locale: demoLocale,
-    })
-    return {
-      ...finalized,
-      safety: safety
-        ? {
-            ...(safety as NonNullable<MedicalSummaryResult['safety']>),
-            scannedCount: ctx.catalog.length,
-            generation: DEMO_SAFETY_SCAN_GENERATION,
-          }
-        : undefined,
-      completedCardIds: [...MEDICAL_SUMMARY_CARD_IDS],
-      generation: DEMO_MEDICAL_SUMMARY_GENERATION,
-    }
-  }, [])
-
   const readRunMetrics = useCallback(
     (slotKey: string): AiRunMetrics | undefined => runMetricsRef.current.get(slotKey),
     [],
@@ -1098,7 +1052,6 @@ export function useMedicalSummary(): UseMedicalSummaryReturn {
     loadCached,
     run: runAndCapture,
     readRunMetrics,
-    demoSeed,
     resultModelId: medicalSummaryResultModelId,
     retainResultOnModelChange: true,
     blockUnavailableSelectedModel: true,

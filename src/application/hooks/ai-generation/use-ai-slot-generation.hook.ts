@@ -38,12 +38,11 @@ import {
 } from '@/src/infrastructure/cache/encrypted-session-cache'
 import { getModelDefinition, gateModelForKeys, isCustomOpenAiModelId } from '@/src/shared/constants/ai-models.constants'
 import type { SummarySourceCatalogEntry } from '@/src/core/entities/medical-summary.entity'
-import { DEMO_PATIENT_ID } from '@/src/infrastructure/demo/demo-ai-snapshots'
 import {
   BUNDLE_CHANGED_EVENT,
   BUNDLE_CHANGE_SETTLED_EVENT,
 } from '@/src/shared/utils/reset-on-bundle-change'
-import { shouldAutoRunSummarySlot, shouldSeedDemoSlot } from './auto-run-policy'
+import { shouldAutoRunSummarySlot } from './auto-run-policy'
 import { runGenerationJob, type AiGenerationMeasurement, type AiRunMetrics } from './run-generation-job'
 import { withCollectorOperation } from '@/src/application/telemetry/collector-operation'
 import { estimateTokens } from '@/src/shared/utils/token-estimator'
@@ -122,12 +121,6 @@ export interface AiSlotRunContext {
   }
 }
 
-export interface AiSlotDemoContext {
-  audience: Audience
-  locale: Locale
-  catalog: SummarySourceCatalogEntry[]
-  clinicalData: ClinicalAiDataInput
-}
 
 export interface AiSlotGenerationConfig<T> {
   /** Retain this feature's jobs across a validated same-patient supplement. */
@@ -162,12 +155,6 @@ export interface AiSlotGenerationConfig<T> {
    *  settles and reported on `ai_result`. Omit when the feature measures
    *  nothing beyond the end-to-end duration the engine already times. */
   readRunMetrics?: (slotKey: string) => AiRunMetrics | undefined
-  /** Demo bundle seeding: build the locale-matched pre-generated snapshot
-   *  result (through the same parse/validate pipeline as a live reply) instead
-   *  of burning an AI call. Only consulted for the demo patient + supported
-   *  locale + an empty, hydrated slot. The user's selected model does not
-   *  affect snapshot eligibility. */
-  demoSeed?: (ctx: AiSlotDemoContext) => T | null
   /** Read immutable provenance from a result. When supplied, a legacy result
    *  filed under the wrong model slot is presentation fallback only; it never
    *  masquerades as the selected model's own saved version. */
@@ -257,7 +244,6 @@ export function useAiSlotGeneration<T>(config: AiSlotGenerationConfig<T>): AiSlo
     cacheMaxAgeMs,
     loadCached,
     run,
-    demoSeed,
     resultModelId,
     readRunMetrics,
     retainResultOnModelChange = false,
@@ -414,14 +400,7 @@ export function useAiSlotGeneration<T>(config: AiSlotGenerationConfig<T>): AiSlo
   const resultScope = ownershipSignature
     ? [bundleRevision, patientId, audience, locale, ownershipSignature].join('::')
     : ''
-  // The frozen zh-TW demo has a bundled result even when a model preference
-  // from real data is still selected. Treat it as a presentation fallback,
-  // but never file it as that unrelated model's own generated version.
-  const demoSnapshotExpected =
-    Boolean(demoSeed) &&
-    patientId === DEMO_PATIENT_ID &&
-    locale === 'zh-TW'
-  const allowResultRetention = retainResultOnModelChange || demoSnapshotExpected
+  const allowResultRetention = retainResultOnModelChange
   // Auto-run is a consented action for one clinical-input scope, not a model
   // picker side effect. After that scope has attempted once, changing the
   // picker only selects the next explicit generation; it must not launch a
@@ -454,7 +433,6 @@ export function useAiSlotGeneration<T>(config: AiSlotGenerationConfig<T>): AiSlo
     isMedcloudLaunchRoute(window.location.href)
 
   const exactResult = store((s) => (slotKey ? s.byKey[slotKey] : undefined))
-  const setResult = store((s) => s.setResult)
   const isRunning = store((s) => (slotKey ? !!s.running[slotKey] : false))
   const isAnyRunning = store((s) => Boolean(scopeSlotPrefix) && Object.entries(s.running).some(
     ([key, running]) => running && key.startsWith(scopeSlotPrefix) && key.endsWith(scopeSlotSuffix),
@@ -467,15 +445,7 @@ export function useAiSlotGeneration<T>(config: AiSlotGenerationConfig<T>): AiSlo
     : resultModelId?.(exactResult) || null
   const exactResultOwnerModelId = exactResult === undefined
     ? null
-    : declaredExactResultModelId || (
-        demoSnapshotExpected && resolvedModelId !== defaultModelId
-          // Released builds predated generation provenance and could file the
-          // bundled Flash-Lite snapshot in any selected demo slot. On the demo
-          // patient, an unlabelled non-default result is therefore fallback,
-          // never proof that the selected model actually generated it.
-          ? defaultModelId
-          : resolvedModelId
-      )
+    : declaredExactResultModelId || resolvedModelId
   const exactResultBelongsToSelectedModel = exactResult !== undefined &&
     exactResultOwnerModelId === resolvedModelId
   const exactResultOwnerRuntimeId = exactResult === undefined
@@ -754,61 +724,6 @@ export function useAiSlotGeneration<T>(config: AiSlotGenerationConfig<T>): AiSlo
       window.removeEventListener(BUNDLE_CHANGE_SETTLED_EVENT, settle)
     }
   }, [abortRuns, stopAi, preserveAcrossContinuation])
-  // Demo bundle: seed the pre-generated snapshot instead of burning an AI call
-  // on data whose answer is a constant. It belongs to the feature's canonical
-  // default model. With another model selected it may fill an otherwise blank
-  // screen as presentation fallback, but MUST NOT be written into that model's
-  // slot. Selecting the canonical model seeds its own slot after hydration, so
-  // switching back later restores the audited snapshot. Declared before the
-  // auto-run effect and marks autoTriggeredRef first so the same commit cannot
-  // also fire a live generation.
-  useEffect(() => {
-    if (!demoSeed) return
-    const selectedOwnsSnapshot = resolvedModelId === defaultModelId
-    const hasRetainedPresentation = retainedResultState?.scope === resultScope
-    if (!shouldSeedDemoSlot({
-      hasDemoSeed: true,
-      slotKey,
-      hasResult: Boolean(exactResult) || (!selectedOwnsSnapshot && hasRetainedPresentation),
-      hydratedSlotKey: hydrated,
-      patientId,
-      demoPatientId: DEMO_PATIENT_ID,
-      locale,
-      hasCatalog: catalog.length > 0,
-    })) return
-    if (!scopedClinicalData) return
-    const seeded = demoSeed({ audience, locale, catalog, clinicalData: scopedClinicalData })
-    if (!seeded) return
-    autoTriggeredRef.current = autoRunIdentity
-    if (selectedOwnsSnapshot) {
-      setResult(slotKey, seeded)
-      return
-    }
-    // The snapshot is presentation-only for a retained non-default picker.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setRetainedResultState({
-      scope: resultScope,
-      modelId: defaultModelId,
-      runtimeId: defaultModelId,
-      result: seeded,
-    })
-  }, [
-    audience,
-    autoRunIdentity,
-    catalog,
-    defaultModelId,
-    demoSeed,
-    exactResult,
-    hydrated,
-    locale,
-    patientId,
-    resolvedModelId,
-    resultScope,
-    retainedResultState,
-    scopedClinicalData,
-    setResult,
-    slotKey,
-  ])
 
   // Auto-run once per content-bound slot + access-context after hydration; a
   // failed attempt is NOT retried in a loop — the user regenerates manually.
@@ -821,8 +736,7 @@ export function useAiSlotGeneration<T>(config: AiSlotGenerationConfig<T>): AiSlo
         !progressiveAutoBlocked &&
         !medcloudLaunchOwnsAutoRun &&
         selectedModelReady &&
-        !bundleTransitionActive &&
-        !demoSnapshotExpected,
+        !bundleTransitionActive,
       authLoading,
       slotKey,
       busy: isAnyRunning,
@@ -834,7 +748,7 @@ export function useAiSlotGeneration<T>(config: AiSlotGenerationConfig<T>): AiSlo
     })) return
     autoTriggeredRef.current = autoRunIdentity
     void generateRun(true)
-  }, [autoRunEnabled, progressiveAutoBlocked, medcloudLaunchOwnsAutoRun, selectedModelReady, bundleTransitionActive, demoSnapshotExpected, authLoading, slotKey, autoRunIdentity, isAnyRunning, result, dataReady, hydrated, generateRun])
+  }, [autoRunEnabled, progressiveAutoBlocked, medcloudLaunchOwnsAutoRun, selectedModelReady, bundleTransitionActive, authLoading, slotKey, autoRunIdentity, isAnyRunning, result, dataReady, hydrated, generateRun])
 
   return {
     patientId,

@@ -8,15 +8,13 @@
 import { useCallback, useRef, useState } from 'react'
 import {
   ChevronRight,
-  CloudDownload,
   FileUp,
-  FlaskConical,
   Hospital,
   Shield,
   type LucideIcon,
 } from 'lucide-react'
 import { useLanguage } from '@/src/application/providers/language.provider'
-import { useImportBundle, type DemoDataVariant } from '@/features/import-bundle/hooks/useImportBundle'
+import { useImportBundle } from '@/features/import-bundle/hooks/useImportBundle'
 import { BundleFileInput, type BundleFileInputHandle } from '@/features/import-bundle/components/BundleFileInput'
 import { Button } from '@/components/ui/button'
 import { getLocaleDisplayName, type Locale } from '@/src/shared/i18n/i18n.config'
@@ -121,7 +119,7 @@ export function WelcomeOnboarding() {
   const i18n = t.importBundle
   const languageLabel = locale === 'en' ? 'Language' : 'Language / 語言'
 
-  const { importFile, loadDemo, loading, error } = useImportBundle()
+  const { importFile, loading, error } = useImportBundle()
   const [isDragging, setIsDragging] = useState(false)
   const dragCounter = useRef(0)
 
@@ -155,14 +153,6 @@ export function WelcomeOnboarding() {
     e.preventDefault()
     e.stopPropagation()
   }, [])
-
-  const handleLoadDemo = useCallback(async (variant: DemoDataVariant) => {
-    try {
-      await loadDemo(variant)
-    } catch {
-      // error surfaces via the hook's `error` state
-    }
-  }, [loadDemo])
 
   const handleDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault()
@@ -254,10 +244,8 @@ export function WelcomeOnboarding() {
 
         {/* The welcome screen is an entry point, not a dense clinical view.
             The source options make the available paths understandable at a
-            glance while a shared component keeps their structure aligned. The
-            two 試用資料 are the same patient seen through 健康存摺 and through
-            雲端病歷, so they share the middle column as one choice. */}
-        <section className="mt-8 grid gap-3 sm:grid-cols-3 lg:gap-4">
+            glance while a shared component keeps their structure aligned. */}
+        <section className="mt-8 grid gap-3 sm:grid-cols-2 lg:gap-4">
           <WelcomeSourceOption
             icon={FileUp}
             title={w.localTitle ?? 'Local FHIR Bundle'}
@@ -265,30 +253,6 @@ export function WelcomeOnboarding() {
             onClick={() => localCardFileRef.current?.open()}
             disabled={loading}
           />
-
-          <div className="flex flex-col gap-3 lg:gap-4">
-            <WelcomeSourceOption
-              icon={CloudDownload}
-              title={w.medcloudDemoTitle ?? 'Demo data (NHI MediCloud)'}
-              description={w.medcloudDemoDesc ?? 'The same sample patient as seen in NHI MediCloud — explore without importing anything.'}
-              tone="featured"
-              onClick={() => handleLoadDemo('medcloud')}
-              disabled={loading}
-              testId="welcome-medcloud-demo-card"
-              compact
-            />
-
-            <WelcomeSourceOption
-              icon={FlaskConical}
-              title={w.demoTitle ?? 'Demo data (My Health Bank)'}
-              description={w.demoDesc ?? 'Load an anonymised sample patient — explore without importing anything.'}
-              tone="featured"
-              onClick={() => handleLoadDemo('health-bank')}
-              disabled={loading}
-              testId="welcome-demo-card"
-              compact
-            />
-          </div>
 
           <WelcomeSourceOption
             icon={Hospital}

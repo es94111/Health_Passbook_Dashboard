@@ -1152,26 +1152,6 @@ export const LocalBundleService = {
     }
   },
 
-  /** Source classification bound to this tab's active Bundle identity. */
-  isDemoData(): boolean {
-    if (memBundle !== null) return memBundleIsDemo
-    if (typeof window === 'undefined') return false
-    try {
-      const tabMarker = sessionStorage.getItem(STORAGE_KEY)
-      if (tabMarker) {
-        const importId = importIdFromMarker(tabMarker)
-        const demoMarker = sessionStorage.getItem(DEMO_FLAG_KEY)
-        return importId ? demoMarker === importId : demoMarker === MARKER
-      }
-      const legacyImportId = importIdFromMarker(localStorage.getItem(STORAGE_KEY))
-      const legacyDemoMarker = localStorage.getItem(DEMO_FLAG_KEY)
-      return legacyImportId
-        ? legacyDemoMarker === legacyImportId
-        : legacyDemoMarker === MARKER
-    } catch {
-      return false
-    }
-  },
 
   /** Check availability without decrypting a potentially large source file. */
   async hasOriginalFhir(): Promise<boolean> {

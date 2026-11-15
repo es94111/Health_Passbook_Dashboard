@@ -26,7 +26,6 @@ export const detectLaunchSource = async (): Promise<LaunchSource> => {
       import('@/src/application/hooks/ai-generation/ai-data-source'),
       import('@/src/infrastructure/fhir/client/fhir-client.service'),
     ])
-    if (dataSource.isDemoDataActive()) return 'demo'
     if (dataSource.getAiDataSourceState().importId) return 'import'
     if (fhirClient.hasSmartContext()) return 'smart'
   } catch {

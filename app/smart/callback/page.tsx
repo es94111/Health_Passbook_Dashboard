@@ -47,12 +47,6 @@ export default function SmartCallbackPage() {
           >
             回首頁 / Home
           </a>
-          <a
-            href={`${prefix}/smart/launch`}
-            className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm hover:bg-accent"
-          >
-            使用測試環境重新啟動 / Relaunch (demo)
-          </a>
         </div>
       </div>
     )

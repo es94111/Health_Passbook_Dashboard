@@ -73,7 +73,7 @@ export type ReportInterpretHost = 'report-row' | 'document-card' | 'document-dia
 
 /** How this session got its patient data. Coarse by design — never the `iss`,
  *  the import id, or any part of the URL beyond the `?site=` marker. */
-export type LaunchSource = 'medcloud2' | 'smart' | 'demo' | 'import' | 'none'
+export type LaunchSource = 'medcloud2' | 'smart' | 'import' | 'none'
 export type LaunchSite = 'vghtpe' | 'unknown'
 
 /** Which AI feature made the call. */
@@ -308,7 +308,7 @@ const ENUM_PARAM_VALUES: Record<string, readonly string[]> = {
   action: ['open', 'regenerate'],
   // Also constrains the identically-named USER properties — same value space,
   // and validateValue is shared by both paths.
-  launch_source: ['medcloud2', 'smart', 'demo', 'import', 'none'],
+  launch_source: ['medcloud2', 'smart', 'import', 'none'],
   site: ['vghtpe', 'unknown'],
   surface: ['summary', 'safety', 'med_recon', 'insights', 'report_interp', 'chat'],
   outcome: ['ok', 'error', 'timeout', 'aborted', 'context_overflow', 'quota', 'parse_failed'],

@@ -37,7 +37,7 @@ export const LAB_DATA_REPORT_PROBLEM_TYPES = [
 ] as const
 export type LabDataReportProblemType = (typeof LAB_DATA_REPORT_PROBLEM_TYPES)[number] | 'unspecified'
 
-export const LAB_DATA_REPORT_DATA_SOURCES = ['medcloud', 'nhi', 'smart', 'demo', 'import', 'unknown'] as const
+export const LAB_DATA_REPORT_DATA_SOURCES = ['medcloud', 'nhi', 'smart', 'import', 'unknown'] as const
 export type LabDataReportDataSource = (typeof LAB_DATA_REPORT_DATA_SOURCES)[number]
 
 export type LabDataReportValue =

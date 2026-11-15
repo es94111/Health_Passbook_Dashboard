@@ -610,6 +610,6 @@ export function detectLabDataSource(
   }
   if (medcloud || launchSource === 'medcloud2') return 'medcloud'
   if (nhi) return 'nhi'
-  if (launchSource === 'smart' || launchSource === 'demo' || launchSource === 'import') return launchSource
+  if (launchSource === 'smart' || launchSource === 'import') return launchSource
   return 'unknown'
 }

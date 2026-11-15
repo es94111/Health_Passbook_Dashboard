@@ -15,24 +15,13 @@ import { shouldUseLocalBundle } from '@/src/infrastructure/fhir/client/fhir-clie
 import { LocalBundleService } from '@/src/infrastructure/fhir/services/local-bundle.service'
 import { BUNDLE_CHANGED_EVENT } from '@/src/shared/utils/reset-on-bundle-change'
 
-/** `demo` = bundled demo patient, `local` = imported file, `other` = SMART. */
-export type AiDataSource = 'demo' | 'local' | 'other'
+/** `local` = imported file, `other` = SMART. */
+export type AiDataSource = 'local' | 'other'
 
 export interface AiDataSourceState {
   source: AiDataSource
   /** Identifies the active local import so per-import scopes can key off it. */
   importId: string | null
-}
-
-/** True only when the currently active source is the bundled demo. A leftover
- * demo flag must not win over a live SMART launch, which takes source priority. */
-export function isDemoDataActive(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    return shouldUseLocalBundle() && LocalBundleService.isDemoData()
-  } catch {
-    return false
-  }
 }
 
 export function getAiDataSourceState(): AiDataSourceState {
@@ -45,8 +34,6 @@ export function getAiDataSourceState(): AiDataSourceState {
     localBundleActive = false
   }
   if (!localBundleActive) return { source: 'other', importId: null }
-  if (isDemoDataActive()) return { source: 'demo', importId: null }
-
   let importId: string | null = null
   try {
     importId = LocalBundleService.getActiveImportId()

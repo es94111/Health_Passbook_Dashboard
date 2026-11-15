@@ -50,7 +50,6 @@ import { guidedPreviewEvents, GUIDED_PREVIEW_DIALOG_CLASSES } from '@/features/r
 import { createSharedPrompt, EXAMPLE_OUTPUT_MAX_LENGTH, updateSharedPrompt } from '@/features/prompt-gallery/services/prompt-gallery.service'
 import type { PromptCategory, PromptSpecialty, PromptType, TenantMembership } from '../types/prompt.types'
 import { createTenantPrompt } from '@/features/prompt-gallery/services/tenant-prompts.service'
-import { useDemoExampleOutput } from '@/features/prompt-gallery/hooks/useDemoExampleOutput'
 import { PromptSpecialtyPicker } from './PromptSpecialtyPicker'
 import {
   coerceInsightOutputFormat,
@@ -120,7 +119,6 @@ function SharePromptDialogForm({
   const { t } = useLanguage()
   const { audience } = useAudience()
   const { user } = useAuth()
-  const generateDemoExampleOutput = useDemoExampleOutput()
 
   const [title, setTitle] = useState(initialTitle || '')
   const [description, setDescription] = useState(initialDescription || '')
@@ -143,7 +141,6 @@ function SharePromptDialogForm({
     initialTenantId && publishTargets.some((membership) => membership.tenantId === initialTenantId) ? initialTenantId : 'public')
   const targetMembership = publishTargets.find((membership) => membership.tenantId === publishTarget)
   const [loading, setLoading] = useState(false)
-  const [generatingExample, setGeneratingExample] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const categories: PromptCategory[] = [
@@ -214,25 +211,7 @@ function SharePromptDialogForm({
     setError(null)
 
     try {
-      let resolvedExampleOutput = exampleOutput.trim()
-      if (!resolvedExampleOutput) {
-        setGeneratingExample(true)
-        try {
-          resolvedExampleOutput = await generateDemoExampleOutput({
-            prompt,
-            outputFormat,
-            languagePolicy: initialLanguagePolicy,
-          })
-          // Preserve the generated copy in the form. If the database write
-          // fails, retrying will not make a second AI request.
-          setExampleOutput(resolvedExampleOutput)
-        } catch {
-          setError(t.promptGallery.exampleGenerationError)
-          return
-        } finally {
-          setGeneratingExample(false)
-        }
-      }
+      const resolvedExampleOutput = exampleOutput.trim()
 
       const payload = {
         title: title.trim(),
@@ -643,9 +622,7 @@ function SharePromptDialogForm({
           <Button onClick={handleShare} disabled={guidedPreview || loading || !title.trim() || !prompt.trim()}>
             {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             {loading
-              ? generatingExample
-                ? t.promptGallery.generatingExampleOutput
-                : editingPromptId ? t.promptGallery.savingChanges : t.promptGallery.savingTemplate
+              ? editingPromptId ? t.promptGallery.savingChanges : t.promptGallery.savingTemplate
               : editingPromptId
                 ? t.promptGallery.saveChanges
                 : isPublic ? t.promptGallery.sharePrompt : t.promptGallery.savePrivateTemplate}

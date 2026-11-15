@@ -1,6 +1,5 @@
 import {
   shouldAutoRunSummarySlot,
-  shouldSeedDemoSlot,
 } from '@/src/application/hooks/ai-generation/auto-run-policy'
 
 const ready = {
@@ -37,48 +36,5 @@ describe('Medical Summary auto-run policy', () => {
 
   it('respects the user-facing auto-generate toggle', () => {
     expect(shouldAutoRunSummarySlot({ ...ready, enabled: false })).toBe(false)
-  })
-})
-
-describe('demo snapshot policy', () => {
-  it('allows a bundled fallback after a retained non-default slot is hydrated', () => {
-    expect(shouldSeedDemoSlot({
-      hasDemoSeed: true,
-      slotKey: 'demo-patient-1::patient::gpt-5.6-terra',
-      hasResult: false,
-      hydratedSlotKey: 'demo-patient-1::patient::gpt-5.6-terra',
-      patientId: 'demo-patient-1',
-      demoPatientId: 'demo-patient-1',
-      locale: 'zh-TW',
-      hasCatalog: true,
-    })).toBe(true)
-  })
-
-  it('allows the locale-matched bundled fallback in English', () => {
-    expect(shouldSeedDemoSlot({
-      hasDemoSeed: true,
-      slotKey: 'demo-patient-1::medical::en::gemini-3.1-flash-lite',
-      hasResult: false,
-      hydratedSlotKey: 'demo-patient-1::medical::en::gemini-3.1-flash-lite',
-      patientId: 'demo-patient-1',
-      demoPatientId: 'demo-patient-1',
-      locale: 'en',
-      hasCatalog: true,
-    })).toBe(true)
-  })
-
-  it('does not seed a real patient or overwrite an existing result', () => {
-    const ready = {
-      hasDemoSeed: true,
-      slotKey: 'demo-patient-1::patient::gpt-5.6-terra',
-      hasResult: false,
-      hydratedSlotKey: 'demo-patient-1::patient::gpt-5.6-terra',
-      patientId: 'demo-patient-1',
-      demoPatientId: 'demo-patient-1',
-      locale: 'zh-TW',
-      hasCatalog: true,
-    }
-    expect(shouldSeedDemoSlot({ ...ready, patientId: 'real-patient' })).toBe(false)
-    expect(shouldSeedDemoSlot({ ...ready, hasResult: true })).toBe(false)
   })
 })

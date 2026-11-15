@@ -2,7 +2,7 @@
 
 import { SDK_IMPORT_AVAILABLE } from '@/src/shared/config/optional-capabilities'
 import { useRef, useState } from "react"
-import { FileUp, Trash2, Database, FlaskConical, X } from "lucide-react"
+import { FileUp, Trash2, Database } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
@@ -35,7 +35,7 @@ export function ImportBundleButton({ iconOnlyOnMobile = false }: ImportBundleBut
   const fileRef = useRef<BundleFileInputHandle>(null)
   const { t, locale } = useLanguage()
   const i18n = t.importBundle
-  const { importFile, clear, loading, error, hasBundle, bundleIsActive, isDemo } = useImportBundle()
+  const { importFile, clear, loading, error, hasBundle, bundleIsActive } = useImportBundle()
   // Clearing wipes the whole patient context in one click — confirm first
   const [confirmClearOpen, setConfirmClearOpen] = useState(false)
 
@@ -44,41 +44,21 @@ export function ImportBundleButton({ iconOnlyOnMobile = false }: ImportBundleBut
       <div className="flex items-center gap-1">
         {/* Data-source badge, only when the bundle is genuinely the data
             source — SMART context, if active, suppresses it so users aren't
-            misled. Reads "示範資料" (green) for the bundled demo, "本地資料"
-            (amber) for a real local import. The bundle's presence is also
-            indicated by the Trash button below (which exits demo too). */}
+            misled. Reads "本地資料" (amber) for a real local import. The
+            bundle's presence is also indicated by the Trash button below. */}
         {bundleIsActive && (
-          isDemo ? (
-            // Demo badge doubles as the exit control — clicking it ends the demo
-            // and returns to the welcome screen immediately (no confirm; demo
-            // data is disposable). The trailing × signals it's dismissible.
-            <button
-              type="button"
-              onClick={() => { void clear() }}
-              disabled={loading}
-              title={i18n.exitDemo}
-              aria-label={i18n.exitDemo}
-              className="group flex h-auto w-auto items-center justify-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-1 dark:ring-inset dark:ring-emerald-500/25 dark:hover:bg-emerald-500/15 max-md:h-[44px] max-md:w-[44px] max-md:rounded-md max-md:p-0 @max-[72rem]:h-9 @max-[72rem]:w-11 @max-[72rem]:rounded-md @max-[72rem]:p-0"
-            >
-              <FlaskConical className="h-3 w-3" />
-              <span className="max-md:hidden @max-[72rem]:hidden">{i18n.demoData}</span>
-              <X className="h-3 w-3 opacity-60 transition-opacity group-hover:opacity-100" />
-            </button>
-          ) : (
-            <span
-              className="flex h-auto w-auto items-center justify-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-1 dark:ring-inset dark:ring-amber-500/25 max-md:h-[44px] max-md:w-[44px] max-md:rounded-md max-md:p-0 @max-[72rem]:h-9 @max-[72rem]:w-9 @max-[72rem]:rounded-md @max-[72rem]:p-0"
-              title={i18n.localData}
-            >
-              <Database className="h-3 w-3" />
-              <span className="max-md:hidden @max-[72rem]:hidden">{i18n.localData}</span>
-            </span>
-          )
+          <span
+            className="flex h-auto w-auto items-center justify-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-1 dark:ring-inset dark:ring-amber-500/25 max-md:h-[44px] max-md:w-[44px] max-md:rounded-md max-md:p-0 @max-[72rem]:h-9 @max-[72rem]:w-9 @max-[72rem]:rounded-md @max-[72rem]:p-0"
+            title={i18n.localData}
+          >
+            <Database className="h-3 w-3" />
+            <span className="max-md:hidden @max-[72rem]:hidden">{i18n.localData}</span>
+          </span>
         )}
         {/* Trash (with confirm) for a real imported bundle — placed right next
             to the 本地資料 badge it acts on, so "clear this data" is the
-            intuitive click target. The demo uses its clickable badge × instead,
-            so this is hidden in demo mode. */}
-        {hasBundle && !isDemo && (
+            intuitive click target. */}
+        {hasBundle && (
           <Button
             variant="ghost"
             size="icon"

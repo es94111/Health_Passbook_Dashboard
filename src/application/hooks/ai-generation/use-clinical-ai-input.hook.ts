@@ -33,6 +33,7 @@ import {
 import type { ClinicalDataCollection } from '@/src/core/entities/clinical-data.entity'
 import type { SummarySourceCatalogEntry } from '@/src/core/entities/medical-summary.entity'
 import { contentSignature } from '@/src/infrastructure/cache/encrypted-session-cache'
+import { nowMs } from '@/src/application/telemetry/ai-outcome'
 import { useLanguage } from '@/src/application/providers/language.provider'
 import { defaultLocale } from '@/src/shared/i18n/i18n.config'
 import { estimateTokens } from '@/src/shared/utils/token-estimator'
@@ -40,8 +41,6 @@ import { countPatientResources } from '@/src/application/telemetry/patient-resou
 import { buildPatientTextLiterals } from '@/src/shared/utils/pii-text-scrub'
 import { prioritizeClinicalDataForTokenBudget } from '@/src/core/utils/prioritized-clinical-context.utils'
 import type { ClinicalData } from '@/src/application/hooks/clinical-context/types'
-import { isDemoDataActive } from '@/src/application/hooks/ai-generation/ai-data-source'
-import { clinicalNowMs } from '@/src/shared/constants/demo-data.constants'
 
 const EMPTY_VARIANT_EXCLUSIONS = Object.freeze([])
 
@@ -209,19 +208,16 @@ export function useClinicalAiInput(
     ).map((document) => document.id)
   }, [rawDataReady, activeClinicalData, activeProfile])
 
-  // The demo chart is judged against its own as-of date, not the wall clock —
-  // otherwise its medications age out of scope and the pre-generated citations
-  // stop resolving. For real data, snapshot "now" for the currently loaded
-  // patient instead of calling Date.now() on every render: a millisecond-level
-  // dependency invalidated every clinical-data memo whenever unrelated UI
-  // state (notably the display language) changed.
-  const demoDataActive = isDemoDataActive()
+  // Snapshot "now" for the currently loaded patient instead of calling
+  // Date.now() on every render: a millisecond-level dependency invalidated
+  // every clinical-data memo whenever unrelated UI state (notably the display
+  // language) changed.
   const clinicalScopeClock = useMemo(
     () => ({
       patient,
-      nowMs: clinicalNowMs(demoDataActive, patient?.id),
+      nowMs: nowMs(),
     }),
-    [demoDataActive, patient],
+    [patient],
   )
   const scopeNowMs = clinicalScopeClock.nowMs
   const needsBaseScope = includeSources || fitState.tier === 'prioritized'

@@ -7,7 +7,6 @@
 export {}
 
 const mockIsMedcloudLaunchRoute = jest.fn(() => false)
-const mockIsDemoDataActive = jest.fn(() => false)
 const mockGetAiDataSourceState = jest.fn(() => ({ source: 'other', importId: null as string | null }))
 const mockHasSmartContext = jest.fn(() => false)
 
@@ -16,7 +15,6 @@ jest.mock('@/src/application/launch/medcloud-launch-route', () => ({
 }))
 
 jest.mock('@/src/application/hooks/ai-generation/ai-data-source', () => ({
-  isDemoDataActive: () => mockIsDemoDataActive(),
   getAiDataSourceState: () => mockGetAiDataSourceState(),
 }))
 
@@ -33,23 +31,16 @@ import {
 describe('detectLaunchSource', () => {
   beforeEach(() => {
     mockIsMedcloudLaunchRoute.mockReturnValue(false)
-    mockIsDemoDataActive.mockReturnValue(false)
     mockGetAiDataSourceState.mockReturnValue({ source: 'other', importId: null })
     mockHasSmartContext.mockReturnValue(false)
   })
 
   it('gives the Medcloud route priority over everything else', async () => {
     mockIsMedcloudLaunchRoute.mockReturnValue(true)
-    mockIsDemoDataActive.mockReturnValue(true)
     mockGetAiDataSourceState.mockReturnValue({ source: 'local', importId: 'import-1' })
     mockHasSmartContext.mockReturnValue(true)
 
     await expect(detectLaunchSource()).resolves.toBe('medcloud2')
-  })
-
-  it('reports the bundled demo patient', async () => {
-    mockIsDemoDataActive.mockReturnValue(true)
-    await expect(detectLaunchSource()).resolves.toBe('demo')
   })
 
   it('reports an imported bundle', async () => {
@@ -67,7 +58,7 @@ describe('detectLaunchSource', () => {
   })
 
   it('falls back to "none" instead of throwing when storage is unavailable', async () => {
-    mockIsDemoDataActive.mockImplementation(() => {
+    mockGetAiDataSourceState.mockImplementation(() => {
       throw new Error('sessionStorage unavailable')
     })
     await expect(detectLaunchSource()).resolves.toBe('none')

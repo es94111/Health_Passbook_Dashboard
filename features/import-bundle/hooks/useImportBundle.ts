@@ -31,17 +31,6 @@ import { ProgressiveImportError } from '../services/progressive-import-transacti
 import { persistSummaryVersions } from '@/src/application/hooks/medical-summary/summary-versions.store'
 import { reportHospitalCapture } from '@/src/infrastructure/telemetry/hospital-capture'
 
-/** Ceiling for pulling a bundled demo chart (~1.7–2.5MB) over hospital Wi-Fi. */
-const DEMO_FETCH_TIMEOUT_MS = 30_000
-
-/** The two bundled 試用資料 of the same de-identified patient. */
-export type DemoDataVariant = 'health-bank' | 'medcloud'
-
-const DEMO_BUNDLE_PATHS: Record<DemoDataVariant, string> = {
-  'health-bank': '/demo/demo-bundle.json',
-  medcloud: '/demo/demo-medcloud-bundle.json',
-}
-
 export interface ImportBundleOptions {
   signal?: AbortSignal
   expectedImportId?: string
@@ -59,18 +48,12 @@ export interface UseImportBundleReturn {
   /** Parse + persist a FHIR Bundle file. Throws on validation error;
    *  errors are also captured into the `error` state for UI use. */
   importFile: (file: File, options?: ImportBundleOptions) => Promise<void>
-  /** Fetch + load a bundled demo patient ("試用資料 / 示範病人"); defaults to
-   *  the 健康存摺 chart. Goes through the exact same parse/save/cache-invalidate
-   *  path as a real import. */
-  loadDemo: (variant?: DemoDataVariant) => Promise<void>
   /** Wipe the imported bundle from localStorage. */
   clear: () => Promise<void>
   loading: boolean
   error: string | null
   hasBundle: boolean
   bundleIsActive: boolean
-  /** True when the active bundle is the bundled demo. */
-  isDemo: boolean
 }
 
 export function useImportBundle(): UseImportBundleReturn {
@@ -81,13 +64,11 @@ export function useImportBundle(): UseImportBundleReturn {
   // client first paints match.
   const [hasBundle, setHasBundle] = useState(false)
   const [bundleIsActive, setBundleIsActive] = useState(false)
-  const [isDemo, setIsDemo] = useState(false)
 
   useEffect(() => {
     const sync = () => {
       setHasBundle(LocalBundleService.hasData())
       setBundleIsActive(shouldUseLocalBundle())
-      setIsDemo(LocalBundleService.isDemoData())
     }
 
     // A localStorage presence marker is shared by every tab on this origin,
@@ -116,11 +97,10 @@ export function useImportBundle(): UseImportBundleReturn {
     }
   }, [])
 
-  // Shared persist core for both real imports and the demo loader: validate,
-  // save, mark/unmark demo, then refresh presence state + invalidate queries.
+  // Shared persist core for real imports: validate, save, then refresh
+  // presence state + invalidate queries.
   const persistBundle = useCallback(async (
     bundle: any,
-    demo: boolean,
     originalFhir: Blob,
     sourceMetadata?: ClinicalSourceMetadata,
     patientProfile?: ReturnType<typeof LocalBundleService.getUserEnteredPatientProfile>,
@@ -140,18 +120,12 @@ export function useImportBundle(): UseImportBundleReturn {
     // Close the background-AI gate BEFORE publishing a newly imported real
     // bundle. The local save/query refresh still completes normally (the bridge
     // waits for that settled signal), while the contextual consent dialog can be
-    // answered afterwards. Demo data uses audited snapshots and must never carry
-    // a previous real-import authorization forward.
-    // Real and demo imports both enter the non-answerable transition lock. For
-    // demo we clear it only after React Query has published the audited data;
-    // clearing earlier would briefly expose the old real patient under demo's
-    // automatic-snapshot policy.
+    // answered afterwards.
     // The storage layer checks again after preparing encrypted data, before
     // publishing the new pointer and key.
     signal?.throwIfAborted()
     await LocalBundleService.save(bundle, {
       importId: localImportId,
-      demo,
       sourceMetadata,
       originalFhir,
       ...(signal ? { signal, beforeCommit } : {}),
@@ -170,7 +144,6 @@ export function useImportBundle(): UseImportBundleReturn {
     purgeAiResultCaches()
     setHasBundle(true)
     setBundleIsActive(shouldUseLocalBundle())
-    setIsDemo(demo)
     notifyBundleChanged(preserveMedicalSummary)
     // Transfer retained reading history into the committed bundle's encryption
     // namespace before query refresh can wait on a slow clinical-data fetch.
@@ -208,7 +181,7 @@ export function useImportBundle(): UseImportBundleReturn {
         }
         const patientProfile = options?.expectedImportId ? LocalBundleService.getUserEnteredPatientProfile() : undefined
         assertExpectedImport()
-        await persistBundle(prepared.bundle, false, prepared.originalFhir, prepared.sourceMetadata, patientProfile,
+        await persistBundle(prepared.bundle, prepared.originalFhir, prepared.sourceMetadata, patientProfile,
           options?.signal, assertExpectedImport, options?.onCommitted,
           Boolean(options?.progressiveRunId && options.expectedImportId))
         reportHospitalCapture(prepared.bundle, options?.progressiveStage, options?.progressiveReason)
@@ -222,63 +195,15 @@ export function useImportBundle(): UseImportBundleReturn {
     }
   }, [persistBundle])
 
-  const loadDemo = useCallback(async (variant: DemoDataVariant = 'health-bank') => {
-    setLoading(true)
-    setError(null)
-    try {
-      await serializeLocalBundleMutation(async () => {
-        const base = process.env.NEXT_PUBLIC_BASE_PATH || ''
-        // Default caching (revalidates against the server) — NOT force-cache,
-        // so a re-published demo bundle is never served stale.
-        // Without a timeout a stalled connection left BOTH welcome-screen
-        // buttons disabled forever (they key off `loading`), with no error and
-        // no way back.
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), DEMO_FETCH_TIMEOUT_MS)
-        let res: Response
-        try {
-          res = await fetch(`${base}${DEMO_BUNDLE_PATHS[variant]}`, { signal: controller.signal })
-        } catch (fetchError) {
-          if (controller.signal.aborted) {
-            throw new Error('Loading the demo data timed out. Check the connection and try again.')
-          }
-          throw fetchError
-        } finally {
-          clearTimeout(timeoutId)
-        }
-        if (!res.ok) throw new Error(`Failed to load demo data (${res.status})`)
-        const originalFhir = await res.blob()
-        if (variant === 'medcloud') {
-          // A real 雲端病歷 export is imported as a file, which also runs the
-          // local enrichment step; route the demo through the same converter so
-          // it renders exactly like the user's own MediCloud import would.
-          const prepared = await prepareLocalImportFile(
-            new File([originalFhir], 'demo-medcloud-bundle.json', { type: 'application/json' }),
-          )
-          await persistBundle(prepared.bundle, true, prepared.originalFhir, prepared.sourceMetadata)
-        } else {
-          await persistBundle(JSON.parse(await originalFhir.text()), true, originalFhir)
-        }
-      })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load demo data'
-      setError(msg)
-      throw err instanceof Error ? err : new Error(msg)
-    } finally {
-      setLoading(false)
-    }
-  }, [persistBundle])
-
   const clear = useCallback(async () => {
     await serializeLocalBundleMutation(async () => {
       const importId = LocalBundleService.getActiveImportId()
-      await LocalBundleService.clear() // also removes the demo flag
+      await LocalBundleService.clear()
       // Clearing the bundle must also drop cached AI results (safety scan,
       // insights) so re-importing the same patient starts fresh, not stale.
       purgeAiResultCaches(importId)
       setHasBundle(false)
       setBundleIsActive(false)
-      setIsDemo(false)
       setError(null)
       notifyBundleChanged()
       try {
@@ -289,5 +214,5 @@ export function useImportBundle(): UseImportBundleReturn {
     })
   }, [queryClient])
 
-  return { importFile, loadDemo, clear, loading, error, hasBundle, bundleIsActive, isDemo }
+  return { importFile, clear, loading, error, hasBundle, bundleIsActive }
 }

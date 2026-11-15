@@ -83,7 +83,7 @@ export function AiDemographicsGateProvider({
   // run, so it is also what decides whether missing demographics are blocking.
   const autoGenerateEnabled = useSummaryPrefsStore((s) => s.autoGenerate)
   const isLocalBundle =
-    dataSource.source === 'local' || dataSource.source === 'demo'
+    dataSource.source === 'local'
   const localProfile = useLocalPatientProfile(isLocalBundle)
   const scopeId = localProfile.importId
     ?? (patient ? `${dataSource.source}:${patient.id}` : null)

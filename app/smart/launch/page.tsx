@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { buildSmartAuthorizeConfig } from "@/src/infrastructure/fhir/client/smart-launch-config"
 import { ENV_CONFIG } from '@/src/shared/config/env.config'
-import { SMART_CONFIG } from '@/src/shared/config/smart.config'
 import { isTrustedSmartIssuer } from '@/src/shared/config/smart-issuer-policy'
 
 // An untrusted SMART `iss` shows an explicit confirmation. `iss` comes
@@ -55,13 +54,6 @@ export default function SmartLaunchPage() {
       const iss = url.searchParams.get("iss") || undefined
       const launch = url.searchParams.get("launch") || undefined
 
-      if (!iss && !launch) {
-        const prefix = (process.env.NEXT_PUBLIC_BASE_PATH || "").replace(/\/+$/, "")
-        const baseUrl = `${window.location.origin}${prefix}`.replace(/\/+$/, "")
-        const defaultUrl = `${baseUrl}/smart/launch${SMART_CONFIG.demoLaunchSearch}`
-        window.location.href = defaultUrl
-        return
-      }
 
       if (!iss) {
         setLaunchError('SMART launch 缺少必要的 issuer（iss）。')
