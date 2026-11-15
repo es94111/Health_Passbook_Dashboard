@@ -1,6 +1,22 @@
 {
-  "currentVersion": "2.7.1",
+  "currentVersion": "2.7.2",
   "releases": [
+    {
+      "version": "2.7.2",
+      "date": "2026-11-15",
+      "title": "相依套件更新至最新版本",
+      "type": "improved",
+      "changes": [
+        {
+          "tag": "improved",
+          "text": "相依套件更新至最新版本：前端 postcss 8.5.33、tailwindcss／@tailwindcss/vite 4.3.5、vite 8.3.8、@vitejs/plugin-react 6.3.0、jsdom 31.0.1、@testing-library/user-event 14.6.10；後端 google-auth-library 11.3.4、stream-json 3.9.0；根目錄 concurrently 10.0.7"
+        },
+        {
+          "tag": "improved",
+          "text": "lint 工具鏈更新至 eslint 10.15.0、typescript-eslint 8.72.2；typescript 維持 6.0.3（typescript-eslint 尚未支援 TypeScript 7）"
+        }
+      ]
+    },
     {
       "version": "2.7.1",
       "date": "2026-11-06",
