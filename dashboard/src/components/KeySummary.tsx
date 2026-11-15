@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { NHIData } from '../parsers/types';
-import { useUserStore } from '../UserStore';
+import { useUserStore } from '../userStoreContext';
 import { usePersonal } from '../personalContext';
 import { useNow } from '../lib/clock';
 import {

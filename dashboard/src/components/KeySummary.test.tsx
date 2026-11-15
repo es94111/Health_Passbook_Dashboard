@@ -16,7 +16,7 @@ const store = vi.hoisted(() => ({
   acknowledgeAlert: vi.fn(),
 }));
 
-vi.mock('../UserStore', () => ({ useUserStore: () => store }));
+vi.mock('../userStoreContext', () => ({ useUserStore: () => store }));
 
 const NOW = new Date(2026, 9, 31, 12);
 

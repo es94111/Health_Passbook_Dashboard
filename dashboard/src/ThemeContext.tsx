@@ -1,21 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { updateTheme } from './api';
-
-type ThemeMode = 'light' | 'dark' | 'system';
-
-interface ThemeContextValue {
-  theme: ThemeMode;
-  setTheme: (mode: ThemeMode) => Promise<void>;
-}
-
-const ThemeContext = createContext<ThemeContextValue>({
-  theme: 'system',
-  setTheme: async () => {},
-});
-
-export function useTheme() {
-  return useContext(ThemeContext);
-}
+import { ThemeContext, type ThemeMode } from './useTheme';
 
 function applyTheme(mode: ThemeMode) {
   const root = document.documentElement;
@@ -40,11 +25,15 @@ interface ThemeProviderProps {
 
 export function ThemeProvider({ children, initialTheme = 'system' }: ThemeProviderProps) {
   const [theme, setThemeState] = useState<ThemeMode>(initialTheme);
+  const [prevInitialTheme, setPrevInitialTheme] = useState(initialTheme);
 
-  // Apply theme on mount and when initialTheme changes (e.g. after user profile loads)
-  useEffect(() => {
+  // Sync theme when initialTheme changes (e.g. after user profile loads).
+  // State is adjusted during render instead of in an effect:
+  // https://react.dev/learn/you-might-not-need-an-effect
+  if (initialTheme !== prevInitialTheme) {
+    setPrevInitialTheme(initialTheme);
     setThemeState(initialTheme);
-  }, [initialTheme]);
+  }
 
   useEffect(() => {
     applyTheme(theme);

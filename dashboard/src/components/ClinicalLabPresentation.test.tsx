@@ -11,7 +11,7 @@ const store = vi.hoisted(() => ({
   toggleLabPin: vi.fn(), toggleMedicationPin: vi.fn(), isMedicationPinned: vi.fn(() => false),
   isAlertAcknowledged: vi.fn(() => false), acknowledgeAlert: vi.fn(),
 }));
-vi.mock('../UserStore', () => ({ useUserStore: () => store }));
+vi.mock('../userStoreContext', () => ({ useUserStore: () => store }));
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: PropsWithChildren) => <div>{children}</div>,
   LineChart: ({ children, data }: PropsWithChildren<{ data: { value: number }[] }>) => <div data-testid="numeric-chart" data-values={JSON.stringify(data.map(point => point.value))}>{children}</div>,

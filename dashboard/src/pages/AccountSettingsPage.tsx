@@ -11,8 +11,9 @@ import {
   setPassword,
   changePassword,
 } from '../api';
-import { useTheme } from '../ThemeContext';
-import { useUserStore, HIDEABLE_SECTIONS } from '../UserStore';
+import { useTheme } from '../useTheme';
+import { useUserStore } from '../userStoreContext';
+import { HIDEABLE_SECTIONS } from '../hideableSections';
 import { DATE_RANGE_OPTIONS } from '../lib/keySummary';
 
 const PASSWORD_MIN_LENGTH = 12;
