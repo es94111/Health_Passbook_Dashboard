@@ -181,25 +181,23 @@ jobs:
 
           docker run -d --name "${CONTAINER_NAME}" -p 3001:3001 \
             -e NODE_ENV=production \
-            -e JWT_SECRET="$(openssl rand -hex 32)" \
-            -e ENCRYPTION_KEY="$(openssl rand -hex 32)" \
             "${IMAGE}"
 
           ready=0
           for _ in $(seq 1 30); do
-            if curl -fsS --max-time 5 http://127.0.0.1:3001/api/ping 2>/dev/null | grep -q '"ok":true'; then
+            if curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:3001/version.json 2>/dev/null; then
               ready=1
               break
             fi
             sleep 2
           done
           if [ "${ready}" -ne 1 ]; then
-            echo "::error::/api/ping 未在 60 秒內回應"
+            echo "::error::/version.json 未在 60 秒內回應"
             exit 1
           fi
 
           curl -fsS http://127.0.0.1:3001/ | grep -qi '<!doctype html'
-          echo "✔ 容器啟動、/api/ping 與 SPA 首頁皆正常"
+          echo "✔ 容器啟動、首頁與 /version.json 皆正常"
 
       - name: Write build summary
         if: always()

@@ -51,7 +51,7 @@ const nextConfig: NextConfig = {
   // (and on Vercel) we want the full Next.js server so dynamic API routes
   // like /api/feedback work. Without this gate, `output: "export"` forces
   // every route to be statically renderable, which breaks API routes.
-  ...(isStaticExport ? { output: "export" as const } : {}),
+  ...(isStaticExport ? { output: "export" as const } : { output: "standalone" as const }),
   images: { unoptimized: true },
   // Next 16.3 runs the project-local `tsc` over the whole tsconfig project,
   // tests included. The GitHub Pages build stashes app/api/ away (see

@@ -1,10 +1,12 @@
 **/node_modules
-**/dist
-**/.env
-data/
+**/.next
+**/out
 .git/
 .github/
 .claude/
+.agents/
 .gstack/
-scripts/
-myhealthbankapp/
+__tests__/
+docs/
+.env
+.env.*
