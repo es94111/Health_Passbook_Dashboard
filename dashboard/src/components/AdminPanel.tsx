@@ -12,17 +12,12 @@ export default function AdminPanel({ currentUserId, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  async function load() {
-    try {
-      setUsers(await listUsers());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '載入失敗');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    listUsers()
+      .then(setUsers)
+      .catch((err) => setError(err instanceof Error ? err.message : '載入失敗'))
+      .finally(() => setLoading(false));
+  }, []);
 
   async function handleDelete(user: UserInfo) {
     if (!window.confirm(`確定要刪除使用者「${user.username}」及其所有資料？`)) return;

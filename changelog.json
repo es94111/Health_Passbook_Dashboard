@@ -4,8 +4,8 @@
     {
       "version": "2.7.2",
       "date": "2026-11-15",
-      "title": "相依套件更新至最新版本",
-      "type": "improved",
+      "title": "相依套件更新與 lint 錯誤修正",
+      "type": "fixed",
       "changes": [
         {
           "tag": "improved",
@@ -14,6 +14,10 @@
         {
           "tag": "improved",
           "text": "lint 工具鏈更新至 eslint 10.15.0、typescript-eslint 8.72.2；typescript 維持 6.0.3（typescript-eslint 尚未支援 TypeScript 7）"
+        },
+        {
+          "tag": "fixed",
+          "text": "修正 7 個 lint 錯誤使 lint 全數清零：ThemeContext 改以 render 期間同步取代 effect 內直接 setState，AdminPanel 載入改為以 promise callback 更新狀態（消除 set-state-in-effect）；useTheme、useUserStore 與可隱藏區段設定值（SECTION_KEY／tabSectionKey／HIDEABLE_SECTIONS）移出元件檔至 useTheme.ts、userStoreContext.ts、hideableSections.ts（消除 react-refresh/only-export-components，改善 Fast Refresh）"
         }
       ]
     },

@@ -126,7 +126,7 @@ server/      後端 Express API
 
 | 版本 | 日期 | 說明 |
 |------|------|------|
-| 2.7.2 | 2026-11-15 | 相依套件更新至最新版本：前端 postcss 8.5.33、tailwindcss 4.3.5、vite 8.3.8、@vitejs/plugin-react 6.3.0、jsdom 31.0.1，後端 google-auth-library 11.3.4、stream-json 3.9.0，lint 工具鏈 eslint 10.15、typescript-eslint 8.72.2（typescript 維持 6.0.3 相容版本）；server 37 題、dashboard 1157 題測試全數通過 |
+| 2.7.2 | 2026-11-15 | 相依套件更新至最新版本：前端 postcss 8.5.33、tailwindcss 4.3.5、vite 8.3.8、@vitejs/plugin-react 6.3.0、jsdom 31.0.1，後端 google-auth-library 11.3.4、stream-json 3.9.0，lint 工具鏈 eslint 10.15、typescript-eslint 8.72.2（typescript 維持 6.0.3 相容版本）；並修正全部 7 個 lint 錯誤（effect 內直接 setState 改以 render 同步／promise callback 取代，非元件匯出移出元件檔），lint 全數清零；server 37 題、dashboard 1157 題測試全數通過 |
 | 2.7.1 | 2026-11-06 | 相依套件全面更新至最新版本：前端 react 19.3.1、react-router 8.5.1、postcss 8.5.32、tailwindcss 4.3.4、vite 8.3.6、vitest 5.1.0、jsdom 31 等，後端 google-auth-library 11.3.3，lint 工具鏈 eslint 10.14、typescript-eslint 8.72.1 等（typescript 維持 6.0.3 相容版本）；server 37 題、dashboard 1157 題測試全數通過 |
 | 2.7.0 | 2026-11-01 | 新增匯入前確認步驟：寫入前先顯示資料日期範圍、各類筆數與 FHIR 資源組成、新增／更新／略過與匯入後總筆數，以及影像／附件摘要（影像類報告、內嵌可預覽、外部連結、參考型與無法預覽格式）；可取消且不寫入任何資料，超過 32 MiB 的串流檔以單次掃描估算並標示為估算 |
 | 2.6.1 | 2026-10-31 | 修正影像報告附件未顯示：附件改從任何報告資源的 presentedForm、content、media[].link 與 image[]（含 Media／Binary 參考）解析，不再只限 DiagnosticReport／DocumentReference／Media；無法預覽的格式（如 application/dicom、image/tiff）改在卡片列出格式而非無提示消失；新增 GIF／BMP 附件預覽與下載 |

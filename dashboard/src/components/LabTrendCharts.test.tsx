@@ -10,7 +10,7 @@ const store = vi.hoisted(() => ({
   toggleLabPin: vi.fn(),
 }));
 
-vi.mock('../UserStore', () => ({ useUserStore: () => store }));
+vi.mock('../userStoreContext', () => ({ useUserStore: () => store }));
 
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: PropsWithChildren) => <div>{children}</div>,
