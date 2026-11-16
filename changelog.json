@@ -1,6 +1,22 @@
 {
-  "currentVersion": "4.0.1",
+  "currentVersion": "4.0.2",
   "releases": [
+    {
+      "version": "4.0.2",
+      "date": "2026-11-16",
+      "title": "Docker 執行期組態注入：Google 登入與自架 AI 以環境變數設定（免重建映像）",
+      "type": "fixed",
+      "changes": [
+        {
+          "tag": "fixed",
+          "text": "修正 Docker 部署無法以環境變數設定 Google 登入／自架 AI 的問題（NEXT_PUBLIC_* 於建置期烘焙，公開映像內為空值）：新增 /app-config.js 執行期組態注入——容器啟動時 scripts/openbao/write-app-config.mjs 依環境變數（含 OpenBao 注入值）寫入 public/app-config.js，app/layout.tsx 以同步 script 載入於任何 bundle 前；firebase.config／ai-self.config 改為 runtime 值優先、NEXT_PUBLIC_* 回退"
+        },
+        {
+          "tag": "improved",
+          "text": "環境變數支援 plain 名稱（FIREBASE_*、AI_SELF_*，建議 compose environment 使用）與 NEXT_PUBLIC_* 雙軌；.env.example 與 README 部署說明同步"
+        }
+      ]
+    },
     {
       "version": "4.0.1",
       "date": "2026-11-16",

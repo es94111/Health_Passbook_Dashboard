@@ -10,6 +10,7 @@
  */
 import { spawn } from 'node:child_process'
 import { readKvSecret } from './fetch-secrets.mjs'
+import { writeAppConfig } from './write-app-config.mjs'
 
 const RUNTIME_SECRETS_PATH = process.env.OPENBAO_RUNTIME_PATH || 'kv/apps/mediprisma/runtime'
 
@@ -27,6 +28,13 @@ async function main() {
       // the app down; the AI proxy still fails closed per request without keys.
       console.warn(`⚠ OpenBao 讀取失敗，沿用映像環境變數：${error.message}`)
     }
+  }
+  // Runtime public config for the browser (Google 登入 / 自架 AI 開關):
+  // written from the merged env so OpenBao-injected values are included.
+  try {
+    writeAppConfig(envVars)
+  } catch (error) {
+    console.warn(`⚠ app-config.js 寫入失敗（沿用建置期組態）：${error.message}`)
   }
   const child = spawn('node', ['server.js'], { stdio: 'inherit', env: envVars })
   const forward = (signal) => () => child.kill(signal)

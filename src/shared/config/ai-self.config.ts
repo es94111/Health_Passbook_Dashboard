@@ -6,27 +6,32 @@
 // on the SERVER (environment / OpenBao) and never reach the browser; the
 // browser only knows the proxy path and, optionally, a shared proxy token.
 //
-// Everything here is env-switchable: set NEXT_PUBLIC_AI_SELF_MODEL to enable
-// the service, point AI_SELF_BASE_URL at the real endpoint and provide
-// AI_SELF_API_KEY server-side. When NEXT_PUBLIC_AI_SELF_MODEL is empty the
-// app runs with no configured AI service (fail closed).
+// Everything here is env-switchable at RUNTIME (Docker compose `environment:`):
+// set AI_SELF_MODEL to enable the service, point AI_SELF_BASE_URL at the real
+// endpoint and provide AI_SELF_API_KEY server-side. Runtime values arrive via
+// /app-config.js (see runtime-config.ts) and win over build-time NEXT_PUBLIC_*.
+// When the model name is empty the app runs with no configured AI service
+// (fail closed).
 
 import type { OpenAiCompatibleProfile } from '@/src/shared/types/openai-compatible.types'
+import { getRuntimeConfig, runtimeOrBuild } from './runtime-config'
 
 const NEXT_BASE = (process.env.NEXT_PUBLIC_BASE_PATH || '').replace(/\/+$/, '')
 
+const runtimeAi = getRuntimeConfig().aiSelf
+
 /** Upstream model name sent to the self-hosted service. Empty = AI disabled. */
-export const AI_SELF_MODEL = (process.env.NEXT_PUBLIC_AI_SELF_MODEL || '').trim()
+export const AI_SELF_MODEL = runtimeOrBuild(runtimeAi?.model, process.env.NEXT_PUBLIC_AI_SELF_MODEL)
 
 /** Path (or absolute URL) the browser calls. Defaults to the same-origin proxy. */
-export const AI_SELF_ENDPOINT = (process.env.NEXT_PUBLIC_AI_SELF_ENDPOINT || `${NEXT_BASE}/api/ai`).trim()
+export const AI_SELF_ENDPOINT = runtimeOrBuild(runtimeAi?.endpoint, process.env.NEXT_PUBLIC_AI_SELF_ENDPOINT) || `${NEXT_BASE}/api/ai`
 
 /** Shared proxy token sent by the browser; the server proxy validates it when
  *  AI_PROXY_KEY is configured server-side. */
-export const AI_SELF_PROXY_KEY = process.env.NEXT_PUBLIC_AI_SELF_PROXY_KEY || ''
+export const AI_SELF_PROXY_KEY = runtimeOrBuild(runtimeAi?.proxyKey, process.env.NEXT_PUBLIC_AI_SELF_PROXY_KEY)
 
 /** Upstream model's context window (tokens), overridable per deployment. */
-export const AI_SELF_CONTEXT_WINDOW = Number(process.env.NEXT_PUBLIC_AI_SELF_CONTEXT) || 262_144
+export const AI_SELF_CONTEXT_WINDOW = Number(runtimeOrBuild(runtimeAi?.contextWindow, process.env.NEXT_PUBLIC_AI_SELF_CONTEXT)) || 262_144
 
 /** Stable, non-secret profile id. Deliberately the catalog's 'legacy' slot so
  *  the single catalog model (openai-compatible-custom) resolves here first. */
