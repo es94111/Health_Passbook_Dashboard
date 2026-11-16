@@ -1,7 +1,7 @@
 # 醫析 MediPrisma · SMART on FHIR（本地複製版）
 
-**目前版本：4.0.1** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
-4.0.1 README 增補修改清單；4.0.0 專案轉換為 MediPrisma 本地複製版（自架 AI、OpenBao 金鑰管理與自動輪換、Google 登入、移除測試與模擬資料、維持原本 GitHub CI）。
+**目前版本：4.0.2** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
+4.0.2 Docker 執行期組態注入（Google 登入／自架 AI 以環境變數設定）；4.0.1 README 增補修改清單；4.0.0 專案轉換為 MediPrisma 本地複製版（自架 AI、OpenBao 金鑰管理與自動輪換、Google 登入、移除測試與模擬資料、維持原本 GitHub CI）。
 
 > ## 專案來源與修改聲明
 >
@@ -20,12 +20,14 @@
 > | 移除模擬資料 | 示例病人 Bundle（`public/demo`）、demo AI 快照、示範名稱對照表、合成情境頁（`app/dev*`）、demo 產生器與載入入口、SMART 公開沙箱自動啟動 |
 > | 登入 | Google 登入（Firebase Auth `GoogleAuthProvider`＋`features/auth/GoogleSignInButton.tsx`）保留啟用 |
 > | CI／部署 | 維持本 repo 原本 CI（`docker-publish.yml` 映像發版＋GitHub Release、`security.yml` Gitleaks＋audit）；新增 Dockerfile（Next.js standalone 映像）；上游 sync／hmc／gh-pages 等 11 個 workflow 一律不納入 |
+> | 部署組態 | 新增 runtime 組態注入（`/app-config.js`）：Google 登入（Firebase）與自架 AI 開關以 compose 環境變數**執行期**設定即生效，不需重建映像（`FIREBASE_*`、`AI_SELF_*` plain 名稱，見 `.env.example`） |
 > | 文件 | 依本 repo 慣例以 `changelog.json`／`SRS.md` 維護版號（4.0.x）；上游版本識別 0.51.1 記錄於此 |
 >
 > 以上修改僅維護於本 repo，**不會回傳上游 GitHub**。
 >
 > 部署：Docker 多架構映像（GHCR／Docker Hub）→ Zeabur／自架主機，Watchtower 熱更新；
-> 容器啟動可自 OpenBao 注入 runtime 密語。環境變數見 `.env.example`。
+> 容器啟動自 OpenBao 注入 runtime 密語、並以環境變數寫入 `/app-config.js` runtime 組態
+> （Google 登入與自架 AI 免重建映像即時設定）。環境變數見 `.env.example`。
 
 **把跨院病歷整理成看得懂、查得到來源、能接續照護的臨床工作區。**
 

@@ -1,6 +1,7 @@
 // app/layout.tsx
 import "./globals.css"
 import type { Metadata } from "next"
+import Script from "next/script"
 import { Toaster } from "sonner"
 import { CSP_CONTENT } from "@/src/shared/config/content-security-policy"
 import { IS_STAGING_CHANNEL } from "@/src/shared/config/deploy-channel"
@@ -23,6 +24,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // https://nextjs.org/docs/messages/react-hydration-error
     <html lang="zh-TW" suppressHydrationWarning>
       <head>
+        {/* Runtime public config (Docker): written at container start from env
+            (scripts/openbao/write-app-config.mjs). beforeInteractive: loads
+            before any Next.js code, so module-init config reads see the
+            runtime values; a missing file falls back to NEXT_PUBLIC_* */}
+        <Script
+          src={`${process.env.NEXT_PUBLIC_BASE_PATH || ''}/app-config.js`}
+          strategy="beforeInteractive"
+        />
         {process.env.NODE_ENV === 'production' && (
           <meta httpEquiv="Content-Security-Policy" content={CSP_CONTENT} />
         )}

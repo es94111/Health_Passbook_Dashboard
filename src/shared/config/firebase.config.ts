@@ -1,5 +1,6 @@
 // Firebase Configuration
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app'
+import { getRuntimeConfig, runtimeOrBuild } from './runtime-config'
 import {
   browserLocalPersistence,
   browserPopupRedirectResolver,
@@ -21,15 +22,17 @@ import {
   type AppCheck,
 } from 'firebase/app-check'
 
-// Firebase configuration from environment variables
+// Firebase configuration: runtime /app-config.js (Docker) wins over build-time
+// NEXT_PUBLIC_* values (see src/shared/config/runtime-config.ts).
+const runtimeFirebase = getRuntimeConfig().firebase
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey: runtimeOrBuild(runtimeFirebase?.apiKey, process.env.NEXT_PUBLIC_FIREBASE_API_KEY),
+  authDomain: runtimeOrBuild(runtimeFirebase?.authDomain, process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN),
+  projectId: runtimeOrBuild(runtimeFirebase?.projectId, process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID),
+  storageBucket: runtimeOrBuild(runtimeFirebase?.storageBucket, process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET),
+  messagingSenderId: runtimeOrBuild(runtimeFirebase?.messagingSenderId, process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID),
+  appId: runtimeOrBuild(runtimeFirebase?.appId, process.env.NEXT_PUBLIC_FIREBASE_APP_ID),
+  measurementId: runtimeOrBuild(runtimeFirebase?.measurementId, process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID),
 }
 
 // Initialize Firebase (only once)
@@ -119,7 +122,7 @@ if (typeof window !== 'undefined') {
  * causing both a hydration mismatch and "placeholder element" runtime error.
  */
 export async function getOrInitializeAppCheck(): Promise<AppCheck | undefined> {
-  const appCheckSiteKey = process.env.NEXT_PUBLIC_APPCHECK_RECAPTCHA_SITE_KEY
+  const appCheckSiteKey = runtimeOrBuild(runtimeFirebase?.appCheckSiteKey, process.env.NEXT_PUBLIC_APPCHECK_RECAPTCHA_SITE_KEY)
   if (
     typeof window === 'undefined'
     || !app
