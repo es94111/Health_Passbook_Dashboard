@@ -6,7 +6,10 @@ import { applyClinicalInsightPanelChanges, getUserClinicalInsightPanels } from '
 import type { SharedPrompt } from '@/features/prompt-gallery/types/prompt.types'
 
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => jest.requireActual('./fixtures/firestore-memory').firestore)
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  ...jest.requireActual('./fixtures/firestore-memory').firestore,
+  db: {},
+}))
 
 const largeText = 'START\n' + '中😀'.repeat(180000) + '\nTAIL needle-at-the-end'
 const prompt = (overrides = {}): Omit<SharedPrompt, 'id' | 'createdAt' | 'updatedAt'> => ({

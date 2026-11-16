@@ -16,8 +16,8 @@ import {
   Timestamp,
   type DocumentData,
   type Unsubscribe,
-} from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+} from './firestore-client'
+import { db } from './firestore-client'
 import { isTemplateTextReference, readTemplateText, removeTemplateText, splitTemplateText, writeTemplateText } from './template-text-storage'
 
 /**

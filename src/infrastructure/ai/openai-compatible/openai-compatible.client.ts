@@ -119,16 +119,27 @@ function requestHeaders(apiKey: string | null | undefined): Headers {
 /**
  * The OpenAI SDK expects a non-empty key even for local servers. Give the SDK a
  * harmless placeholder, then remove its Authorization header when this profile
- * is intentionally keyless. Requests stay in the browser and omit cookies.
+ * is intentionally keyless. Runtime-only self-hosted profiles use same-origin
+ * cookies; user-managed direct endpoints never receive app cookies.
  */
 export function createOpenAiCompatibleFetch(
   apiKey: string | null | undefined,
   fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+  options: { appSession?: boolean } = {},
 ): typeof fetch {
   return async (input, init) => {
     const headers = new Headers(init?.headers)
     const normalizedApiKey = apiKey?.trim()
-    if (normalizedApiKey) {
+    if (options.appSession) {
+      const currentOrigin = typeof window === 'undefined' ? null : window.location.origin
+      const targetOrigin = new URL(requestUrl(input), currentOrigin ?? undefined).origin
+      if (currentOrigin && targetOrigin !== currentOrigin) {
+        throw new Error('Self-hosted AI requests must use the same-origin proxy')
+      }
+      headers.delete('authorization')
+      headers.delete('x-proxy-key')
+      if (normalizedApiKey) headers.set('x-proxy-key', normalizedApiKey)
+    } else if (normalizedApiKey) {
       // Treat the saved profile as the source of truth. Besides preventing a
       // stale SDK header, this guarantees browser requests from providers that
       // supply authentication outside `init.headers` still carry the key.
@@ -139,7 +150,7 @@ export function createOpenAiCompatibleFetch(
     return fetchImpl(input, {
       ...init,
       headers,
-      credentials: 'omit',
+      credentials: options.appSession ? 'same-origin' : 'omit',
       referrerPolicy: 'no-referrer',
     })
   }
@@ -253,10 +264,13 @@ export function createConfiguredOpenAiCompatibleFetch(
   config: OpenAiCompatibleConfig,
   options: { hiddenReasoning?: 'off' } = {},
 ): typeof fetch {
+  const runtimeOnly = 'runtimeOnly' in config && config.runtimeOnly === true
   const transportFetch = normalizeOpenAiCompatibleTransport(config.transport) ===
     'mediprisma-gateway'
     ? createOpenAiCompatibleGatewayFetch(config)
-    : createOpenAiCompatibleFetch(config.apiKey)
+    : createOpenAiCompatibleFetch(config.apiKey, globalThis.fetch.bind(globalThis), {
+      appSession: runtimeOnly,
+    })
   const nemotronFetch = createNvidiaNemotronRequestFetch(config, transportFetch)
   return options.hiddenReasoning === 'off'
     ? createHiddenReasoningOffFetch(config, nemotronFetch)
@@ -370,7 +384,8 @@ async function httpErrorMessage(response: Response): Promise<string> {
 /**
  * Connection test. GET /models is non-generative; endpoints that
  * do not implement it fall back to a one-token, patient-free chat probe.
- * Direct mode stays browser-only; explicit Gateway mode uses Firebase.
+ * User-managed direct profiles call their endpoint without app cookies;
+ * runtime-only profiles use the same-origin app proxy and session.
  */
 export async function testOpenAiCompatibleConnection(
   config: OpenAiCompatibleConfig,
@@ -391,19 +406,22 @@ export async function testOpenAiCompatibleConnection(
   // LAN probe budget. This still stays bounded and never contains patient data.
   const timeoutMs = options.timeoutMs ?? (usesGateway ? 30_000 : 10_000)
   const rawFetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis)
+  const runtimeOnly = 'runtimeOnly' in config && config.runtimeOnly === true
   const fetchImpl = usesGateway
     ? createOpenAiCompatibleGatewayFetch(config, {
       fetchImpl: rawFetch,
       origin: options.origin,
       gatewayUrl: options.gatewayUrl,
     })
-    : rawFetch
+    : runtimeOnly
+      ? createOpenAiCompatibleFetch(config.apiKey, rawFetch, { appSession: true })
+      : rawFetch
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   const commonInit: RequestInit = {
     headers: requestHeaders(config.apiKey),
     signal: controller.signal,
-    credentials: 'omit',
+    credentials: runtimeOnly ? 'same-origin' : 'omit',
     referrerPolicy: 'no-referrer',
     cache: 'no-store',
   }

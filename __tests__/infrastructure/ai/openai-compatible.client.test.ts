@@ -212,6 +212,29 @@ describe('OpenAI-compatible browser client', () => {
     expect(headers.get('Authorization')).toBe('Bearer hospital-secret')
   })
 
+  it('sends runtime-only requests through the app session without an upstream authorization header', async () => {
+    const appOrigin = typeof window === 'undefined' ? 'https://app.example.test' : window.location.origin
+    const fetchImpl = jest.fn(async (
+      _input: Parameters<typeof fetch>[0],
+      _init?: Parameters<typeof fetch>[1],
+    ) => jsonResponse({ data: [{ id: 'self-hosted-model' }] })) as jest.MockedFunction<typeof fetch>
+    const config = {
+      ...profile,
+      baseUrl: `${appOrigin}/api/ai`,
+      modelId: 'self-hosted-model',
+      runtimeOnly: true,
+      apiKey: 'browser-proxy-key',
+    }
+
+    await testOpenAiCompatibleConnection(config, { fetchImpl })
+
+    const init = fetchImpl.mock.calls[0][1]
+    const headers = new Headers(init?.headers)
+    expect(init?.credentials).toBe('same-origin')
+    expect(headers.get('Authorization')).toBeNull()
+    expect(headers.get('x-proxy-key')).toBe('browser-proxy-key')
+  })
+
   it.each([
     { label: 'context_length', metadata: { context_length: '65536' }, expected: 65536 },
     { label: 'context_window', metadata: { contextWindow: 32768 }, expected: 32768 },

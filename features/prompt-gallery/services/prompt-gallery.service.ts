@@ -2,8 +2,8 @@ import {
   collection, doc, getDocs, getDoc, addDoc, setDoc, updateDoc, deleteDoc, deleteField, runTransaction,
   query, where, limit, startAfter, increment, Timestamp,
   type QueryConstraint, type QueryDocumentSnapshot,
-} from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+} from '@/src/application/composition.firestore-client'
+import { db } from '@/src/application/composition.firestore-client'
 import {
   isTemplateTextReference, readTemplateText, removeTemplateText,
   splitTemplateText, writeTemplateText,
@@ -28,9 +28,9 @@ function dateValue(value: unknown): Date {
 }
 
 /** Isolate malformed legacy/public documents instead of failing the entire gallery. */
-export function convertToSharedPrompt(id: string, data: Record<string, unknown>): SharedPrompt | null {
+export function convertToSharedPrompt(id: string, data: Record<string, unknown> | undefined): SharedPrompt | null {
   try {
-    if (typeof data.title !== 'string' || !data.title.trim() || typeof data.prompt !== 'string') return null
+    if (!data || typeof data.title !== 'string' || !data.title.trim() || typeof data.prompt !== 'string') return null
     for (const field of ['description', 'authorId', 'authorName', 'exampleOutput', 'tenantId'] as const) {
       if (data[field] !== undefined && typeof data[field] !== 'string') return null
     }

@@ -2681,7 +2681,7 @@ export const en = {
     backToSignIn: 'Back to Sign In',
     resetEmailSent: 'Password reset email sent',
     resetEmailSentMessage: 'Check your email for a link to reset your password. If it doesn\'t appear within a few minutes, check your spam folder.',
-    freeQuotaDescription: 'Sign in for a higher daily free quota and cloud sync',
+    freeQuotaDescription: 'Sign in with your Google account to access cloud sync.',
     benefits: 'After signing in you get:',
     benefit1: `${QUOTA_CONFIG.DAILY_LIMIT} free AI chats per day (${QUOTA_CONFIG.ANON_DAILY_LIMIT}/day for guests)`,
     benefit2: `${QUOTA_CONFIG.PERPLEXITY_DAILY_LIMIT} literature searches & voice transcriptions per day`,

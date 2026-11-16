@@ -14,8 +14,8 @@ import {
   writeBatch,
   type DocumentData,
   type Firestore,
-} from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+} from '@/src/application/composition.firestore-client'
+import { db } from '@/src/application/composition.firestore-client'
 import type {
   LabDataReportContext,
   LabDataReportPayload,
@@ -106,17 +106,19 @@ export async function listLabDataReports(max = 100): Promise<StoredLabDataReport
 
 export async function getLabDataReport(id: string): Promise<StoredLabDataReport | null> {
   const record = await getDoc(doc(requireDb(), REPORTS, id))
-  return record.exists() ? toReport(record.id, record.data()) : null
+  const data = record.data()
+  return record.exists() && data ? toReport(record.id, data) : null
 }
 
 /** Converted rows and MediCloud raw rows, each in chunk order. Raw chunks
  *  ("raw-000" …) share the subcollection and carry kind "raw". */
 export async function getLabDataReportRows(id: string): Promise<StoredLabDataReportRows> {
   const snapshot = await getDocs(query(collection(requireDb(), REPORTS, id, ROWS), orderBy('chunk')))
-  const rowsOf = (chunk: (typeof snapshot.docs)[number]) => (Array.isArray(chunk.get('rows')) ? chunk.get('rows') : [])
+  const rowsOf = <T>(chunk: (typeof snapshot.docs)[number]) =>
+    (Array.isArray(chunk.get('rows')) ? chunk.get('rows') : []) as T[]
   return {
-    rows: snapshot.docs.filter((chunk) => chunk.get('kind') !== 'raw').flatMap(rowsOf),
-    rawRows: snapshot.docs.filter((chunk) => chunk.get('kind') === 'raw').flatMap(rowsOf),
+    rows: snapshot.docs.filter((chunk) => chunk.get('kind') !== 'raw').flatMap((chunk) => rowsOf<LabDataReportRow>(chunk)),
+    rawRows: snapshot.docs.filter((chunk) => chunk.get('kind') === 'raw').flatMap((chunk) => rowsOf<LabDataReportRawRow>(chunk)),
   }
 }
 

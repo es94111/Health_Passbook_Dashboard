@@ -15,8 +15,8 @@
 // deletion never beats an edit: a format deleted on one device while the
 // other edited it comes back rather than being lost.
 
-import { doc, onSnapshot, runTransaction, type DocumentData } from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+import { doc, onSnapshot, runTransaction, type DocumentData } from '@/src/infrastructure/firebase/firestore-client'
+import { db } from '@/src/infrastructure/firebase/firestore-client'
 import {
   EMPTY_OUTPATIENT_PREFS,
   sanitizeOutpatientPrefs,
@@ -173,7 +173,7 @@ export function syncOutpatientPrefsForAccount(userId: string): () => void {
         const stamp = Math.max(meta?.updatedAt ?? Date.now(), (current?.updatedAt ?? 0) + 1)
         const field = toRemoteOutpatientPrefs(next, stamp)
         if (JSON.stringify(field).length > MAX_SYNCED_CHARS) throw new Error('outpatient settings too large to sync')
-        transaction.set(userRef, { [OUTPATIENT_PREFS_FIELD]: field }, { mergeFields: [OUTPATIENT_PREFS_FIELD] })
+        transaction.set(userRef, { [OUTPATIENT_PREFS_FIELD]: field }, { merge: true })
         return { next, stamp }
       })
       const state = store.getState()

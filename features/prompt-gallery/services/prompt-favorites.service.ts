@@ -5,7 +5,7 @@
  * may be edited or deleted later; the user's saved copy keeps working, and a
  * newer source is only signalled (favoriteHasUpdate), never applied silently.
  */
-import { Timestamp } from 'firebase/firestore'
+import { Timestamp } from '@/src/application/composition.firestore-client'
 import { createUserCollectionSync } from '@/src/application/composition.user-collection-sync'
 import { coerceInsightLanguagePolicy, coerceInsightOutputFormat } from '@/src/shared/constants/clinical-insights.constants'
 import { normalizePromptTypes, PROMPT_CATEGORIES, type PromptFavorite, type SharedPrompt } from '../types/prompt.types'

@@ -1,9 +1,10 @@
-import { setDoc, updateDoc } from 'firebase/firestore'
+import { setDoc, updateDoc } from '@/src/infrastructure/firebase/firestore-client'
 import { FirestoreChatSessionRepository } from '@/src/infrastructure/firebase/repositories/chat-session.repository'
 import { createModelExecution, reportModelExecution } from '@/src/shared/utils/ai-model-execution'
 
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => ({
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  db: {},
   collection: jest.fn(() => ({})),
   doc: jest.fn(() => ({ id: 'chat-1' })),
   setDoc: jest.fn().mockResolvedValue(undefined),

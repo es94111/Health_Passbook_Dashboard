@@ -13,7 +13,6 @@ import { OVERVIEW_WIDE_PANEL_PX } from "@/features/clinical-summary/overview/ove
 import { WorkspacePanelsProvider } from "@/src/application/providers/workspace-panels.provider"
 import { hasUnseenSummary, useSummaryActivityStore } from "@/src/application/stores/summary-activity.store"
 import { elapsedSeconds, useSecondTick } from "@/src/shared/hooks/use-second-tick.hook"
-import { EmailVerificationBanner } from "@/features/auth/components/EmailVerificationBanner"
 import { WelcomeOnboarding } from "./_components/WelcomeOnboarding"
 import { RightDetailPane } from "./_components/RightDetailPane"
 import { RightDetailProvider, useRightDetail } from "@/src/application/providers/right-detail.provider"
@@ -651,9 +650,7 @@ function PageContent() {
 
       <ClinicalPatientContext patient={patient} variant="mobile" />
       
-      {/* Email Verification Banner */}
       <div className="px-3 sm:px-6">
-        <EmailVerificationBanner />
         <NetworkStatusBanner />
         <ProgressiveImportStatus />
         <HospitalCaptureReasons />

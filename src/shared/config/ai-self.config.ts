@@ -26,8 +26,8 @@ export const AI_SELF_MODEL = runtimeOrBuild(runtimeAi?.model, process.env.NEXT_P
 /** Path (or absolute URL) the browser calls. Defaults to the same-origin proxy. */
 export const AI_SELF_ENDPOINT = runtimeOrBuild(runtimeAi?.endpoint, process.env.NEXT_PUBLIC_AI_SELF_ENDPOINT) || `${NEXT_BASE}/api/ai`
 
-/** Shared proxy token sent by the browser; the server proxy validates it when
- *  AI_PROXY_KEY is configured server-side. */
+/** Optional additional proxy gate token. The server proxy also requires the
+ *  app's same-origin authenticated session. */
 export const AI_SELF_PROXY_KEY = runtimeOrBuild(runtimeAi?.proxyKey, process.env.NEXT_PUBLIC_AI_SELF_PROXY_KEY)
 
 /** Upstream model's context window (tokens), overridable per deployment. */

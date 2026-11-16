@@ -1,5 +1,5 @@
-import { doc, onSnapshot, runTransaction, setDoc } from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+import { doc, onSnapshot, runTransaction, setDoc } from '@/src/infrastructure/firebase/firestore-client'
+import { db } from '@/src/infrastructure/firebase/firestore-client'
 import { useBetaFeaturesStore } from '@/src/application/stores/beta-features.store'
 
 /** One subscription per signed-in session, owned by AuthProvider. */

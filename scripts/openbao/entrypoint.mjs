@@ -29,7 +29,7 @@ async function main() {
       console.warn(`⚠ OpenBao 讀取失敗，沿用映像環境變數：${error.message}`)
     }
   }
-  // Runtime public config for the browser (Google 登入 / 自架 AI 開關):
+  // Runtime public config for optional Firebase integrations and the AI UI;
   // written from the merged env so OpenBao-injected values are included.
   try {
     writeAppConfig(envVars)

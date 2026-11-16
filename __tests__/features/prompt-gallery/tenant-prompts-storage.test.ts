@@ -4,7 +4,10 @@ import { createSharedPrompt, getSharedPrompts } from '@/features/prompt-gallery/
 import type { SharedPrompt } from '@/features/prompt-gallery/types/prompt.types'
 
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => jest.requireActual('./fixtures/firestore-memory').firestore)
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  ...jest.requireActual('./fixtures/firestore-memory').firestore,
+  db: {},
+}))
 
 const draft = (overrides = {}): Omit<SharedPrompt, 'id' | 'createdAt' | 'updatedAt' | 'body' | 'tenantName'> => ({
   title: 'HF follow-up', prompt: 'Summarise the NT-proBNP trend', types: ['chat'], category: 'summary', specialty: ['cardiology'],

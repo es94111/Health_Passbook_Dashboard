@@ -7,8 +7,8 @@
  */
 import {
   addDoc, collection, deleteDoc, doc, getDocs, increment, limit, orderBy, query, runTransaction, Timestamp, updateDoc, where,
-} from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+} from '@/src/application/composition.firestore-client'
+import { db } from '@/src/application/composition.firestore-client'
 import { splitTemplateText } from '@/src/application/composition.template-text'
 import { coerceTemplateVersion, type SharedPrompt } from '../types/prompt.types'
 import { convertToSharedPrompt, validatePrompt, type NewPrompt } from './prompt-gallery.service'
@@ -20,7 +20,7 @@ export type NewTenantPrompt = NewPrompt & { tenantId: string }
 
 export async function getTenantPrompts(tenantId: string): Promise<SharedPrompt[]> {
   if (!db || !tenantId) return []
-  // The where() clause is what lets the security rule prove membership for a list query.
+  // The tenant filter lets the server verify membership for the requested collection.
   const snapshot = await getDocs(query(
     collection(db, COLLECTION_NAME), where('tenantId', '==', tenantId), orderBy('createdAt', 'desc'), limit(MAX_TENANT_PROMPTS),
   ))
