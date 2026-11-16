@@ -1,0 +1,135 @@
+import type { NextConfig } from "next";
+import path from "path";
+import { optionalBuildConfig, writeOptionalBuildTsconfig } from "./scripts/optional-build-config.mjs";
+import { execFileSync } from 'node:child_process';
+import { resolveAppVersion, writeVersionFile } from './scripts/app-version.mjs';
+
+// Commit date as YYYY.M.D; also written to public/version.json, which the
+// running app fetches (useAppVersion) for the version shown in settings.
+const appVersion = resolveAppVersion(__dirname);
+writeVersionFile(__dirname, appVersion);
+
+let collectorRevision = 'unknown';
+try { collectorRevision = execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+
+const isGhPages = process.env.GITHUB_PAGES === "true";
+
+// Optional second static-export target: the official mirror at
+// mediprisma.tw/app. Set DEPLOY_BASE_PATH=/app to build that artifact.
+// Any non-empty value turns on the same static export + basePath wiring
+// that GitHub Pages uses, just under a different subpath.
+const deployBasePath = process.env.DEPLOY_BASE_PATH || "";
+const isStaticExport = isGhPages || deployBasePath !== "";
+
+const basePath = deployBasePath
+  ? deployBasePath
+  : isGhPages
+    ? "/medical-note-smart-on-fhir"
+    : "";
+
+// Detect when running inside a Claude Code worktree
+// (e.g. .claude/worktrees/<branch>/). Worktrees don't have their own
+// node_modules, so Turbopack needs to be pointed at the main project root.
+const isWorktree = __dirname.includes('.claude/worktrees/');
+const projectRoot = isWorktree ? path.join(__dirname, '../../..') : __dirname;
+
+const optional = optionalBuildConfig(__dirname);
+const buildTsconfig = writeOptionalBuildTsconfig(__dirname, optional);
+
+const nextConfig: NextConfig = {
+  // Allow phones/tablets on the same local network to load Turbopack's
+  // development resources. This is development-only; production builds do
+  // not use the dev-origin allow-list.
+  ...(process.env.NODE_ENV === 'development'
+    ? { allowedDevOrigins: ['127.0.0.1', '192.168.1.112'] }
+    : {}),
+  // Explicit synthetic-only loopback relay for the isolated HF calculator preview.
+  ...(process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_HF_LOCAL_PREVIEW_RELAY === 'synthetic'
+    ? { async rewrites() { return ['dry-run', 'predict'].map(operation => ({ source: '/__hf-local-preview/hf/v1/' + operation, destination: 'http://127.0.0.1:3004/hf/v1/' + operation })); } }
+    : {}),
+  // Static export is only required for the GitHub Pages deploy. In dev mode
+  // (and on Vercel) we want the full Next.js server so dynamic API routes
+  // like /api/feedback work. Without this gate, `output: "export"` forces
+  // every route to be statically renderable, which breaks API routes.
+  ...(isStaticExport ? { output: "export" as const } : { output: "standalone" as const }),
+  images: { unoptimized: true },
+  // Next 16.3 runs the project-local `tsc` over the whole tsconfig project,
+  // tests included. The GitHub Pages build stashes app/api/ away (see
+  // scripts/build-gh.mjs), so the API-route tests would fail to resolve
+  // their imports there. Builds type-check the app only; CI's own
+  // `tsc --noEmit` still covers __tests__ with tsconfig.json.
+  typescript: { tsconfigPath: buildTsconfig },
+  // 避免 Next 往上層亂抓 lockfile（雲端同步/家目錄）
+  // worktree mode: point at main project where node_modules lives
+  outputFileTracingRoot: projectRoot,
+  turbopack: {
+    ...(isWorktree ? { root: projectRoot } : {}),
+    resolveAlias: optional.aliases,
+  },
+  webpack(config) {
+    // Optional package installs can change aliases without changing this file.
+    // Invalidate persistent module resolution when switching deployment modes.
+    if (config.cache && typeof config.cache === 'object') {
+      config.cache.version = `${config.cache.version ?? ''}|${JSON.stringify(optional)}`;
+    }
+    config.resolve.alias = {
+      ...config.resolve.alias,
+      ...Object.fromEntries(Object.entries(optional.aliases).map(([name, file]) => [name + '$', path.resolve(__dirname, file)])),
+    };
+    return config;
+  },
+  // Static-export targets (GH Pages, mediprisma /app) need basePath / assetPrefix
+  ...(isStaticExport
+    ? {
+        basePath: basePath,
+        assetPrefix: `${basePath}/`,
+        trailingSlash: false, // 建議 false
+      }
+    : {
+        trailingSlash: false,
+      }),
+  // 暴露 basePath 給客戶端
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
+    ...optional.env,
+    NEXT_PUBLIC_COLLECTOR_APP_VERSION: appVersion,
+    NEXT_PUBLIC_COLLECTOR_BUILD_REVISION: collectorRevision,
+    // App version is no longer baked in here — useAppVersion fetches it from
+    // /version.json at runtime (written above from the commit date).
+  },
+  // Security headers (CSP disabled for local development).
+  //
+  // X-Frame-Options dropped on purpose: its only "allow-list" value is
+  // ALLOW-FROM which Chrome ignores, so the SAMEORIGIN default blocks the
+  // EHR-FHIR Bridge extension from embedding this app inside HIS pages
+  // (NHI 健保存摺, vghtpe). We rely on CSP frame-ancestors instead —
+  // modern browsers honour CSP over the legacy header. Restrict to a
+  // whitelist of trusted HIS hosts (plus 'self' so the app's own
+  // /smart/launch flow keeps working).
+  //
+  // Note: this only affects `next dev` / `next start`. GH Pages serves
+  // static files via GitHub's CDN where headers() has no effect.
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value:
+              "frame-ancestors 'self' " +
+              "https://myhealthbank.nhi.gov.tw " +
+              "https://*.vghtpe.gov.tw " +
+              "http://localhost:5001"  // mock-his
+          },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-XSS-Protection', value: '1; mode=block' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(self), geolocation=()' }
+        ]
+      }
+    ]
+  },
+};
+
+export default nextConfig;

@@ -1,465 +1,232 @@
-# 健康存摺儀表板
+# 醫析 MediPrisma · SMART on FHIR（本地複製版）
 
-台灣健保健康存摺（NHI）個人健康資料視覺化儀表板。
+**目前版本：4.0.0** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
 
-**開發版本：3.0.2 — 相依套件升級驗證後還原（維持與上游一致的已驗證版本）；3.0.1 README 增補專案來源與修改聲明；3.0.0 匯入 MediPrisma mediprisma-app 最新版（master @ 313fe14、Apache-2.0）完整程式碼至 mediprisma-app/ 子資料夾（2,394 檔與上游位元組一致，舊專案檔案完全不變）；2.7.2 相依套件更新至最新版本（postcss 8.5.33、tailwindcss 4.3.5、vite 8.3.8、@vitejs/plugin-react 6.3.0、jsdom 31.0.1、google-auth-library 11.3.4、stream-json 3.9.0、eslint 10.15、typescript-eslint 8.72.2 等）並修正全部 7 個 lint 錯誤，建置與測試全數通過；2.7.1 相依套件全面更新至最新版本（react 19.3.1、react-router 8.5.1、jsdom 31、vite 8.3.6、vitest 5.1.0、eslint 10.14、typescript-eslint 8.72.1 等），建置與測試全數通過；2.7.0 匯入前先顯示資料日期範圍、各類筆數、FHIR 資源組成與影像／附件摘要（含無法預覽的格式），確認後才加密上傳，可隨時取消且不寫入任何資料；2.6.1 修正影像報告附件未顯示（附件改從任何報告資源的 presentedForm、content、media[].link 與 image[] 解析，無法預覽的格式會列出格式，並新增 GIF／BMP 支援）；2.6.0 起管理員可從網頁觸發 Watchtower 更新 Docker image，並改善前端載入（分頁與設定頁按需載入、圖表獨立 chunk）與後端傳輸（gzip／Brotli 壓縮、hash 靜態資源長期快取）；2.5.0 起支援加密個人健康資料（自我量測、健康檔案、看診摘要、領藥提醒、檢驗個人目標值）；2.4.0 起的「影像報告」分頁（檢查類型、部位、系列與影像張數）；大檔匯入（單檔上限 4 GiB、病歷文字索引上限 8 GiB，皆以加密分塊保存）；2.1.0 起的 FHIR Bridge 整合與 20 GB 串流備份仍待真實去識別化匯出檔及瀏覽器端到端驗收，尚非正式發布。**
+> ## 專案來源與修改聲明
+>
+> 本專案複製自 [MediPrisma/mediprisma-app](https://github.com/MediPrisma/mediprisma-app)
+> （上游 master @ `313fe14`，2026-11-15 匯入，授權 Apache-2.0），**此為修改版**：
+> 所有修改只維護於 [es94111/Health_Passbook_Dashboard](https://github.com/es94111/Health_Passbook_Dashboard)，
+> **不會回傳上游 GitHub**（不設定 upstream remote；上游 sync／hmc 發佈 workflow 一律不納入）。
+>
+> 本版重點（4.0.0）：
+>
+> - **Google 登入**：Firebase Auth Google provider（`features/auth/GoogleSignInButton.tsx`）。
+> - **金鑰管理**：OpenBao 介接＋自產金鑰自動輪換（見 [`openbao/README.md`](openbao/README.md)）。
+> - **AI 服務自架化**：單一 OpenAI 相容供應商；base URL＋金鑰以 env／OpenBao 設定，
+>   經同源 `/api/ai` 代理，金鑰不進瀏覽器（見 `.env.example`「Self-hosted AI Service」）。
+> - **已移除測試資料與模擬資料**：示範病人、demo AI 快照、驗證資料集、合成情境頁與其產生器。
+> - **GitHub CI 維持本 repo 原本流程**：Docker 映像發版＋Release（`docker-publish.yml`）、
+>   Gitleaks（`security.yml`）；OpenBao 輪換排程為選填附加。
+>
+> 部署：Docker 多架構映像（GHCR／Docker Hub）→ Zeabur／自架主機，Watchtower 熱更新；
+> 容器啟動可自 OpenBao 注入 runtime 密語。環境變數見 `.env.example`。
 
-## 專案來源與修改聲明
+**把跨院病歷整理成看得懂、查得到來源、能接續照護的臨床工作區。**
 
-本專案的 `mediprisma-app/` 應用複製自 [MediPrisma/mediprisma-app](https://github.com/MediPrisma/mediprisma-app)（上游 master @ `313fe14`，2026-11-15 匯入，授權 Apache-2.0），**此為修改版**：
+MediPrisma 整合就診、用藥、檢驗與臨床文件，提供來源可回查的 AI 摘要、臨床對話與報告解讀。支援醫療人員與民眾兩種閱讀方式，可從 SMART on FHIR 啟動，也能直接匯入本機資料。
 
-- 所有修改只在本 repo（`es94111/Health_Passbook_Dashboard`）維護，**不會回傳上游 GitHub**。
-- 目前相對上游的修改：
-  1. repo 根目錄新增 `.gitleaks.toml`（Gitleaks 誤報白名單，排除 12 個已判定誤報，不減損掃描能力）
-  2. 版號文件同步（`changelog.json`、`SRS.md`、本 README）
-  3. 相依套件曾於 Dependabot PR #82 升級 9 項，經升級前後完整測試對照發現 `@ai-sdk/provider-utils` 4.0.66 與 App 的 AI 契約測試不相容（4 題失敗），已**還原全部升級**；未來若要升級請先更新 AI 契約或逐項驗證（`next` 16.4.1 等 8 項可安全單獨升級）
-  4. `mediprisma-app/` 目前與上游 `313fe14` **完全一致**（原始碼與相依版本皆同）；**後續修改將只維護於本 repo**
-- 依 Apache-2.0 條款使用上游原始碼；上游版權歸 MediPrisma Contributors，原作者與貢獻者署名見 [`mediprisma-app/NOTICE`](mediprisma-app/NOTICE)，授權全文見 [`mediprisma-app/LICENSE`](mediprisma-app/LICENSE)。
-- 執行匯入的應用：`cd mediprisma-app && npm install && npm run dev`（詳見 [`mediprisma-app/README.md`](mediprisma-app/README.md)）。
+[開啟 MediPrisma](https://mediprisma.tw/app) · [GitHub Pages](https://voho0000.github.io/medical-note-smart-on-fhir/) · [文件索引](docs/README.md) · [協作指南](CONTRIBUTING.md) · [English](#english)
 
-## 快速開始（本機開發）
+> 功能核對：2026-09-08，依 v0.51.0 與目前 `master` 已提交的實作整理。登入及機構設定會影響可用功能。
+>
+> 本專案供研究與教學使用，非醫療器材。AI 與規則產出的內容供參考，臨床決策仍須由醫療人員確認。
 
-### 1. 安裝相依套件
+## 先試用，再接自己的資料
+
+1. 開啟部署的應用（Docker 映像，預設 `http://localhost:3001`），選擇醫療人員或民眾身份。
+2. 匯入自己的 FHIR Bundle／健康存摺 SDK JSON（本版已移除內建示範病人與模擬資料）。
+3. 從「醫療摘要」掌握重點，再查看原始報告、提出問題或套用摘要範本。
+
+## 主要功能
+
+### 病歷與報告：把資料放回時間與來源中
+
+- **五個資料分頁**：病人資訊、就診紀錄、報告、用藥與文件，集中閱讀跨院資料。
+- **累積檢驗報告**：依類別呈現跨日期數值，支援日期範圍、全部日期與類別快速跳轉；標準化檢驗名稱，並保留原始結果文字。
+- **臨床報告閱讀**：整理影像、病理、出院病摘等內容；同份報告的相關項目可合併呈現，保留原文供核對。
+- **AI 翻譯與解讀**：按需產生中文翻譯與白話說明，與原文對照閱讀。
+
+### 醫療摘要：先看到病程、風險與待確認事項
+
+醫療摘要是載入病人後的預設分頁，整理跨院病程、主動安全提醒、待決定事項、時間軸與資料涵蓋情形。摘要中的來源引用可回查 FHIR 資源；無法對應的引用會標示為未驗證。
+
+- 醫療人員版著重臨床重點；民眾版調整用語，並提供「我的用藥與照護」。
+- **自訂摘要模組**可新增、排序、隱藏、手動執行或設定自動生成，也可從提示範本庫加入。
+- 透過 **AI 資料範圍**選擇並預覽摘要使用的病歷內容。
+- 摘要結果提供展開閱讀與使用引導；生成結果可快取，減少重複請求。
+
+### 臨床對話：依問題查資料、接續追問
+
+- 支援 Agent 工具呼叫，按需查詢病人、診斷、用藥、過敏、檢驗、生命徵象、處置與就診資料。
+- 支援透過 Perplexity 搜尋醫學文獻；是否可用取決於所選模型與服務設定。
+- 輸入 `/` 套用提示範本，回答後可點選建議問題繼續追問。
+- 支援 Whisper 語音口述、一般對話歷史與無痕對話。
+- 可選內建模型、自備 API 金鑰，或連接院內／地端 OpenAI-compatible 端點。
+
+### 提示範本庫：讓常用工作可以重複使用
+
+範本可用於臨床對話、自訂摘要，或同時支援兩者。
+
+- 依用途、專科、受眾、分類與關鍵字尋找範本；桌面以表格瀏覽，手機以卡片呈現。
+- 支援系統範本、我的範本、收藏與最近使用。
+- 預覽提示內容及已提供的輸出範例，套用需要填寫欄位的範本。
+- 登入後可分享、管理自己的範本及收藏。
+- **科常用範本**依機構／科別成員資格顯示，發布與管理依權限開放。
+
+### 計算、匯出與個人設定
+
+- **醫療計算機**：10 類、58 個臨床評分與公式，包括 eGFR、KFRE、CHA₂DS₂-VASc、Child-Pugh、CURB-65；可依病人檢驗自動帶入支援的數值，附使用說明並可複製結果。
+- **IPS 匯出**：建立 International Patient Summary FHIR 文件與 Markdown 預覽；AI 推論的問題清單須逐項確認後才納入。
+- **閱讀設定**：中英文、深色模式、字級、響應式版面與功能分頁釘選；醫療人員／民眾身份可切換。
+
+## 資料如何進來
+
+| 來源 | 使用方式 |
+|---|---|
+| SMART on FHIR | 由 EHR 啟動或 standalone launch，使用 OAuth 2.0 與 PKCE 讀取授權範圍內的 FHIR 資料 |
+| 本機 FHIR Bundle | 匯入 `.json`，在瀏覽器中讀取與整理 |
+| 健康存摺 SDK JSON | 在瀏覽器轉換為 FHIR，保留轉換來源資訊；SDK JSON 轉換上限為 32 MB |
+| 示範病人 | 不需準備檔案即可體驗內建去識別化範例，包含臨床報告 |
+| Medcloud 整合 | 配合擴充套件交接資料並執行自動摘要；需要對應的整合環境 |
+
+## AI 服務與資料隱私
+
+AI 功能需要可用的服務設定與網路連線。內建代理提供每日額度；自備金鑰與自訂端點可在設定中管理。對話、醫療摘要與自訂摘要模組可分別選擇模型。
+
+目前整合 **OpenAI、Google Gemini、Anthropic Claude** 與 **OpenAI-compatible** 端點，文獻搜尋與語音轉錄另有服務設定。模型、免費代理資格及各功能預設值以 [模型清單](src/shared/constants/ai-models.constants.ts) 為準；實際可用性也取決於後端允許清單、額度及提供者狀態。
+
+| 資料 | 儲存與傳送方式 |
+|---|---|
+| 本機匯入的完整病歷 | 以 AES-GCM 加密存於瀏覽器 IndexedDB，最長 12 小時；過期於載入時清除，也可手動清除或登出清除 |
+| AI 請求 | 所需病歷內容會傳送至選定服務；內建代理經 Firebase Functions，自訂端點可選瀏覽器直連或受限 Gateway |
+| API 金鑰 | 預設僅保留於本次瀏覽工作階段；可自行選擇在裝置記住。Gateway 模式下，自備金鑰也會經過代理 |
+| 一般對話 | 登入且非無痕時，文字對話儲存於 Firestore；訪客與無痕對話不寫入雲端歷史 |
+| 範本與設定 | 部分登入使用者資料可同步；分享範本的內容依公開或科別權限供他人閱讀 |
+| 使用統計 | 官方部署啟用 GA4，記錄功能使用事件；不記錄病歷內容、提示詞、AI 回覆或完整啟動網址，使用隨機瀏覽器識別值估算使用情形 |
+
+自訂模型的 Agent 模式通常須先通過使用合成資料的工具呼叫測試，且只取得瀏覽器綁定的 FHIR 工具。北榮受控啟動的院內模型採專用設定；機構憑證不會套用到一般外院路徑。
+
+清除本地資料不會一併刪除雲端對話或第三方已收到的請求。詳見 [隱私政策](PRIVACY_POLICY.md) 與 [安全說明](docs/SECURITY.md)。
+
+## 開發與部署
+
+### 本機啟動
+
+建議使用 **Node.js 24**（與 CI 一致）、npm 與 GitHub CLI。部分 `@voho0000/*` 套件來自 GitHub Packages，需要具有套件讀取權限的 GitHub 帳號。
 
 ```bash
-npm run install:all
-```
+git clone https://github.com/voho0000/medical-note-smart-on-fhir.git
+cd medical-note-smart-on-fhir
 
-### 2. 設定環境變數（選填）
-
-```bash
-cp server/.env.example server/.env
-# 編輯 server/.env，視需要填入 JWT_SECRET、GOOGLE_CLIENT_ID 等
-```
-
-### 3. 啟動開發伺服器
-
-```bash
+npm ci
+cp .env.example .env.local
 npm run dev
 ```
 
-開啟瀏覽器：`http://localhost:5173`
+不需要 clone 私有 repo 或登入 GitHub 就能安裝、開發與建置。私有 CDSS 套件未安裝時，照護指引入口不顯示；FHIR 匯入、示範資料、報告、AI 摘要與計算機仍可使用。SDK JSON 轉換器已附於 `vendor/`，不需要 SDK repo 權限；若部署未包含這份 artifact，僅接受 FHIR Bundle。個人化衛教內容也由私有套件提供，缺少時保留入口並顯示尚未安裝，不會產生替代建議。
 
----
+需要完整私有功能的開發者可先 `gh auth login -h github.com`，再執行 `npm run packages:ci`。參見 [套件與權限說明](docs/personalization-private-packages.md)。
 
-## 首次使用
+開啟 [localhost:3001](http://localhost:3001)。依 [`.env.example`](.env.example) 填入 Firebase、AI 代理與 SMART 設定；登入、雲端同步、免費代理等功能需要對應後端。
 
-1. 前往應用程式網址，點選「註冊」建立帳號
-   - 第一個註冊的帳號自動成為管理員
-2. 登入後設定至少 12 字元的「資料加密密碼」（不同於登入密碼），選擇健保快易通原生 JSON 或 NHI-FHIR Bridge 匯出的 FHIR R4 Bundle JSON
-3. 若沒有可自動比對的病人識別碼，核對檔案與本帳號屬於同一人，勾選確認後才合併；已知識別碼衝突時無法強制合併
-4. 匯入後可瀏覽門診、住院、檢驗、醫療報告、影像報告、用藥與「同步紀錄」，並可自行記錄「自我量測」、「健康檔案」及列印「看診摘要」（自行輸入的資料同樣在瀏覽器端加密）；重新登入需再次輸入資料加密密碼解鎖
+`NEXT_PUBLIC_` 變數會進入瀏覽器程式，不能用來保存私密金鑰。自架環境的 Firebase Functions 與 Firestore Rules 在獨立的 [firebase-smart-on-fhir](https://github.com/voho0000/firebase-smart-on-fhir) 專案維護。
 
-### NHI-FHIR Bridge 匯入方式與限制
+### 常用指令
 
-1. 在健保署網站自行登入並明確授權 NHI-FHIR Bridge 擴充功能匯出資料，將完整 Bundle JSON 下載到自己的裝置。整合背景見 [參考 PR #59](https://github.com/es94111/Health_Passbook_Dashboard/pull/59)，該連結不是外掛安裝頁。
-2. 於本網站點選「匯入新資料」選檔。網站不索取健保署密碼、Cookie 或登入工作階段；不監聽外掛訊息、不連線至 localhost 接收資料，也不下載外部附件 URL。
-3. 一個帳號僅用於同一人，眷屬應分開建立帳號。每份 Bundle 必須且只能包含一位 Patient；無法解析／跨病人的 subject、patient 等參照會拒絕整份匯入。Patient.id 只是檔內識別，不能證明是同一人。原生 NHI JSON 與沒有共同可靠識別碼的來源，每次都須人工確認。
-4. 支援 Encounter、Observation（含 component）、MedicationRequest／Dispense／Statement、DiagnosticReport、DocumentReference、ImagingStudy、Media、Binary、Immunization 等 R4 資源的專用展示或關聯；影像類報告獨立於「影像報告」分頁，顯示檢查類型、部位、系列與影像張數，並可依檢查類型篩選。未提供專用畫面的資源仍保存在原始來源檔；本程式做結構及關聯驗證，不是完整的 FHIR 規範／醫療正確性驗證器。
-5. 檢驗的數值、單位、來源與參考文字分別保存；文字、陰陽性、比較符號及缺少日期的結果不冒充精確數字。不同單位／來源分開畫趨勢；參考條件不相容時不套用單一正常範圍。缺少日期不補成今天。
-6. 支援內嵌 JPEG／PNG／WebP 預覽及 PDF 下載（不內嵌執行）；以 Base64、檔頭、大小與 SHA-256 驗證附件。同內容附件只儲存一份，使用隨機 ID，與病歷索引分開以 AES-GCM 加密。非支援類型僅保留原始內容，不提供預覽。
-7. 單次 JSON 上限 **4 GiB**、單一附件解碼後上限 **12 MiB**、每帳號附件索引上限 **512 個**、來源分塊上限 **512 個**；加密前的累計病歷索引（含目前紀錄、歷次原始來源與歷程，但不含已分離的附件位元組）上限 **8 GiB**。
-   - 超過 **32 MiB** 的檔案採兩階段串流：先掃描驗證 Bundle／NHI 結構與病人身分，再逐段讀取原始位元組並以 **8 MiB** 為單位個別 AES-GCM 加密上傳為來源分塊，索引只保留正規化紀錄與分塊摘要，瀏覽器不會一次載入整份檔案。附件在串流中即時分離、驗證與加密上傳。
-   - 病歷文字索引超過 **32 MiB** 時不再失敗：序列化後以 **8 MiB** 為單位切成內容定址分片，逐片個別 AES-GCM 加密上傳，加密清單只保留數百位元組的分片標頭（分片 ID、SHA-256、長度），解鎖時逐片下載並驗證後才組回。同內容分片會去重、重匯時沿用既有分片不重複上傳。
-   - 上限提高後仍需注意瀏覽器記憶體：**8 GiB** 是分片層的硬上限，實際可用大小取決於裝置記憶體（索引在瀏覽器內仍以物件形式處理），建議一次匯入不超過裝置記憶體的一半；已達累計上限不能靠分批繞過。
-8. 相同來源／資源重匯會略過，已知較舊的 FHIR 版本不覆寫新版本；原始來源、更新內容與匯入時間仍加密保留。NHI／FHIR 跨格式缺少共同紀錄識別碼時只標示可比對的疑似重複，不破壞性合併，統計可能包含兩個來源。
-9. 「同步紀錄」可查看新增／更新／略過數與警告，也能在本機還原並下載原始來源 JSON。**下載檔是明文健康資料**，勿上傳 GitHub、Log、CI 或第三方服務。
-10. 匯入先完整驗證並解析候選資料，再上傳加密附件，最後以版本條件提交病歷索引。附件失敗、解密失敗、身分衝突或版本競爭均不覆寫既有索引；失敗過程可能留下暫存密文附件，由後端清理。
-
-原始 DICOM 取得、遠端附件抓取、Chrome 擴充功能直接交付及遠端網站自動同步**不包含在本版本**；直接通訊需另行檢查來源、權限、身分與授權流程。實際 Bridge 匯出格式的相容性仍需使用去識別化樣本驗收。
-
-### 個人健康資料（自我量測／健康檔案／看診摘要）
-
-除了匯入的健保資料，也可以自行輸入並追蹤個人資料：
-
-- **加密保存**：自我量測、健康檔案、檢驗個人目標值與連續處方領藥計畫存放在病歷信封的 `personal` 區段，與其餘病歷一同在瀏覽器端以 AES-256-GCM 加密；伺服器只保存密文，不寫入可讀的偏好設定，也不產生附件。舊版病歷可直接開啟，下次儲存時補上空白個人資料
-- **自我量測**分頁：記錄血壓、血糖與體重，附最新值與趨勢圖
-- **健康檔案**分頁：過敏史、慢性病／既往病史、筆記與回診問題（可標記已詢問）
-- **看診摘要**分頁：整理待問問題、過敏與病史、目前用藥（推估）、領藥進度、異常檢驗、自我量測、主要診斷與近期門診／住院，可直接列印；列印時以淺色版面輸出並隱藏導覽與操作按鈕
-- **用藥**分頁的「慢性病連續處方領藥提醒」可由健保用藥紀錄帶入；時程為依處方資料推估，僅供提醒，**實際規定以健保署與藥局為準**
-- **檢驗**分頁可為單一項目設定個人目標值，並在趨勢圖疊加「用藥時間點」；重點摘要另有異常檢驗總覽、資料新鮮度與複驗提醒
-- ⚠️ 這些資料與病歷共用同一個資料加密密碼，**忘記密碼即無法復原**（見下方「重要：備份加密金鑰」）；若在其他分頁或裝置同時更新（含匯入），儲存可能因版本衝突失敗，需重新載入後再操作
-
-### 開發驗證
-
-```bash
-cd dashboard
-npm exec --no -- vitest run
-npm run build
-npm run lint
-cd ../server
-npm test
-npm run build
-```
-
-依賴套件掃描可分別執行 `npm audit --prefix dashboard`、`npm audit --prefix server`、`npm audit --prefix dashboard/.lint-toolchain`；秘密掃描沿用既有 Gitleaks／GitHub-hosted CI。僅使用合成或去識別化測試資料，不將個人健康資料寫入測試產物。
-
----
-
-## ⚠️ 重要：備份加密金鑰
-
-`server/data/` 目錄包含：
-- `users.json` — 加密的帳號資料
-- `records-{userId}.json` — 加密的健康記錄
-- `.key` — **主加密金鑰**
-
-**若 `.key` 檔案遺失，且未設定 `ENCRYPTION_KEY` 環境變數，所有健康資料將永久無法解密。**
-
-Docker 部署時務必掛載 Volume，並定期備份。
-
-### 含附件的備份與還原
-
-- 管理員匯出的完整備份包含使用者設定、主病歷密文及其引用的獨立附件密文，不需要將新匯入的病歷解成明文。**帳號、設定及登入紀錄等管理資訊仍可能是明文**，整份備份都應視為敏感檔案妥善保管。
-- 恢復後仍需每位使用者原有的**資料加密密碼**才能讀取病歷，不能以重設登入密碼取代。JSON 備份不含伺服器主金鑰，匯入時以目標環境金鑰重新加密；若直接備份整個 `data/` 目錄，則須另行安全保存對應的 `.key` 或 `ENCRYPTION_KEY`。
-- 維持 v1 備份相容性，舊備份可不含附件；附件或索引缺漏、格式錯誤時不得以不完整備份覆寫既有資料。覆寫前沿用安全快照機制。
-- **單份完整備份上限為 20 GB（20,000,000,000 bytes），按未壓縮 UTF-8 JSON 計算，含所有帳號、設定與附件的 Base64 膨脹。** 匯出與還原使用相同上限；超限會以 HTTP 413／`BACKUP_TOO_LARGE` 拒絕，不會產生無法匯回的下載檔，還原也不會先寫入部分內容。
-- 匯出不再於記憶體組出整份 JSON：伺服器先寫入 `data/.backup-transfers` 暫存檔，再以短時效、僅限本人使用的票證串流下載（支援瀏覽器續傳與取消，30 分鐘無活動即清除）。還原由瀏覽器直接串流上傳原檔，伺服器落盤後逐段解析驗證，通過才進入既有快照與覆寫流程；整個過程不將 20 GB 備份放入記憶體。
-- 以 Docker／反向代理部署時，請確認 `proxy-body-size`、`client_max_body_size`、`proxy_read_timeout` 等設定可容納大檔，並為 `data/` 預留至少「備份大小 × 3」的磁碟空間（暫存、快照與原資料並存）。
-- 多帳號或大量影像可能先達到整體備份上限，即使單次匯入／附件未超限。此版不提供自動分卷，管理員應事先規劃容量及離線保全方式；勿為通過上限刪除唯一資料副本。正式上線前，請在隔離環境實際演練含附件的備份、還原與解鎖。
-
----
-
-## 環境變數
-
-詳見 [server/.env.example](server/.env.example)。
-
-| 變數 | 說明 | 預設值 |
-|------|------|--------|
-| `JWT_SECRET` | JWT 簽名金鑰，正式環境務必設定 | 內建預設值（不安全） |
-| `ENCRYPTION_KEY` | 64 char hex 主加密金鑰 | 自動生成並存入 `server/data/.key` |
-| `GOOGLE_CLIENT_ID` | Google OAuth 用戶端 ID（選填） | — |
-| `PORT` | 後端監聽埠號 | `3001` |
-| `WATCHTOWER_URL` | Watchtower HTTP API 位址，例如 `http://watchtower:8080`（選填） | — |
-| `WATCHTOWER_TOKEN` | 與 Watchtower `WATCHTOWER_HTTP_API_TOKEN` 相同的權杖（選填） | — |
-| `APP_IMAGE` | 管理頁顯示的 image 名稱（選填，僅供辨識） | — |
-| `APP_VERSION` | 覆寫顯示版本（選填） | `changelog.json` 的 `currentVersion` |
-
-金鑰生成指令：
-
-```bash
-openssl rand -hex 32
-```
-
-### Security hardening notes
-
-- `JWT_SECRET` must be at least 32 bytes in production.
-- `JWT_EXPIRES_IN` controls token lifetime. Default is `12h`.
-- `ENCRYPTION_KEY` must be exactly 64 hex characters.
-- Legacy plaintext data files are not auto-migrated by default. For a one-time migration from old plaintext JSON, start the server once with `ALLOW_PLAINTEXT_MIGRATION=true`, verify the files were rewritten as encrypted envelopes, then remove the setting.
-
-### Session and health data security
-
-- JWTs are stored in an HttpOnly cookie named `nhi_session`; frontend code no longer stores or reads JWTs from `localStorage`.
-- The session cookie is `Secure` in production. For local HTTP development, set `SESSION_COOKIE_SECURE=false`.
-- Password login is rate-limited by IP and username; all auth mutation endpoints also have an IP-level limiter.
-- Passwords must be at least 12 characters and include at least three of lowercase, uppercase, number, and symbol.
-- Health records are encrypted in the browser before upload with WebCrypto AES-GCM. The server stores only an opaque client encrypted envelope, then wraps that envelope with server-side encryption at rest.
-- The data encryption passphrase is never sent to the server. If it is lost, existing health records cannot be recovered.
-- Existing legacy server-readable health records must be re-uploaded from the original NHI JSON to migrate into client-side encryption.
-
----
-
-## Google SSO 設定（選填）
-
-### 申請 Google OAuth Client ID
-
-1. 前往 [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. 建立「OAuth 2.0 用戶端 ID」，類型選「網頁應用程式」
-3. 依部署環境加入「授權 JavaScript 來源」：
-   - 本機開發：`http://localhost:5173`
-   - 正式環境：`https://your-domain.com`
-
-### 本機開發
-
-```bash
-# server/.env
-GOOGLE_CLIENT_ID=你的用戶端ID
-```
-
-前端在 runtime 向 `GET /api/auth/config` 取得 Client ID，因此不需要在 `dashboard/` 設定建置期變數，也不必為此重新建置 image。
-
-### Docker / 正式環境
-
-只需設定一個環境變數：
-
-```
-GOOGLE_CLIENT_ID=你的用戶端ID
-```
-
-前端會在 runtime 向 `GET /api/auth/config` 取得 Client ID，不需要重新建置 image。
-
----
-
-## Docker 部署
-
-### 架構說明
-
-Docker image 採三階段建置：
-1. **dashboard-build** — Vite 建置前端 SPA
-2. **server-build** — TypeScript 編譯後端
-3. **runtime** — 僅包含 production 相依套件、compiled JS、靜態前端檔案
-
-前端與後端均由 Express 在同一個 port 服務，`/api/*` 走後端，其餘走前端 SPA。
-
-### 手動建置與執行
-
-```bash
-# 建置 image
-docker build -t nhi-dashboard .
-
-# 執行（首次啟動會自動生成加密金鑰）
-docker run -d \
-  --name nhi-dashboard \
-  -p 3001:3001 \
-  -v nhi-data:/app/data \
-  -e NODE_ENV=production \
-  -e JWT_SECRET=$(openssl rand -hex 32) \
-  -e ENCRYPTION_KEY=$(openssl rand -hex 32) \
-  nhi-dashboard
-```
-
-開啟 `http://localhost:3001`
-
-> **注意**：`JWT_SECRET` 與 `ENCRYPTION_KEY` 每次 `$(openssl rand -hex 32)` 都會產生新值。
-> 正式部署請將金鑰固定儲存（例如存入 `.env` 檔案），避免重啟後無法解密現有資料。
-
-### 含 Google SSO
-
-```bash
-docker run -d \
-  --name nhi-dashboard \
-  -p 3001:3001 \
-  -v nhi-data:/app/data \
-  -e NODE_ENV=production \
-  -e JWT_SECRET=你的JWT金鑰 \
-  -e ENCRYPTION_KEY=你的64字元hex金鑰 \
-  -e GOOGLE_CLIENT_ID=你的用戶端ID \
-  nhi-dashboard
-```
-
-### 從網頁更新 Docker Image（Watchtower）
-
-管理員可在「管理員設定 → 系統更新」查看目前版本與 Watchtower 連線狀態，輸入登入密碼後觸發更新。應用程式本身**不需要掛載 Docker socket**，而是呼叫同一個 Docker network 上的 Watchtower HTTP API；權杖只存在伺服器端，不會回傳瀏覽器。
-
-`docker-compose.yml` 範例：
-
-```yaml
-services:
-  app:
-    image: ghcr.io/owner/health-passbook-dashboard:latest
-    container_name: nhi-dashboard
-    restart: unless-stopped
-    ports:
-      - "3001:3001"
-    volumes:
-      - nhi-data:/app/data
-    environment:
-      NODE_ENV: production
-      JWT_SECRET: ${JWT_SECRET}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      WATCHTOWER_URL: http://watchtower:8080
-      WATCHTOWER_TOKEN: ${WATCHTOWER_TOKEN}
-      APP_IMAGE: ghcr.io/owner/health-passbook-dashboard:latest
-    labels:
-      - com.centurylinklabs.watchtower.enable=true
-    networks: [internal]
-
-  watchtower:
-    image: containrrr/watchtower:latest
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      WATCHTOWER_HTTP_API_UPDATE: "true"
-      WATCHTOWER_HTTP_API_TOKEN: ${WATCHTOWER_TOKEN}
-      WATCHTOWER_LABEL_ENABLE: "true"
-      WATCHTOWER_CLEANUP: "true"
-      TZ: Asia/Taipei
-    networks: [internal]
-
-networks:
-  internal:
-volumes:
-  nhi-data:
-```
-
-`.env`（與 compose 同目錄，請妥善保管）：
-
-```bash
-WATCHTOWER_TOKEN=$(openssl rand -hex 32)
-JWT_SECRET=你的JWT金鑰
-ENCRYPTION_KEY=你的64字元hex金鑰
-```
-
-重點：
-
-- `WATCHTOWER_URL` 留空時，管理頁的更新按鈕會顯示為停用；設定時只接受 `http`／`https`，且不可在網址中夾帶帳密。
-- Watchtower 的 API 連接埠**不要**對外發布（範例未設定 `ports`），只讓 app 透過內部 network 存取。能存取 Docker socket 的容器等同主機 root 權限，請限制其範圍並定期更新 Watchtower。
-- `WATCHTOWER_HTTP_API_UPDATE=true` 必須搭配 `WATCHTOWER_HTTP_API_TOKEN`；兩邊權杖需一致。Watchtower 會回 `401`／`403`，管理頁會提示權杖設定不符。
-- `WATCHTOWER_LABEL_ENABLE=true` 時只更新帶有 `com.centurylinklabs.watchtower.enable=true` 標籤的容器；本專案 Dockerfile 已預設加上此標籤。
-- 更新時容器會重建，連線會中斷數十秒；若 `JWT_SECRET` 未固定，重啟後所有使用者都需要重新登入。資料保存在 `nhi-data` volume，不會因更新遺失。
-- 更新採「拉取目前 tag 的最新 manifest」語意。使用固定的版本 tag（例如 `2.6.0`）時不會自動跳到新版本，請改用 `latest` 或由 CI 更新 compose 中的 tag；若已是最新 image，Watchtower 可能不會重啟容器，管理頁會在等待逾時後說明。
-- 每次更新都需要重新輸入管理員密碼、有速率限制（15 分鐘內最多 5 次），並寫入「全站登入記錄」供稽核。僅有 Google 登入、尚未設定密碼的帳號無法使用此功能。
-
-### Volume 資料持久化
-
-```bash
-# 查看 volume 位置
-docker volume inspect nhi-data
-
-# 備份
-docker run --rm -v nhi-data:/data -v $(pwd):/backup alpine \
-  tar czf /backup/nhi-data-backup.tar.gz /data
-```
-
----
-
-## CI/CD（GitHub Actions）
-
-Docker image 由 `.github/workflows/docker-publish.yml` 自動建置、推送並發佈 GitHub Release。
-
-### Docker image 發版流程
-
-| 觸發條件 | 行為 |
+| 指令 | 用途 |
 |---|---|
-| Pull request → `main` | 建置 `linux/amd64` image（不推送），實際啟動容器檢查 `/api/ping` 與 SPA 首頁後才回報成功 |
-| Push → `main` | 建置 `linux/amd64` + `linux/arm64` 並推送，標籤 `latest`、`main`、`sha-<完整 commit>` |
-| Push tag `v*` | 先比對標籤、`changelog.json` 與 `SRS.md` 版號，再推送 `X.Y.Z`、`X.Y`、`X`、`latest`（預先版不含 `latest`）與 `sha-<完整 commit>`，最後建立或更新 GitHub Release |
-| 手動 `workflow_dispatch` | 同 push `main` |
+| `npm run dev` | 本機開發，port 3001 |
+| `npm run build` | Next.js 正式建置 |
+| `npm run build:gh` | GitHub Pages 靜態匯出，base path `/medical-note-smart-on-fhir` |
+| `npm run build:mediprisma` | 官網靜態匯出，base path `/app` |
+| `npm run lint` | 程式檢查 |
+| `npm run typecheck` | 依已安裝套件檢查型別；完整環境仍涵蓋測試 |
+| `npm test` | Jest 單元與元件測試 |
+| `npm run test:e2e` | Playwright 瀏覽器測試，準備方式見 [E2E 文件](e2e/README.md) |
+| `npm run check:lockfile` | 檢查跨平台 lockfile 完整性 |
 
-映像同時發佈到：
+**依賴維護**：現有套件版本更新使用 `npm run bump:dep -- <package> <version>`；新增／移除或更動依賴樹時使用 `npm run packages:install` 及對應包裝腳本，避免直接 `npm install` 遺失 Linux 所需的 lockfile 項目。詳見 [AGENTS.md](AGENTS.md)。
 
-- Docker Hub：`<DOCKERHUB_USERNAME>/nhi-dashboard`（未設定帳號時自動跳過，只發佈 GHCR）
-- GHCR：`ghcr.io/es94111/nhi-dashboard`
+`master` 的程式變更通過 CI 後，工作流程會部署 GitHub Pages，並在同步憑證已設定時更新 `mediprisma.tw/app`。純 Markdown／文件變更會略過主 CI。靜態網站的安全 response headers 須由託管平台設定，不能依賴 Next.js `headers()`。
 
-推送時附帶 OCI labels、SBOM 與 `mode=max` provenance attestation。GitHub Release 內文由 `changelog.json` 自動產生，包含分類變更、pull 指令、平台、可用標籤與 image digest。
+### SMART on FHIR 註冊
 
-### 發版步驟
+以 **public client + S256 PKCE** 註冊；本專案不使用 client secret。以下 `<app-url>` 必須包含部署的 base path，例如 `https://mediprisma.tw/app`。
 
-1. 依 `.claude/commands/update-docs.md` 更新 `changelog.json`（`currentVersion` + 新版本紀錄）、`SRS.md` 版本歷程與 `README.md` 版本標示
-2. 合併到 `main`
-3. 建立並推送標籤：
-
-```bash
-npm run release:tag            # 預覽：檢查工作目錄、版號與遠端標籤，並輸出 release 內文
-npm run release:tag -- --yes   # 建立 vX.Y.Z 並推送，觸發 image 發佈與 GitHub Release
-```
-
-`scripts/release/check-version.mjs` 會在 CI 再次檢查標籤與文件是否同步，不一致時直接失敗，不會發佈半套版本。
-`scripts/release/release-notes.mjs` 由 `changelog.json` 產生 GitHub Release 內文；版本紀錄若有 `"prerelease": true` 或版號帶 `-rc` 後綴，Release 會標記為預先版。
-
-### GitHub-hosted runner
-
-本專案為公開 repo，所有 workflow 都使用 GitHub 提供的 runner（`ubuntu-latest`），不需要自架 runner，也不必在 Settings → Actions → Runners 註冊機器：
-
-- **Build & Publish Docker Image**：`ubuntu-latest` 搭配 `docker/setup-qemu-action` 與 Buildx，建置並推送 `linux/amd64` 與 `linux/arm64` 多架構映像。
-- **Security Checks**：`npm audit` 與 Gitleaks 都在 `ubuntu-latest` 上執行；Node.js 22 由 `actions/setup-node` 安裝。
-- **Dependabot Updates**：公開 repo 由 GitHub 直接提供 runner，不需要額外設定。
-
-公開 repo 的 fork PR 不會取得 secrets。`npm audit` 不需 secret，因此 fork PR 也會執行；Gitleaks 需要 `pull-requests: write` 權限（fork PR 只有唯讀 token），因此只在同 repo 分支的 PR、`main` 推送、每週排程與手動執行時掃描。
-
-`npm audit` 只產生報告並上傳 artifact，不會阻擋 PR；弱點修復由 Dependabot alerts 與其 PR 追蹤。
-
-修改分支上的 workflow 不會改寫過去的執行紀錄或已發佈的 tag。重新執行舊 commit 的工作仍會使用該 commit 的 workflow；請從已更新的分支觸發新的執行。
-
-### Dependabot 專用 runner（僅私有 repo 適用）
-
-`Dependabot Updates` 不是一般的 workflow YAML，不能只修改 `runs-on`。GitHub 僅支援**私有 repo** 的 Dependabot 使用 self-hosted runner；本專案改為公開後已回到 GitHub-hosted runner，只有在 repo 轉回私有時才需要啟用 `scripts/dependabot-runner/` 的 Docker Compose 設定（需求為 `[self-hosted, Linux, X64, dependabot]`，且須在 repo → Settings → Code security → Dependabot 選擇該 runner）。
-
-```bash
-# 需要已啟動的 Docker Desktop／Compose、gh（repo 管理權限）及 jq
-./scripts/dependabot-runner/manage.sh setup
-./scripts/dependabot-runner/manage.sh status
-./scripts/dependabot-runner/manage.sh verify
-```
-
-`manage.sh` 的 setup 會以 `gh` 取得短效註冊 token 並透過標準輸入傳給 runner，不會把憑證或 token 寫進 Compose、映像或 `.env`；註冊資訊與快取保存在專用 named volume，**不要執行 `docker compose down --volumes`**。
-
-
-### 設定 GitHub Actions Secrets
-
-前往 GitHub repo → Settings → Secrets and variables → Actions：
-
-| Secret 名稱 | 說明 |
+| 項目 | 值 |
 |---|---|
-| `DOCKERHUB_USERNAME` | Docker Hub 帳號（選填；未設定時只發佈 GHCR） |
-| `DOCKERHUB_TOKEN` | Docker Hub Access Token（非密碼） |
+| Launch URL | `<app-url>/smart/launch` |
+| Redirect URL | `<app-url>/smart/callback` |
+| EHR launch scopes | `launch openid fhirUser patient/*.rs online_access` |
+| Standalone scopes | `launch/patient openid fhirUser patient/*.rs online_access` |
+| Client ID | `NEXT_PUBLIC_SMART_CLIENT_ID`，預設 `my_web_app` |
 
-GHCR 使用 workflow 內建的 `GITHUB_TOKEN`，不需要額外 secret。映像的 Google Client ID 於執行期由 `GOOGLE_CLIENT_ID` 環境變數提供，發版時不需要任何建置期 secret。
+可用 [SMART Health IT Launcher](https://launch.smarthealthit.org/) 搭配 GitHub Pages Launch URL 測試：
 
-### 取得 Docker Hub Token
-
-Docker Hub → Account Settings → Personal access tokens → Generate new token
-
----
-
-## Zeabur 部署
-
-1. Zeabur 建立新服務 → 選擇「Docker Image」
-2. Image 填入：`你的dockerhub帳號/nhi-dashboard`
-3. 設定 Variables：
-
-| 變數 | 值 |
-|---|---|
-| `NODE_ENV` | `production` |
-| `JWT_SECRET` | `openssl rand -hex 32` 的輸出 |
-| `ENCRYPTION_KEY` | `openssl rand -hex 32` 的輸出（**精確 64 字元**） |
-| `GOOGLE_CLIENT_ID` | Google OAuth 用戶端 ID（選填） |
-
-4. 掛載 Volume：Container path 填 `/app/data`
-5. 部署
-
-> **`ENCRYPTION_KEY` 注意事項**：必須精確為 64 個 hex 字元（0-9、a-f）。
-> 長度不對會造成 server 啟動 crash。設定前可先在本機確認：
-> ```bash
-> openssl rand -hex 32 | wc -c  # 應輸出 65（含換行）
-> ```
-
----
-
-## 目錄結構
-
-```
-/
-├── server/                   後端 Express + TypeScript
-│   ├── src/
-│   │   ├── index.ts          伺服器入口，靜態檔案服務
-│   │   ├── crypto.ts         AES-256-GCM 加密核心
-│   │   ├── store.ts          使用者與健康資料讀寫
-│   │   ├── auth.ts           JWT 中介層
-│   │   └── routes/
-│   │       ├── auth.ts       登入、註冊、Google SSO、/config
-│   │       ├── data.ts       健康資料上傳與查詢
-│   │       └── admin.ts      管理員功能
-│   └── data/                 使用者資料（勿上傳至 git）
-├── dashboard/                前端 React + Vite + Tailwind
-├── Dockerfile                多階段建置
-├── .dockerignore
-├── .github/workflows/
-│   ├── docker-publish.yml    PR 驗證、image 發佈與 GitHub Release
-│   └── security.yml          npm audit 與 Gitleaks
-├── scripts/release/
-│   ├── tag-release.sh        建立並推送 vX.Y.Z 標籤
-│   ├── check-version.mjs     檢查標籤與 changelog／SRS 版號一致
-│   └── release-notes.mjs     由 changelog.json 產生 Release 內文
-└── package.json              根目錄：npm run dev 同時啟動前後端
+```text
+https://voho0000.github.io/medical-note-smart-on-fhir/smart/launch
 ```
 
----
+### 技術與擴充位置
 
-## 常用指令
+採用 **Next.js 16、React 19、TypeScript、Tailwind CSS 4、shadcn/ui、Vercel AI SDK、fhirclient、Firebase、TanStack Query 與 Zustand**；以 Jest／Testing Library 與 Playwright 驗證。
 
-```bash
-# 開發
-npm run dev          # 同時啟動前後端（建議）
-npm run server       # 只啟動後端（port 3001）
-npm run frontend     # 只啟動前端（port 5173）
-npm run install:all  # 安裝所有相依套件
-
-# 建置
-npm run build        # 建置前端 SPA
-
-# Docker
-docker build -t nhi-dashboard .
-docker run -d -p 3001:3001 -v nhi-data:/app/data nhi-dashboard
+```text
+app/ · features/ · components/   頁面與功能介面
+src/application/                使用案例、資料流程與服務組裝
+src/core/                       領域模型與介面
+src/infrastructure/             FHIR、AI、儲存與外部服務
+src/shared/                     共用設定、模型清單與多語系
 ```
+
+- 資料分頁：[feature-registry.ts](src/shared/config/feature-registry.ts)
+- 主功能與受眾設定：[right-panel-registry.ts](src/shared/config/right-panel-registry.ts)
+- AI 模型與服務組裝：[模型清單](src/shared/constants/ai-models.constants.ts)、[composition.ai.ts](src/application/composition.ai.ts)
+
+修改介面前請閱讀 [DESIGN.md](DESIGN.md) 與 [AGENTS.md](AGENTS.md)。完整文件由 [docs/README.md](docs/README.md) 進入，包含架構、AI Agent、對話、範本庫、安全與測試說明。
+
+## English
+
+**MediPrisma brings cross-facility records into a clinical workspace with source-linked AI summaries, conversations, and report explanations.** It supports healthcare-professional and patient views, SMART on FHIR launch, local FHIR Bundles, and Taiwan Health Bank SDK JSON imports.
+
+[Try the app](https://mediprisma.tw/app) · [GitHub Pages](https://voho0000.github.io/medical-note-smart-on-fhir/) · [Documentation](docs/README.md)
+
+Feature review: **September 8, 2026**, based on v0.51.0 and committed changes on `master`. For research and education; not a medical device. Outputs require clinical review.
+
+### What you can do
+
+- **Read the record:** patient details, encounters, reports, medications, and documents; cumulative laboratory results with date filtering, standardized names, and original result text.
+- **Start with a medical summary:** cross-facility history, safety reminders, pending decisions, timeline, and source references. Add reusable custom summary modules and select the data supplied to summaries.
+- **Ask clinical questions:** an AI agent can query FHIR resources on demand, with medical-literature search where supported. Prompt shortcuts, follow-up suggestions, voice dictation, and temporary conversations support repeated work.
+- **Reuse prompts:** browse, filter, favorite, preview supplied example outputs, fill template fields, and revisit recently used templates. Department templates require membership and publishing permissions.
+- **Calculate and export:** 58 clinical calculators across 10 categories, supported laboratory auto-fill, and IPS FHIR export with a Markdown preview. AI-inferred problems require confirmation before inclusion.
+- **Adjust the workspace:** clinician/patient audience, Chinese/English interface, dark mode, font size, and pinned feature tabs.
+
+### Data and AI
+
+Local imports are converted and stored in the browser; the full stored Bundle is AES-GCM encrypted with a maximum 12-hour lifetime. **AI features send the required record content to the selected service.** Built-in requests may pass through Firebase Functions; custom OpenAI-compatible endpoints support direct browser access or a restricted gateway. Keys are session-scoped by default, with an optional remember setting.
+
+Signed-in regular text conversations are stored in Firestore; guest and temporary conversations are not. Official deployments collect allow-listed GA4 usage events without record content, prompts, AI answers, or full launch URLs. Clearing local data does not delete cloud history or data already sent to providers. See the [privacy policy](PRIVACY_POLICY.md) and [security notes](docs/SECURITY.md).
+
+The app integrates OpenAI, Gemini, Claude, and custom OpenAI-compatible models. The [model catalog](src/shared/constants/ai-models.constants.ts) defines selectable models and defaults; backend configuration and quotas determine actual availability.
+
+### Development
+
+Use Node.js 24 and a GitHub CLI account with access to the project's GitHub Packages. Clone the repository, run `gh auth login -h github.com`, then `npm run packages:ci`. Copy [`.env.example`](.env.example) to `.env.local`, configure the required services, and run `npm run dev` at port 3001.
+
+Use `npm run build:gh` or `npm run build:mediprisma` for static exports. Register SMART as a public client with S256 PKCE; launch and callback URLs must include the deployment base path. Dependency changes should follow [AGENTS.md](AGENTS.md) to preserve cross-platform lockfile entries. Backend Functions and Rules live in [firebase-smart-on-fhir](https://github.com/voho0000/firebase-smart-on-fhir).
+
+## 作者與授權 · Author & License
+
+**郭宜欣醫師｜臺北榮總醫療人工智慧發展中心**
+
+Yi-Hsin Kuo, MD · Taipei Veterans General Hospital
+
+聯絡：[voho0000@gmail.com](mailto:voho0000@gmail.com)。問題與建議可透過 [GitHub Issues](https://github.com/voho0000/medical-note-smart-on-fhir/issues) 或 App 內回報功能提出。
+
+本專案採 [Apache License 2.0](LICENSE)。作者與貢獻署名見 [NOTICE](NOTICE)。
+
+再散布本專案或衍生作品時，請依 Apache 2.0 第 4 條提供授權副本、標示檔案修改，並保留適用的版權與署名資訊。NOTICE 中適用的署名可依第 4(d) 條保留於 NOTICE、原始碼、文件或適當的介面中。
+
+Authorship and contributor credits are recorded in [NOTICE](NOTICE). When redistributing this project or derivative works, follow Section 4 of the [Apache License 2.0](LICENSE), including its requirements for license copies, modification notices, and applicable attribution notices.

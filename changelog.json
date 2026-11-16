@@ -1,6 +1,46 @@
 {
-  "currentVersion": "3.0.2",
+  "currentVersion": "4.0.0",
   "releases": [
+    {
+      "version": "4.0.0",
+      "date": "2026-11-16",
+      "title": "專案轉換為 MediPrisma 本地複製版：自架 AI、OpenBao 金鑰、Google 登入、移除測試與模擬資料",
+      "type": "feature",
+      "changes": [
+        {
+          "tag": "new",
+          "text": "根目錄轉換為 MediPrisma/mediprisma-app（上游 master@313fe14、Apache-2.0）本地複製：舊 Health Passbook Dashboard（dashboard/、server/）自本分支移除（完整歷史保留在 main）；修改只進本 repo、不回傳上游 GitHub（不設 upstream remote，不納入上游 sync/hmc 發佈 workflow）"
+        },
+        {
+          "tag": "new",
+          "text": "AI 服務自架化：MODEL_CATALOG 收斂為單一「自有 AI 服務」（OpenAI 相容 custom-profile），新增 /api/ai 同源伺服器代理（只放行 chat/completions、responses、embeddings、audio/transcriptions、models）；上游 base URL 與 API 金鑰留在伺服器端，以 env（AI_SELF_BASE_URL／AI_SELF_API_KEY）或 OpenBao 切換，設定 NEXT_PUBLIC_AI_SELF_MODEL 即可上線"
+        },
+        {
+          "tag": "new",
+          "text": "OpenBao 金鑰管理介接（既有實例）：KV v2＋AppRole／GitHub Actions OIDC；自產金鑰自動輪換（rotate-secret.mjs＋openbao-rotate.yml 排程，寫 KV 新版本後應用端 60 秒 TTL 免重啟生效），外部發行金鑰半自動發佈；容器啟動自動注入 runtime 密語；docker-publish 選填以 OIDC 取映像發佈憑證（未設定沿用 GitHub Secrets）"
+        },
+        {
+          "tag": "improved",
+          "text": "Google 登入保留啟用（Firebase Auth Google provider，features/auth/GoogleSignInButton.tsx）；SMART 信任 issuer 收斂為 localhost＋部署以 NEXT_PUBLIC_SMART_ALLOWED_ISS 自訂"
+        },
+        {
+          "tag": "improved",
+          "text": "GitHub CI 維持本 repo 原本流程：docker-publish.yml（多架構映像發版＋GitHub Release＋smoke test 更新為首頁與 /version.json 檢查）與 security.yml（Gitleaks）；Dockerfile 改建置 Next.js standalone（保留 Watchtower 標籤、非 root、PORT=3001）"
+        },
+        {
+          "tag": "removed",
+          "text": "移除全部測試資料與模擬資料：示範病人 Bundle（public/demo 4.7MB）、demo AI 快照、medical-calculator HPA 驗證資料集、e2e fixtures、docs/evidence 與 docs/verification 驗證資料集、scripts/hpa 與 scripts/experiments 實驗資料、demo 產生器與載入入口（歡迎頁示範卡片、loadDemo、demo 快照種子、分享範本示範輸出自動產生）、app/dev 合成情境頁與 SMART 公開沙箱自動啟動"
+        },
+        {
+          "tag": "removed",
+          "text": "移除上游 11 個 workflow（含 sync-mediprisma-app*.yml／sync-pilot-hmc.yml／hmc-publish.yml 等會同步至上游基礎設施者）與 playwright/e2e 套件；其餘自足單元測試保留"
+        },
+        {
+          "tag": "warning",
+          "text": "NEXT_PUBLIC_* 於建置期烘焙進前端，不適用自動輪換（如 NEXT_PUBLIC_AI_PROXY_KEY 與伺服器 AI_PROXY_KEY 成對，輪換需重新建置）；外部發行金鑰（AI 服務、Docker Hub）僅上游可發行，採半自動發佈（見 openbao/README.md）"
+        }
+      ]
+    },
     {
       "version": "3.0.2",
       "date": "2026-11-15",

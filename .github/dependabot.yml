@@ -1,66 +1,30 @@
+# Dependabot keeps dependencies and GitHub Actions up to date.
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates
 version: 2
+registries:
+  voho0000-github-packages:
+    type: npm-registry
+    url: https://npm.pkg.github.com
+    scope: "@voho0000"
+    token: ${{secrets.PACKAGES_TOKEN}}
+
 updates:
   - package-ecosystem: npm
     directory: "/"
+    registries:
+      - voho0000-github-packages
     schedule:
       interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: Asia/Taipei
-    open-pull-requests-limit: 10
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "chore(deps)"
-
-  - package-ecosystem: npm
-    directory: "/dashboard"
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: Asia/Taipei
-    open-pull-requests-limit: 10
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "chore(deps)"
-
-  - package-ecosystem: npm
-    directory: "/server"
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: Asia/Taipei
-    open-pull-requests-limit: 10
-    labels:
-      - dependencies
-    commit-message:
-      prefix: "chore(deps)"
+    open-pull-requests-limit: 5
+    groups:
+      # Batch low-risk updates into a single PR to cut review noise.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: Asia/Taipei
-    labels:
-      - dependencies
-      - github-actions
-    commit-message:
-      prefix: "chore(ci)"
-
-  - package-ecosystem: docker
-    directory: "/"
-    schedule:
-      interval: weekly
-      day: monday
-      time: "09:00"
-      timezone: Asia/Taipei
-    labels:
-      - dependencies
-      - docker
-    commit-message:
-      prefix: "chore(docker)"
+    open-pull-requests-limit: 5

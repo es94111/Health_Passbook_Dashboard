@@ -1,56 +1,47 @@
-# ── Stage 1: Build dashboard (Vite SPA) ──────────────────────────────────────
-FROM node:26-alpine AS dashboard-build
+# ── Stage 1: Install dependencies ────────────────────────────────────────────
+FROM node:26-alpine AS deps
 WORKDIR /app
-COPY dashboard/package*.json dashboard/
-# Use npm install (not ci) — lock file generated on Windows/npm-11 omits some
-# Linux-only optional deps (@emnapi/core, @emnapi/runtime) that npm-10 on Alpine
-# would reject. ci is only needed for the lean production runtime stage.
-# --ignore-scripts skips postinstall (sets up the isolated .lint-toolchain/),
-# which isn't copied in yet at this layer and isn't needed to build anyway.
-RUN npm install --prefix dashboard --ignore-scripts
-COPY dashboard/ dashboard/
-RUN npm run build --prefix dashboard
+COPY package.json package-lock.json .npmrc ./
+# Optional private packages (@voho0000 via GitHub Packages) are skipped when no
+# token is available; scripts/optional-build-config.mjs wires local fallbacks
+# so the build works without registry credentials.
+RUN npm ci --no-audit --no-fund
 
-# ── Stage 2: Compile server TypeScript ───────────────────────────────────────
-FROM node:26-alpine AS server-build
+# ── Stage 2: Build Next.js app (standalone output) ───────────────────────────
+FROM node:26-alpine AS build
 WORKDIR /app
-COPY server/package*.json server/
-RUN npm install --prefix server
-COPY server/ server/
-RUN npm run build --prefix server
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
 
-# ── Stage 3: Production runtime ───────────────────────────────────────────────
+# ── Stage 3: Production runtime ──────────────────────────────────────────────
 FROM node:26-alpine
 WORKDIR /app
 
-# Production dependencies only
-COPY --from=server-build /app/server/package*.json ./
-RUN npm ci --omit=dev
+ENV NODE_ENV=production
+ENV PORT=3001
 
-# Compiled server
-COPY --from=server-build /app/server/dist ./dist/
+# Minimal standalone server traced by Next (node server.js)
+COPY --from=build /app/.next/standalone ./
+COPY --from=build /app/.next/static ./.next/static
+COPY --from=build /app/public ./public
 
-# Dashboard static files served by Express at /public
-COPY --from=dashboard-build /app/dashboard/dist ./public/
-
-# Version info for the in-app system update panel (no secrets included)
+# Version history for release tooling / ops inspection (secrets-free)
 COPY changelog.json ./changelog.json
+
+# OpenBao integration layer (fetch/rotate/entrypoint; plain Node, no deps)
+COPY --from=build /app/scripts/openbao ./scripts/openbao
 
 # Opt in to Watchtower's label filter; Watchtower still needs to be running
 # with WATCHTOWER_LABEL_ENABLE=true to update this container.
 LABEL com.centurylinklabs.watchtower.enable="true"
 
-# Run as non-root. Create /app/data and chown before the VOLUME declaration so a
-# fresh anonymous volume inherits the app user's ownership.
-RUN addgroup -S app && adduser -S app -G app \
-    && mkdir -p /app/data && chown -R app:app /app
-
-# Persist health data and encryption key across restarts
-VOLUME ["/app/data"]
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
 
 USER app
 
-ENV NODE_ENV=production
 EXPOSE 3001
 
-CMD ["node", "dist/index.js"]
+# Entrypoint resolves OpenBao runtime secrets (when OPENBAO_ADDR is set) and
+# then starts the standalone server.
+CMD ["node", "scripts/openbao/entrypoint.mjs"]
