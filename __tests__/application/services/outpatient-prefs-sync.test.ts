@@ -9,11 +9,12 @@ import {
   type EmrCustomFormat,
   type OutpatientPrefs,
 } from '@/src/application/stores/outpatient-prefs.store'
-import { doc, onSnapshot, runTransaction } from 'firebase/firestore'
+import { doc, onSnapshot, runTransaction } from '@/src/infrastructure/firebase/firestore-client'
 import { BUILTIN_MED_COPY_FORMATS } from '@/features/clinical-summary/medications/utils/medication-copy-text'
 
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => ({
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  db: {},
   doc: jest.fn((_db, ...path) => path.join('/')),
   onSnapshot: jest.fn(),
   runTransaction: jest.fn(),
@@ -96,7 +97,7 @@ it('saves an edit to the account field only, leaving the profile alone', async (
   expect(transaction.set).toHaveBeenCalledTimes(1)
   const [ref, data, options] = transaction.set.mock.calls[0]
   expect(ref).toBe('users/a')
-  expect(options).toEqual({ mergeFields: ['outpatientPrefs'] })
+  expect(options).toEqual({ merge: true })
   expect(data.outpatientPrefs.pinnedLabs).toEqual(['chem:K'])
   expect(Object.keys(data)).toEqual(['outpatientPrefs'])
   expect(meta()).toMatchObject({ dirty: false, baseUpdatedAt: data.outpatientPrefs.updatedAt })

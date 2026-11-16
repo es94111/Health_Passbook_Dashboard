@@ -1,7 +1,7 @@
 # 醫析 MediPrisma · SMART on FHIR（本地複製版）
 
-**目前版本：4.0.2** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
-4.0.2 Docker 執行期組態注入（Google 登入／自架 AI 以環境變數設定）；4.0.1 README 增補修改清單；4.0.0 專案轉換為 MediPrisma 本地複製版（自架 AI、OpenBao 金鑰管理與自動輪換、Google 登入、移除測試與模擬資料、維持原本 GitHub CI）。
+**目前版本：4.1.0** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
+4.1.0 改為自架 Google OIDC＋PostgreSQL session／文件儲存，登入不再依賴 Firebase Auth；4.0.2 Docker 執行期組態注入；4.0.1 README 增補修改清單；4.0.0 專案轉換為 MediPrisma 本地複製版（自架 AI、OpenBao 金鑰管理與自動輪換、移除測試與模擬資料、維持原本 GitHub CI）。
 
 > ## 專案來源與修改聲明
 >
@@ -18,10 +18,10 @@
 > | 金鑰管理 | 新增 OpenBao 介接與自動輪換：`scripts/openbao/`（fetch／rotate／entrypoint）、`openbao/` 原則檔與設定文件、`openbao-rotate.yml` 輪換排程、CI 選填以 GitHub OIDC 取映像發佈憑證（見 [`openbao/README.md`](openbao/README.md)） |
 > | 移除測試資料 | HPA 驗證資料集、e2e fixtures、`docs/evidence`／`docs/verification` 驗證資料集、`scripts/hpa`／`scripts/experiments` 實驗資料，及其消費者測試套件 |
 > | 移除模擬資料 | 示例病人 Bundle（`public/demo`）、demo AI 快照、示範名稱對照表、合成情境頁（`app/dev*`）、demo 產生器與載入入口、SMART 公開沙箱自動啟動 |
-> | 登入 | Google 登入（Firebase Auth `GoogleAuthProvider`＋`features/auth/GoogleSignInButton.tsx`）保留啟用 |
+> | 登入與帳號資料 | Google OIDC Authorization Code＋PKCE 由本專案 `/api/auth/google` 處理；使用 PostgreSQL 使用者／session 與 HttpOnly cookie，不使用 Firebase Auth 登入 |
 > | CI／部署 | 維持本 repo 原本 CI（`docker-publish.yml` 映像發版＋GitHub Release、`security.yml` Gitleaks＋audit）；新增 Dockerfile（Next.js standalone 映像）；上游 sync／hmc／gh-pages 等 11 個 workflow 一律不納入 |
-> | 部署組態 | 新增 runtime 組態注入（`/app-config.js`）：Google 登入（Firebase）與自架 AI 開關以 compose 環境變數**執行期**設定即生效，不需重建映像（`FIREBASE_*`、`AI_SELF_*` plain 名稱，見 `.env.example`） |
-> | 文件 | 依本 repo 慣例以 `changelog.json`／`SRS.md` 維護版號（4.0.x）；上游版本識別 0.51.1 記錄於此 |
+> | 部署組態 | `/app-config.js` 執行期注入 Firebase 選用整合與自架 AI 公開設定；自架登入以 `APP_BASE_URL`／`GOOGLE_CLIENT_ID` 設定，OAuth client secret 與 PostgreSQL URL 可由 OpenBao 提供（見 `.env.example`、[`openbao/README.md`](openbao/README.md)） |
+> | 文件 | 依本 repo 慣例以 `changelog.json`／`SRS.md` 維護版號（4.1.x 起）；上游版本識別 0.51.1 記錄於此 |
 >
 > 以上修改僅維護於本 repo，**不會回傳上游 GitHub**。
 >
@@ -33,7 +33,9 @@
 
 MediPrisma 整合就診、用藥、檢驗與臨床文件，提供來源可回查的 AI 摘要、臨床對話與報告解讀。支援醫療人員與民眾兩種閱讀方式，可從 SMART on FHIR 啟動，也能直接匯入本機資料。
 
-[開啟 MediPrisma](https://mediprisma.tw/app) · [GitHub Pages](https://voho0000.github.io/medical-note-smart-on-fhir/) · [文件索引](docs/README.md) · [協作指南](CONTRIBUTING.md) · [English](#english)
+[上游線上版](https://mediprisma.tw/app) · [上游 GitHub Pages](https://voho0000.github.io/medical-note-smart-on-fhir/) · [文件索引](docs/README.md) · [協作指南](CONTRIBUTING.md) · [English](#english)
+
+> 上列線上版是上游既有部署，不是本 repo 的自架 Docker 服務；本 repo 的登入需自行部署 Node server＋PostgreSQL，靜態頁面不提供登入 API。
 
 > 功能核對：2026-09-08，依 v0.51.0 與目前 `master` 已提交的實作整理。登入及機構設定會影響可用功能。
 >
@@ -94,27 +96,27 @@ MediPrisma 整合就診、用藥、檢驗與臨床文件，提供來源可回查
 | SMART on FHIR | 由 EHR 啟動或 standalone launch，使用 OAuth 2.0 與 PKCE 讀取授權範圍內的 FHIR 資料 |
 | 本機 FHIR Bundle | 匯入 `.json`，在瀏覽器中讀取與整理 |
 | 健康存摺 SDK JSON | 在瀏覽器轉換為 FHIR，保留轉換來源資訊；SDK JSON 轉換上限為 32 MB |
-| 示範病人 | 不需準備檔案即可體驗內建去識別化範例，包含臨床報告 |
+| 示範病人 | 本版不提供內建病人或模擬資料；請匯入自己的 FHIR Bundle 或 SDK JSON |
 | Medcloud 整合 | 配合擴充套件交接資料並執行自動摘要；需要對應的整合環境 |
 
 ## AI 服務與資料隱私
 
-AI 功能需要可用的服務設定與網路連線。內建代理提供每日額度；自備金鑰與自訂端點可在設定中管理。對話、醫療摘要與自訂摘要模組可分別選擇模型。
+自架部署以自有 **OpenAI-compatible** 服務為 AI 上游，經同源 `/api/ai` 代理轉送；上游 URL 與 API 金鑰只由伺服器端讀取，可透過 OpenBao 管理。內建代理、文獻搜尋、語音轉錄等其他連線仍是獨立選用整合，是否可用取決於其服務設定。
 
-目前整合 **OpenAI、Google Gemini、Anthropic Claude** 與 **OpenAI-compatible** 端點，文獻搜尋與語音轉錄另有服務設定。模型、免費代理資格及各功能預設值以 [模型清單](src/shared/constants/ai-models.constants.ts) 為準；實際可用性也取決於後端允許清單、額度及提供者狀態。
+對話、醫療摘要與自訂摘要模組會使用目前設定的模型。模型與各功能預設值以 [模型清單](src/shared/constants/ai-models.constants.ts) 為準；自架部署的服務端點、額度及提供者狀態由部署者管理。
 
 | 資料 | 儲存與傳送方式 |
 |---|---|
 | 本機匯入的完整病歷 | 以 AES-GCM 加密存於瀏覽器 IndexedDB，最長 12 小時；過期於載入時清除，也可手動清除或登出清除 |
-| AI 請求 | 所需病歷內容會傳送至選定服務；內建代理經 Firebase Functions，自訂端點可選瀏覽器直連或受限 Gateway |
-| API 金鑰 | 預設僅保留於本次瀏覽工作階段；可自行選擇在裝置記住。Gateway 模式下，自備金鑰也會經過代理 |
-| 一般對話 | 登入且非無痕時，文字對話儲存於 Firestore；訪客與無痕對話不寫入雲端歷史 |
-| 範本與設定 | 部分登入使用者資料可同步；分享範本的內容依公開或科別權限供他人閱讀 |
+| AI 請求 | 所需病歷內容會送至所選服務；自架 AI 經同源 `/api/ai` 代理，需有效的本專案登入 session，且上游金鑰只在伺服器端／OpenBao |
+| API 金鑰 | 自架 AI 上游金鑰不送入瀏覽器；其他 BYO 服務依各自連線模式處理，瀏覽器公開的 proxy 配對值不能視為秘密 |
+| 登入與應用資料 | Google OIDC 登入由本專案處理；使用者、session 及應用文件透過同源 API 存於 PostgreSQL，不使用 Firebase Auth／Firestore 作為登入或應用文件儲存 |
+| 範本與設定 | 登入使用者資料同步至 PostgreSQL；分享範本依公開或科別權限供他人閱讀 |
 | 使用統計 | 官方部署啟用 GA4，記錄功能使用事件；不記錄病歷內容、提示詞、AI 回覆或完整啟動網址，使用隨機瀏覽器識別值估算使用情形 |
 
 自訂模型的 Agent 模式通常須先通過使用合成資料的工具呼叫測試，且只取得瀏覽器綁定的 FHIR 工具。北榮受控啟動的院內模型採專用設定；機構憑證不會套用到一般外院路徑。
 
-清除本地資料不會一併刪除雲端對話或第三方已收到的請求。詳見 [隱私政策](PRIVACY_POLICY.md) 與 [安全說明](docs/SECURITY.md)。
+清除本地資料不會一併刪除 PostgreSQL 中的帳號資料或第三方已收到的請求。登入與應用文件不依賴 Firebase Auth／Firestore；部分選用代理、App Check、分析或外部整合仍可能使用 `.env.example` 所列 Firebase 設定，本專案並非完全移除所有 Firebase SDK／服務。詳見 [隱私政策](PRIVACY_POLICY.md) 與 [安全說明](docs/SECURITY.md)。
 
 ## 開發與部署
 
@@ -123,8 +125,8 @@ AI 功能需要可用的服務設定與網路連線。內建代理提供每日�
 建議使用 **Node.js 24**（與 CI 一致）、npm 與 GitHub CLI。部分 `@voho0000/*` 套件來自 GitHub Packages，需要具有套件讀取權限的 GitHub 帳號。
 
 ```bash
-git clone https://github.com/voho0000/medical-note-smart-on-fhir.git
-cd medical-note-smart-on-fhir
+git clone https://github.com/es94111/Health_Passbook_Dashboard.git
+cd Health_Passbook_Dashboard
 
 npm ci
 cp .env.example .env.local
@@ -135,9 +137,22 @@ npm run dev
 
 需要完整私有功能的開發者可先 `gh auth login -h github.com`，再執行 `npm run packages:ci`。參見 [套件與權限說明](docs/personalization-private-packages.md)。
 
-開啟 [localhost:3001](http://localhost:3001)。依 [`.env.example`](.env.example) 填入 Firebase、AI 代理與 SMART 設定；登入、雲端同步、免費代理等功能需要對應後端。
+開啟 [localhost:3001](http://localhost:3001)。本機 Google 登入與應用文件同步需有可連線的 PostgreSQL（`DATABASE_URL`）及 Google OAuth Web client；也可用 OpenBao 讀取 OAuth client secret 與資料庫連線字串。
 
-`NEXT_PUBLIC_` 變數會進入瀏覽器程式，不能用來保存私密金鑰。自架環境的 Firebase Functions 與 Firestore Rules 在獨立的 [firebase-smart-on-fhir](https://github.com/voho0000/firebase-smart-on-fhir) 專案維護。
+### 自架登入與 PostgreSQL 設定
+
+1. 設定 `APP_BASE_URL`（正式環境必須為 HTTPS origin）與 `GOOGLE_CLIENT_ID`。Google OAuth 用戶端的授權重新導向 URI 設為 `${APP_BASE_URL}/api/auth/google/callback`；不需 Firebase Auth。
+2. 建立 PostgreSQL 資料庫。應用啟動後會建立所需的使用者、session 與文件表格；使用者資料和雲端範本／對話等應用文件會由同源 `/api/data` API 存取。
+3. 建議將下列值存入 OpenBao KV v2（本 repo 的預設路徑）：
+
+   ```bash
+   openbao kv put kv/apps/mediprisma/auth google-client-secret="<Google OAuth client secret>"
+   openbao kv put kv/apps/mediprisma/database url="postgresql://<user>:<password>@<host>:5432/<database>"
+   ```
+
+   容器以 `OPENBAO_ADDR`、`OPENBAO_ROLE_ID`、`OPENBAO_SECRET_ID` 連線；不要把 OAuth client secret 或資料庫密碼提交到 Git。`GOOGLE_CLIENT_SECRET`／`DATABASE_URL` 僅適合本機開發或未啟用 OpenBao 的環境變數備援。
+
+應用登入使用 Google OIDC Authorization Code＋PKCE，並以 HttpOnly、SameSite cookie 維持 PostgreSQL session。登入 API 需要 Node.js standalone server 與 PostgreSQL；GitHub Pages 等靜態匯出無法提供本專案的登入／資料 API。`NEXT_PUBLIC_` 變數會進入瀏覽器程式，不能用來保存私密金鑰。Firebase 組態仍可供選用的 Functions／App Check／外部整合使用，但不提供本專案登入或 PostgreSQL 文件儲存。
 
 ### 常用指令
 
@@ -177,7 +192,7 @@ https://voho0000.github.io/medical-note-smart-on-fhir/smart/launch
 
 ### 技術與擴充位置
 
-採用 **Next.js 16、React 19、TypeScript、Tailwind CSS 4、shadcn/ui、Vercel AI SDK、fhirclient、Firebase、TanStack Query 與 Zustand**；以 Jest／Testing Library 與 Playwright 驗證。
+採用 **Next.js 16、React 19、TypeScript、Tailwind CSS 4、shadcn/ui、Vercel AI SDK、fhirclient、Firebase 選用整合、PostgreSQL、TanStack Query 與 Zustand**；以 Jest／Testing Library 與 Playwright 驗證。
 
 ```text
 app/ · features/ · components/   頁面與功能介面
@@ -197,7 +212,9 @@ src/shared/                     共用設定、模型清單與多語系
 
 **MediPrisma brings cross-facility records into a clinical workspace with source-linked AI summaries, conversations, and report explanations.** It supports healthcare-professional and patient views, SMART on FHIR launch, local FHIR Bundles, and Taiwan Health Bank SDK JSON imports.
 
-[Try the app](https://mediprisma.tw/app) · [GitHub Pages](https://voho0000.github.io/medical-note-smart-on-fhir/) · [Documentation](docs/README.md)
+[Upstream app](https://mediprisma.tw/app) · [Upstream GitHub Pages](https://voho0000.github.io/medical-note-smart-on-fhir/) · [Documentation](docs/README.md)
+
+The linked deployments are upstream, not this fork's Docker service. This fork's sign-in requires its own Node server and PostgreSQL; static pages do not provide the login API.
 
 Feature review: **September 8, 2026**, based on v0.51.0 and committed changes on `master`. For research and education; not a medical device. Outputs require clinical review.
 
@@ -212,17 +229,17 @@ Feature review: **September 8, 2026**, based on v0.51.0 and committed changes on
 
 ### Data and AI
 
-Local imports are converted and stored in the browser; the full stored Bundle is AES-GCM encrypted with a maximum 12-hour lifetime. **AI features send the required record content to the selected service.** Built-in requests may pass through Firebase Functions; custom OpenAI-compatible endpoints support direct browser access or a restricted gateway. Keys are session-scoped by default, with an optional remember setting.
+Local imports are converted and stored in the browser; the full stored Bundle is AES-GCM encrypted with a maximum 12-hour lifetime. **AI features send the required record content to the selected service.** Self-hosted AI uses the same-origin `/api/ai` proxy, authenticated by the app's session; its upstream URL and key stay server-side or in OpenBao. Other Firebase Functions, App Check, and external integrations remain optional and separately configured.
 
-Signed-in regular text conversations are stored in Firestore; guest and temporary conversations are not. Official deployments collect allow-listed GA4 usage events without record content, prompts, AI answers, or full launch URLs. Clearing local data does not delete cloud history or data already sent to providers. See the [privacy policy](PRIVACY_POLICY.md) and [security notes](docs/SECURITY.md).
+Google sign-in uses this app's Google OIDC flow and PostgreSQL-backed HttpOnly sessions; app-owned documents and signed-in conversations are stored in PostgreSQL through `/api/data`, not Firebase Auth or Firestore. Firebase SDK configuration may still support optional integrations, so the app is not entirely Firebase-free. Official deployments collect allow-listed GA4 usage events without record content, prompts, AI answers, or full launch URLs. Clearing browser data does not delete PostgreSQL data or data already sent to providers. See the [privacy policy](PRIVACY_POLICY.md) and [security notes](docs/SECURITY.md).
 
-The app integrates OpenAI, Gemini, Claude, and custom OpenAI-compatible models. The [model catalog](src/shared/constants/ai-models.constants.ts) defines selectable models and defaults; backend configuration and quotas determine actual availability.
+Self-hosted deployments use the configured OpenAI-compatible model; optional external integrations have separate service configuration. The [model catalog](src/shared/constants/ai-models.constants.ts) defines defaults; backend configuration and quotas determine actual availability.
 
 ### Development
 
 Use Node.js 24 and a GitHub CLI account with access to the project's GitHub Packages. Clone the repository, run `gh auth login -h github.com`, then `npm run packages:ci`. Copy [`.env.example`](.env.example) to `.env.local`, configure the required services, and run `npm run dev` at port 3001.
 
-Use `npm run build:gh` or `npm run build:mediprisma` for static exports. Register SMART as a public client with S256 PKCE; launch and callback URLs must include the deployment base path. Dependency changes should follow [AGENTS.md](AGENTS.md) to preserve cross-platform lockfile entries. Backend Functions and Rules live in [firebase-smart-on-fhir](https://github.com/voho0000/firebase-smart-on-fhir).
+Use `npm run build:gh` or `npm run build:mediprisma` for static exports; these static builds do not provide the self-hosted Google login or PostgreSQL APIs, which require the Node server deployment. Register SMART as a public client with S256 PKCE; launch and callback URLs must include the deployment base path. Dependency changes should follow [AGENTS.md](AGENTS.md) to preserve cross-platform lockfile entries. Backend Functions and Rules live in [firebase-smart-on-fhir](https://github.com/voho0000/firebase-smart-on-fhir).
 
 ## 作者與授權 · Author & License
 

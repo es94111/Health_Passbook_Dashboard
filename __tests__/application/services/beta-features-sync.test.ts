@@ -1,10 +1,11 @@
 import { syncBetaFeaturesForAccount } from '@/src/application/services/beta-features-sync'
 import { useBetaFeaturesStore } from '@/src/application/stores/beta-features.store'
 import { db } from '@/src/shared/config/firebase.config'
-import { doc, onSnapshot, runTransaction, setDoc } from 'firebase/firestore'
+import { doc, onSnapshot, runTransaction, setDoc } from '@/src/infrastructure/firebase/firestore-client'
 
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => ({
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  db: {},
   doc: jest.fn((_db, ...path) => path.join('/')),
   onSnapshot: jest.fn(),
   runTransaction: jest.fn(),

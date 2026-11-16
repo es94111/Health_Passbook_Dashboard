@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { addDoc, collection } from 'firebase/firestore'
+import { addDoc, collection } from '@/src/infrastructure/firebase/firestore-client'
 import { SharePromptDialog } from '@/features/prompt-gallery/components/SharePromptDialog'
 import { LONG_PROMPT_CASES, makeLongPrompt } from './fixtures/long-prompts'
 
@@ -14,7 +14,8 @@ jest.mock('@/src/application/providers/audience.provider', () => ({
 }))
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
 // Exercise the real share service up to the database boundary; never publish.
-jest.mock('firebase/firestore', () => ({
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  db: {},
   collection: jest.fn(() => ({ path: 'sharedPrompts' })),
   addDoc: jest.fn(),
   Timestamp: { now: jest.fn(() => ({ seconds: 0, nanoseconds: 0 })) },

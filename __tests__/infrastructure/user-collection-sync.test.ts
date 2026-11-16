@@ -3,7 +3,8 @@ const mockBatchDelete = jest.fn()
 const mockBatchSet = jest.fn()
 const mockBatchCommit = jest.fn()
 
-jest.mock('firebase/firestore', () => ({
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  db: { name: 'test-db' },
   collection: jest.fn((_db: unknown, ...segments: string[]) => ({ path: segments.join('/') })),
   deleteDoc: jest.fn(),
   doc: jest.fn((parent: { path: string }, id: string) => ({ path: `${parent.path}/${id}` })),

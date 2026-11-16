@@ -5,21 +5,8 @@ import { render, screen } from '@testing-library/react'
 import { AuthProvider, useAuth } from '@/src/application/providers/auth.provider'
 import { QueryProvider } from '@/src/application/providers/query-provider'
 
-let mockAuth: object | undefined
-let mockAuthListener: (() => Promise<void>) | undefined
-
-jest.mock('@/src/shared/config/firebase.config', () => ({
-  get auth() { return mockAuth },
-  db: undefined,
-}))
-jest.mock('firebase/auth', () => ({
-  onAuthStateChanged: jest.fn((_auth, listener) => {
-    mockAuthListener = () => listener(null)
-    return jest.fn()
-  }),
-  getRedirectResult: jest.fn(async () => null),
-  signInAnonymously: jest.fn(async () => undefined),
-}))
+let resolveSessionLookup: ((response: Response) => void) | undefined
+const originalFetch = globalThis.fetch
 jest.mock('@/src/application/telemetry/usage-analytics', () => ({ setUserProps: jest.fn(), trackEvent: jest.fn() }))
 jest.mock('@/src/shared/hooks/use-app-version.hook', () => ({ useAppVersion: () => null }))
 jest.mock('@/src/application/services/beta-features-sync', () => ({ syncBetaFeaturesForAccount: jest.fn() }))
@@ -41,29 +28,40 @@ function App() {
 
 describe('AuthProvider hydration', () => {
   beforeEach(() => {
-    mockAuth = undefined
-    mockAuthListener = undefined
+    resolveSessionLookup = undefined
+    globalThis.fetch = jest.fn(() => new Promise<Response>((resolve) => {
+      resolveSessionLookup = resolve
+    })) as typeof fetch
   })
 
-  it('hydrates server markup unchanged when Firebase exists only in the browser', async () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('hydrates server markup unchanged while the self-hosted session lookup is pending', async () => {
     const container = document.createElement('div')
     container.innerHTML = renderToString(<App />)
     expect(container.textContent).toBe('正在恢復登入')
     document.body.appendChild(container)
-    mockAuth = {}
     const onRecoverableError = jest.fn()
     let root: ReturnType<typeof hydrateRoot>
     await act(async () => { root = hydrateRoot(container, <App />, { onRecoverableError }) })
     expect(onRecoverableError).not.toHaveBeenCalled()
     expect(container.textContent).toBe('正在恢復登入')
-    await act(async () => { await mockAuthListener!() })
+    await act(async () => {
+      resolveSessionLookup!({
+        ok: true,
+        json: async () => ({ user: null }),
+      } as Response)
+    })
     expect(container.textContent).toBe('登入')
     await act(async () => { root!.unmount() })
     container.remove()
   })
 
-  it('finishes loading after mount when Firebase is unavailable', () => {
+  it('finishes loading after mount when the self-hosted session endpoint is unavailable', async () => {
     render(<App />)
+    await act(async () => { resolveSessionLookup!({ ok: false } as Response) })
     expect(screen.getByText('登入')).toBeInTheDocument()
   })
 })

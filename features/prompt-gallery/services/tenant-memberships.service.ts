@@ -4,8 +4,8 @@
  * Written only by the membership admin Function; the client reads its own
  * active records to decide which 科常用範本 it may browse and publish to.
  */
-import { collection, onSnapshot, query, where, type Unsubscribe } from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+import { collection, onSnapshot, query, where, type Unsubscribe } from '@/src/application/composition.firestore-client'
+import { db } from '@/src/application/composition.firestore-client'
 import type { TenantMembership, TenantRole } from '../types/prompt.types'
 
 const TENANT_ROLES: readonly TenantRole[] = ['owner', 'builder', 'reviewer', 'member']

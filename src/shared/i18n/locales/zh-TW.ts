@@ -2690,7 +2690,7 @@ export const zhTW = {
     backToSignIn: '返回登入',
     resetEmailSent: '密碼重設信件已發送',
     resetEmailSentMessage: '請檢查您的信箱，查看重設密碼的連結。如果幾分鐘內沒有收到，請檢查垃圾郵件資料夾。',
-    freeQuotaDescription: '登入即可提升每日免費額度，並啟用雲端同步',
+    freeQuotaDescription: '使用 Google 帳戶登入以啟用雲端同步。',
     benefits: '登入後您將獲得：',
     benefit1: `每日 ${QUOTA_CONFIG.DAILY_LIMIT} 次免費 AI 對話（訪客每日 ${QUOTA_CONFIG.ANON_DAILY_LIMIT} 次）`,
     benefit2: `每日 ${QUOTA_CONFIG.PERPLEXITY_DAILY_LIMIT} 次文獻搜尋與語音轉錄`,

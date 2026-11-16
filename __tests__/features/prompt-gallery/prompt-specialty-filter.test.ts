@@ -1,4 +1,4 @@
-import { getDocs, orderBy, where } from 'firebase/firestore'
+import { getDocs, orderBy, where } from '@/src/infrastructure/firebase/firestore-client'
 import { getMySharedPrompts, getSharedPrompts } from '@/features/prompt-gallery/services/prompt-gallery.service'
 import { PROMPT_SPECIALTY_GROUPS } from '@/features/prompt-gallery/constants/prompt-specialties'
 import { en } from '@/src/shared/i18n/locales/en'
@@ -6,7 +6,8 @@ import { zhTW } from '@/src/shared/i18n/locales/zh-TW'
 import type { PromptGalleryFilter } from '@/features/prompt-gallery/types/prompt.types'
 
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => ({
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  db: {},
   collection: jest.fn(),
   query: jest.fn((_collection, ...constraints) => constraints),
   where: jest.fn((field, operator, value) => ({ field, operator, value })),

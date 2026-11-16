@@ -13,8 +13,8 @@ import {
   onSnapshot,
   Timestamp,
   type Unsubscribe
-} from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+} from '../firestore-client'
+import { db } from '../firestore-client'
 import type { IChatSessionRepository } from '@/src/core/interfaces/repositories/chat-session.repository.interface'
 import type { 
   ChatSessionEntity, 

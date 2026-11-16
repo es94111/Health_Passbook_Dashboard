@@ -1,5 +1,5 @@
 // Clinical Insights Panel Sync with Firestore
-import { Timestamp, type Unsubscribe } from 'firebase/firestore'
+import { Timestamp, type Unsubscribe } from './firestore-client'
 import {
   coerceInsightLanguagePolicy,
   coerceInsightOutputFormat,

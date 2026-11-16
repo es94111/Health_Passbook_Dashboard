@@ -1,5 +1,5 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc, writeBatch, type DocumentReference } from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+import { collection, deleteDoc, doc, getDoc, getDocs, setDoc, updateDoc, writeBatch, type DocumentReference } from './firestore-client'
+import { db } from './firestore-client'
 
 // Transport sizes, not a limit on a user's prompt. Each immutable version can
 // contain any number of chunks; publishing changes only the parent pointer.

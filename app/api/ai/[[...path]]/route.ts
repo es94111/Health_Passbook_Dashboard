@@ -7,9 +7,10 @@
 // rotated key is picked up without a restart.
 //
 // Only known OpenAI-compatible data paths are proxied — this is not an open
-// relay. When AI_PROXY_KEY is set, callers must present the matching
-// x-proxy-key header (the browser's NEXT_PUBLIC_AI_PROXY_KEY).
+// relay. Every request requires an app session; POSTs also require same-origin
+// protection. AI_PROXY_KEY is an optional additional gate.
 
+import { getAppUser, isSameOriginWrite } from '@/src/server/auth'
 import { aiProxyGateKey, aiSelfApiKey, aiSelfBaseUrl } from '@/src/server/ai-self-secrets'
 
 export const runtime = 'nodejs'
@@ -33,6 +34,17 @@ function jsonError(status: number, message: string): Response {
 async function proxy(request: Request, path: string[] | undefined): Promise<Response> {
   const subPath = (path ?? []).join('/')
   if (!ALLOWED_PATHS.has(subPath)) return jsonError(404, `不支援的 AI 路徑：${subPath || '(root)'}`)
+
+  let user
+  try {
+    user = await getAppUser(request)
+  } catch {
+    return jsonError(503, '登入服務暫時無法使用')
+  }
+  if (!user) return jsonError(401, '請先登入')
+  if (request.method.toUpperCase() === 'POST' && !isSameOriginWrite(request)) {
+    return jsonError(403, '拒絕跨來源 AI 請求')
+  }
 
   const gateKey = aiProxyGateKey()
   if (gateKey && request.headers.get('x-proxy-key') !== gateKey) {

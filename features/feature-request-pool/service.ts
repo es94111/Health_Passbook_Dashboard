@@ -14,8 +14,8 @@ import {
   type Firestore,
   type QueryDocumentSnapshot,
   type Unsubscribe,
-} from 'firebase/firestore'
-import { db } from '@/src/shared/config/firebase.config'
+} from '@/src/application/composition.firestore-client'
+import { db } from '@/src/application/composition.firestore-client'
 import type {
   AdminFeatureRequestUpdate,
   CreateFeatureRequestInput,
@@ -240,7 +240,7 @@ export async function toggleFeatureRequestVote(
     ])
     if (!requestSnapshot.exists()) throw new Error('Feature request not found')
 
-    const voteCount = requestSnapshot.data().voteCount
+    const voteCount = requestSnapshot.data()?.voteCount
     const currentCount = Number.isInteger(voteCount) && voteCount >= 0 ? voteCount : 0
     if (voteSnapshot.exists()) {
       transaction.delete(voteRef)

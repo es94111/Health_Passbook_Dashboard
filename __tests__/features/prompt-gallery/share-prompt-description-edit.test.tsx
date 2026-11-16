@@ -16,7 +16,10 @@ jest.mock('@/src/application/providers/audience.provider', () => ({
   useAudience: () => ({ audience: 'medical' }),
 }))
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => jest.requireActual('./fixtures/firestore-memory').firestore)
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  ...jest.requireActual('./fixtures/firestore-memory').firestore,
+  db: {},
+}))
 jest.mock('@/features/prompt-gallery/services/tenant-prompts.service', () => ({
   createTenantPrompt: jest.fn(),
 }))

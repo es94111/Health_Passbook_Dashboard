@@ -4,9 +4,11 @@
  * loads before any bundle code (see src/shared/config/runtime-config.ts).
  *
  * The published image bakes empty NEXT_PUBLIC_* values at build time, so
- * Docker deployments configure Google 登入 (Firebase) and the self-hosted AI
- * switch at RUNTIME through plain env vars. Each key accepts either the plain
- * name (recommended for compose `environment:`) or its NEXT_PUBLIC_* twin.
+ * Docker deployments configure optional Firebase integrations and the
+ * self-hosted AI browser settings at runtime through plain env vars. Google
+ * OIDC login is handled by the server and reads its configuration directly
+ * from the Node environment. Each public key accepts either the plain name
+ * (recommended for compose `environment:`) or its NEXT_PUBLIC_* twin.
  *
  *   node scripts/openbao/write-app-config.mjs [--out public/app-config.js]
  *

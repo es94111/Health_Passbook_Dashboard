@@ -1,5 +1,5 @@
 // Chat Template Sync with Firestore
-import { Timestamp, type Unsubscribe } from 'firebase/firestore'
+import { Timestamp, type Unsubscribe } from './firestore-client'
 import { createUserCollectionSync } from './user-collection-sync'
 
 export type TemplateAudience = 'medical' | 'patient'

@@ -4,7 +4,10 @@ import { favoriteHasUpdate, toPromptFavorite } from '@/features/prompt-gallery/u
 import type { SharedPrompt } from '@/features/prompt-gallery/types/prompt.types'
 
 jest.mock('@/src/shared/config/firebase.config', () => ({ db: {} }))
-jest.mock('firebase/firestore', () => jest.requireActual('./fixtures/firestore-memory').firestore)
+jest.mock('@/src/infrastructure/firebase/firestore-client', () => ({
+  ...jest.requireActual('./fixtures/firestore-memory').firestore,
+  db: {},
+}))
 
 const source: SharedPrompt = {
   id: 'hf-followup', title: '心衰竭門診追蹤摘要', description: '回診前整理', prompt: '請整理 NT-proBNP 趨勢',

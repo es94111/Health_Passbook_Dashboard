@@ -16,10 +16,12 @@ GitHub Actions OIDC）之後填入即可，程式無需變更。
 
 ## 建議的密語佈局（KV v2，mount：`kv`）
 
-| 路徑 | 欄位 | 用途 | 輪換 |
+| 路徑 | 欄位 | 用途 | 套用與輪換 |
 |---|---|---|---|
-| `apps/mediprisma/ai` | `base-url`、`api-key` | 自架 AI 服務（/api/ai 代理上游） | `api-key` 半自動（上游發行後 `--value` 發佈；生效免重啟） |
-| `apps/mediprisma/runtime` | `AI_SELF_API_KEY`、`AI_PROXY_KEY`… | 容器啟動注入 | 自產欄位可全自動 |
+| `apps/mediprisma/auth` | `google-client-secret` | Google OIDC client secret | 上游重新發行後更新 KV；應用快取最長 60 秒 |
+| `apps/mediprisma/database` | `url` | PostgreSQL 連線字串 | 更新 KV 後最長 60 秒讀取新值，連線池會重建 |
+| `apps/mediprisma/ai` | `base-url`、`api-key` | 自架 AI 服務（`/api/ai` 代理上游） | 更新 KV 後最長 60 秒讀取新值；上游 key 須先由服務提供者重新發行 |
+| `apps/mediprisma/runtime` | `AI_SELF_MODEL`、`AI_SELF_ENDPOINT`、`AI_SELF_PROXY_KEY`、`AI_PROXY_KEY` 等 | 容器啟動時注入 runtime 環境與公開組態 | 容器啟動時讀取；更新後需重啟容器。公開值會寫入瀏覽器，不是秘密 |
 | `ci/dockerhub` | `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN` | 映像發佈 | 半自動（Docker Hub 重新發行後寫入） |
 
 ## 一次性設定（在你的 OpenBao 實例上）
@@ -49,8 +51,15 @@ openbao write auth/jwt/role/github-actions \
   bound_subject="repo:es94111/Health_Passbook_Dashboard:*" \
   user_claim=sub token_policies=mediprisma-ci token_ttl=1h
 
-# 4. 寫入密語
+# 4. 寫入應用密語（OAuth client secret、資料庫 URL 與 AI 上游金鑰皆為伺服器端秘密）
+openbao kv put kv/apps/mediprisma/auth google-client-secret="..."
+openbao kv put kv/apps/mediprisma/database url="postgresql://<user>:<password>@<host>:5432/<database>"
 openbao kv put kv/apps/mediprisma/ai base-url="https://你的-AI-服務/v1" api-key="..."
+
+# 5. 選用：容器啟動時注入的 runtime 設定；只放非秘密或需啟動時載入的額外閘門
+openbao kv put kv/apps/mediprisma/runtime AI_SELF_MODEL="你的模型名稱" AI_PROXY_KEY="..."
+
+# 選用：CI 發佈憑證
 openbao kv put kv/ci/dockerhub DOCKERHUB_USERNAME="..." DOCKERHUB_TOKEN="..."
 ```
 
@@ -58,23 +67,20 @@ openbao kv put kv/ci/dockerhub DOCKERHUB_USERNAME="..." DOCKERHUB_TOKEN="..."
 
 | 變數 | 說明 |
 |---|---|
-| `OPENBAO_ADDR` | 實例位址（留空＝完全不接 OpenBao，沿用 env） |
-| `OPENBAO_AUTH_METHOD` | `approle`（預設）或 `jwt` |
-| `OPENBAO_ROLE_ID` / `OPENBAO_SECRET_ID` | AppRole 憑證 |
-| `OPENBAO_RUNTIME_PATH` | 啟動注入的 KV 路徑（預設 `kv/apps/mediprisma/runtime`） |
+| `OPENBAO_ADDR` | 實例位址（留空＝使用 `GOOGLE_CLIENT_SECRET`／`DATABASE_URL`／AI env 備援；設定後上述伺服器密語以 OpenBao 為準，讀取失敗不會退回 env） |
+| `OPENBAO_ROLE_ID` / `OPENBAO_SECRET_ID` | 應用伺服器使用 AppRole 讀取 KV v2；本地自架容器必填 |
+| `OPENBAO_RUNTIME_PATH` | 啟動注入的 KV 路徑（預設 `kv/apps/mediprisma/runtime`），用於 runtime 組態與額外閘門 |
+| `OPENBAO_GOOGLE_CLIENT_SECRET_PATH` | Google OAuth client secret 的完整 KV v2 欄位路徑（預設 `kv/apps/mediprisma/auth/google-client-secret`） |
+| `OPENBAO_DATABASE_URL_PATH` | PostgreSQL URL 的完整 KV v2 欄位路徑（預設 `kv/apps/mediprisma/database/url`） |
 
 ## 自動輪換
 
-- **自產金鑰**（例如未來的簽章／session 金鑰）：排程執行
-  `scripts/openbao/rotate-secret.mjs --path kv/apps/mediprisma --field <欄位>`，
-  或啟用 `.github/workflows/openbao-rotate.yml`（以 `vars.OPENBAO_ROTATION_ENABLED=true`
-  與 `vars.OPENBAO_ROTATE_FIELDS` 指定欄位）。寫入 KV 新版本即完成；
-  應用端 60 秒 TTL 快取內自動改用新值，**免重啟**。
-- **外部發行金鑰**（AI 服務、Docker Hub）：上游重新發行後以
-  `rotate-secret.mjs --value <新值>` 發佈，生效方式相同（半自動——只有上游
-  能發行新值，傳播與套用仍是自動）。
-- **注意**：`NEXT_PUBLIC_*` 在建置期烘焙進前端，不可自動輪換（例如
-  `NEXT_PUBLIC_AI_PROXY_KEY` 與伺服器 `AI_PROXY_KEY` 成對，輪換需重新建置）。
+- `resolveSecret` 讀取的伺服器密語（Google OAuth client secret、資料庫 URL、自架 AI base URL／API key）會快取 60 秒；KV 更新後，後續請求最遲在快取到期時讀取新版本。資料庫 URL 改變時會重建 pool。外部供應商金鑰須先由供應商重新發行，再寫入 OpenBao。
+- `AI_PROXY_KEY` 和 `AI_SELF_PROXY_KEY` 是額外閘門／瀏覽器配對值，從 `apps/mediprisma/runtime` 在容器啟動時注入；更新後須重啟容器，且配對值會公開給瀏覽器。它們不是本專案 session 的替代認證。
+- 公開 `NEXT_PUBLIC_*` 設定不能作為秘密。runtime `app-config.js` 由容器啟動時產生，更新公開設定後也須重啟容器；它不會讓靜態 GitHub Pages 部署具備 Node API 或自架登入能力。
+- 輪換工作流程可用 `scripts/openbao/rotate-secret.mjs` 與 `.github/workflows/openbao-rotate.yml` 將新版本寫入 KV；只對工作流程實際更新且應用會讀取的欄位啟用。
+
+應用容器端的 Google OAuth client ID、`APP_BASE_URL`、`OPENBAO_ADDR` 與 AppRole 憑證須透過部署環境提供；其中 `GOOGLE_CLIENT_SECRET`／`DATABASE_URL` 只在未設定 `OPENBAO_ADDR` 的開發／備援模式使用。容器應以 Node standalone server 執行並連至 PostgreSQL；靜態匯出不支援本專案登入 API。
 
 ## CI（維持原本流程，選填接上 OpenBao）
 

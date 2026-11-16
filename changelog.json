@@ -1,6 +1,30 @@
 {
-  "currentVersion": "4.0.2",
+  "currentVersion": "4.1.0",
   "releases": [
+    {
+      "version": "4.1.0",
+      "date": "2026-11-16",
+      "title": "自架 Google OIDC 登入與 PostgreSQL session／文件儲存",
+      "type": "feature",
+      "changes": [
+        {
+          "tag": "new",
+          "text": "新增本專案伺服器端 Google OIDC Authorization Code＋PKCE 登入，以 HttpOnly session cookie 與 PostgreSQL 儲存使用者及 session；不依賴 Firebase Auth。"
+        },
+        {
+          "tag": "new",
+          "text": "新增 session 驗證的同源 PostgreSQL 文件 API，將登入使用者的應用文件從 Firebase Firestore 移至自架資料庫。"
+        },
+        {
+          "tag": "improved",
+          "text": "自架 AI 代理改為要求本專案登入 session 並檢查寫入請求來源；瀏覽器不再傳送 Firebase Authorization token，上游金鑰仍留在伺服器端或 OpenBao。"
+        },
+        {
+          "tag": "improved",
+          "text": "同步更新 README、SRS、環境變數範例與 OpenBao 部署文件，記錄自架登入、資料庫與密語管理方式。"
+        }
+      ]
+    },
     {
       "version": "4.0.2",
       "date": "2026-11-16",
