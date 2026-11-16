@@ -1,6 +1,7 @@
 # 醫析 MediPrisma · SMART on FHIR（本地複製版）
 
-**目前版本：4.0.0** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
+**目前版本：4.0.1** — 本 repo 自訂版號（上游識別 0.51.1 之程式基線）。
+4.0.1 README 增補修改清單；4.0.0 專案轉換為 MediPrisma 本地複製版（自架 AI、OpenBao 金鑰管理與自動輪換、Google 登入、移除測試與模擬資料、維持原本 GitHub CI）。
 
 > ## 專案來源與修改聲明
 >
@@ -9,15 +10,19 @@
 > 所有修改只維護於 [es94111/Health_Passbook_Dashboard](https://github.com/es94111/Health_Passbook_Dashboard)，
 > **不會回傳上游 GitHub**（不設定 upstream remote；上游 sync／hmc 發佈 workflow 一律不納入）。
 >
-> 本版重點（4.0.0）：
+> ### 修改清單（相對上游 [MediPrisma/mediprisma-app](https://github.com/MediPrisma/mediprisma-app) master @ `313fe14`）
 >
-> - **Google 登入**：Firebase Auth Google provider（`features/auth/GoogleSignInButton.tsx`）。
-> - **金鑰管理**：OpenBao 介接＋自產金鑰自動輪換（見 [`openbao/README.md`](openbao/README.md)）。
-> - **AI 服務自架化**：單一 OpenAI 相容供應商；base URL＋金鑰以 env／OpenBao 設定，
->   經同源 `/api/ai` 代理，金鑰不進瀏覽器（見 `.env.example`「Self-hosted AI Service」）。
-> - **已移除測試資料與模擬資料**：示範病人、demo AI 快照、驗證資料集、合成情境頁與其產生器。
-> - **GitHub CI 維持本 repo 原本流程**：Docker 映像發版＋Release（`docker-publish.yml`）、
->   Gitleaks（`security.yml`）；OpenBao 輪換排程為選填附加。
+> | 類別 | 修改內容 |
+> |---|---|
+> | AI 服務 | 改為自架：`MODEL_CATALOG` 收斂為單一「自有 AI 服務」（OpenAI 相容）；新增 `/api/ai/[[...path]]` 同源伺服器代理（base URL＋金鑰以 env／OpenBao 設定，金鑰不進瀏覽器）與 `src/server/ai-self-secrets.ts` |
+> | 金鑰管理 | 新增 OpenBao 介接與自動輪換：`scripts/openbao/`（fetch／rotate／entrypoint）、`openbao/` 原則檔與設定文件、`openbao-rotate.yml` 輪換排程、CI 選填以 GitHub OIDC 取映像發佈憑證（見 [`openbao/README.md`](openbao/README.md)） |
+> | 移除測試資料 | HPA 驗證資料集、e2e fixtures、`docs/evidence`／`docs/verification` 驗證資料集、`scripts/hpa`／`scripts/experiments` 實驗資料，及其消費者測試套件 |
+> | 移除模擬資料 | 示例病人 Bundle（`public/demo`）、demo AI 快照、示範名稱對照表、合成情境頁（`app/dev*`）、demo 產生器與載入入口、SMART 公開沙箱自動啟動 |
+> | 登入 | Google 登入（Firebase Auth `GoogleAuthProvider`＋`features/auth/GoogleSignInButton.tsx`）保留啟用 |
+> | CI／部署 | 維持本 repo 原本 CI（`docker-publish.yml` 映像發版＋GitHub Release、`security.yml` Gitleaks＋audit）；新增 Dockerfile（Next.js standalone 映像）；上游 sync／hmc／gh-pages 等 11 個 workflow 一律不納入 |
+> | 文件 | 依本 repo 慣例以 `changelog.json`／`SRS.md` 維護版號（4.0.x）；上游版本識別 0.51.1 記錄於此 |
+>
+> 以上修改僅維護於本 repo，**不會回傳上游 GitHub**。
 >
 > 部署：Docker 多架構映像（GHCR／Docker Hub）→ Zeabur／自架主機，Watchtower 熱更新；
 > 容器啟動可自 OpenBao 注入 runtime 密語。環境變數見 `.env.example`。

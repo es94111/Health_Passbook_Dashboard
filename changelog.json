@@ -1,6 +1,18 @@
 {
-  "currentVersion": "4.0.0",
+  "currentVersion": "4.0.1",
   "releases": [
+    {
+      "version": "4.0.1",
+      "date": "2026-11-16",
+      "title": "README 增補專案來源與修改聲明（修改清單）",
+      "type": "fixed",
+      "changes": [
+        {
+          "tag": "improved",
+          "text": "README 增補「專案來源與修改聲明」：明確說明本專案複製自 https://github.com/MediPrisma/mediprisma-app（上游 master @ 313fe14、Apache-2.0）且為修改版、修改只進本 repo 不回傳上游 GitHub，並補上相對上游的修改清單（AI 服務自架化、OpenBao 金鑰管理與自動輪換、移除測試資料、移除模擬資料、Google 登入保留、CI／部署維持原本流程與 Dockerfile 新增、文件版號慣例）"
+        }
+      ]
+    },
     {
       "version": "4.0.0",
       "date": "2026-11-16",
